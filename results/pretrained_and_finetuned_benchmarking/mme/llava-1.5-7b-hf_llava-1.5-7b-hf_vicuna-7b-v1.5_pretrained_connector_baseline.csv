@@ -1,0 +1,3 @@
+,num_correct_answers,num_incorrect_answers,accuracy
+mm_model,1680,694,0.7076663858466723
+mm_pretrained_connector,1186,1188,0.4995787700084246

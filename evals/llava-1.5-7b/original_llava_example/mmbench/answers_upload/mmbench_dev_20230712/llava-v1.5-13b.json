@@ -1,0 +1,28 @@
+{
+  "model": "llava-v1.5-13b",
+  "split": "dev",
+  "total_categories": 20,
+  "categories": {
+    "C_action_recognition": 0.8703703703703703,
+    "C_attribute_comparison": 0.6136363636363636,
+    "C_attribute_recognition": 0.8648648648648649,
+    "C_celebrity_recognition": 0.8181818181818182,
+    "C_function_reasoning": 0.7721518987341772,
+    "C_future_prediction": 0.575,
+    "C_identity_reasoning": 0.9333333333333333,
+    "C_image_emotion": 0.86,
+    "C_image_quality": 0.5094339622641509,
+    "C_image_scene": 0.9615384615384616,
+    "C_image_style": 0.7358490566037735,
+    "C_image_topic": 0.8333333333333334,
+    "C_nature_relation": 0.4583333333333333,
+    "C_object_localization": 0.49382716049382713,
+    "C_ocr": 0.5897435897435898,
+    "C_physical_property_reasoning": 0.49333333333333335,
+    "C_physical_relation": 0.4166666666666667,
+    "C_social_relation": 0.9302325581395349,
+    "C_spatial_relationship": 0.24444444444444444,
+    "C_structuralized_imagetext_understanding": 0.3717948717948718
+  },
+  "average_accuracy": 0.6673034710405125
+}

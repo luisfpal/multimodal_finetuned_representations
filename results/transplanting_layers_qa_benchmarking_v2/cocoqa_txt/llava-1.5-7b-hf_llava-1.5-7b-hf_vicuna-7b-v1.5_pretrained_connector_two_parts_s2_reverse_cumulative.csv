@@ -1,0 +1,17 @@
+,num_correct_answers,num_incorrect_answers,accuracy
+split_layer_1,1905,595,0.762
+split_layer_3,1892,608,0.7568
+split_layer_5,1827,673,0.7308
+split_layer_7,1614,886,0.6456
+split_layer_9,1604,896,0.6416
+split_layer_11,1593,907,0.6372
+split_layer_13,1523,977,0.6092
+split_layer_15,1525,975,0.61
+split_layer_17,1560,940,0.624
+split_layer_19,1528,972,0.6112
+split_layer_21,1500,1000,0.6
+split_layer_23,1424,1076,0.5696
+split_layer_25,1432,1068,0.5728
+split_layer_27,1467,1033,0.5868
+split_layer_29,1453,1047,0.5812
+split_layer_31,1416,1084,0.5664
