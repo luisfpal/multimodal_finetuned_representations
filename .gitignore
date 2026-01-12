@@ -39,9 +39,7 @@ plots/
 
 # Large data files (to prevent accidental commit of big files)
 # Include specific results files
-!evals/**/*_results.jsonl
 *.json
-*.jsonl
 *.tsv
 *.csv
 *.pkl
@@ -50,5 +48,10 @@ plots/
 *.bin
 *.tar.gz
 *.zip
+
+# Exclude all in evals/ except .ipynb and *_results.jsonl
+evals/**/*
+!evals/**/*.ipynb
+!evals/**/*_results.jsonl
 *.7z
 *.rar

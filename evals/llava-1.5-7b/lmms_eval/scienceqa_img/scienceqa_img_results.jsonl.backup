@@ -1,4 +1,0 @@
-{"experiment_name": "finetuned_pretrained/llava-hf_llava-1.5-7b-hf_finetuned", "alias": "scienceqa_img", "exact_match,none": 0.661378284581061, "exact_match_stderr,none": 0.010539914903990928}
-{"experiment_name": "finetuned_pretrained/llava-hf_llava-1.5-7b-hf_finetuned", "alias": "scienceqa_img", "exact_match,none": 0.661378284581061, "exact_match_stderr,none": 0.010539914903990928}
-{"experiment_name": "finetuned_pretrained/llava-hf_llava-1.5-7b-hf_pretrained", "alias": "scienceqa_img", "exact_match,none": 0.32077342588001984, "exact_match_stderr,none": 0.010395880096497915}
-{"experiment_name": "finetuned_pretrained/l11p_llava-v1.5-7b-pretrained-liuhaotian_pretrained", "alias": "scienceqa_img", "exact_match,none": 0.35299950421417947, "exact_match_stderr,none": 0.01064373591394092}
