@@ -31,9 +31,8 @@ logs/
 tinkering/
 
 # Evaluation data directories (large files, not for GitHub)
-evals/**/finetuned_pretrained/
-evals/**/Llava1.5-7B*/
-evals/**/original_llava_example/
+evals/
+plots/
 
 # Large data files (to prevent accidental commit of big files)
 *.jsonl
@@ -47,9 +46,3 @@ evals/**/original_llava_example/
 *.zip
 *.7z
 *.rar
-
-# Results and plots (may contain large outputs)
-results/**/*.json
-results/**/*.tsv
-plots/**/*.png  # if large, but usually small
-plots/**/*.jpg

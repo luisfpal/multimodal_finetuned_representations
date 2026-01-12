@@ -1,2 +1,0 @@
-{"experiment_name": "finetuned_pretrained/llava-hf_llava-1.5-7b-hf_finetuned", "alias": "hellaswag", "acc,none": 0.5587532364070902, "acc_stderr,none": 0.004955212787832747, "acc_norm,none": 0.7384983071101374, "acc_norm_stderr,none": 0.004385544487144111}
-{"experiment_name": "finetuned_pretrained/llava-hf_llava-1.5-7b-hf_pretrained", "alias": "hellaswag", "acc,none": 0.563931487751444, "acc_stderr,none": 0.004948824501355178, "acc_norm,none": 0.7341167098187612, "acc_norm_stderr,none": 0.00440899486864994}
