@@ -55,3 +55,6 @@ evals/**/*
 !evals/**/*_results.jsonl
 *.7z
 *.rar
+
+# Claude files
+
