@@ -35,6 +35,9 @@ evals/
 plots/
 
 # Large data files (to prevent accidental commit of big files)
+# Include specific results files
+!results/**/*_results.jsonl
+*.json
 *.jsonl
 *.tsv
 *.csv
