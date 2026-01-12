@@ -30,13 +30,16 @@ logs/
 # Experimental files
 tinkering/
 
-# Evaluation data directories (large files, not for GitHub)
-evals/
+# Evaluation data directories (exclude large subdirs)
+evals/**/finetuned_pretrained/
+evals/**/Llava1.5-7B*/
+evals/**/MME_Benchmark_release_version/
+evals/**/original_llava_example/
 plots/
 
 # Large data files (to prevent accidental commit of big files)
 # Include specific results files
-!results/**/*_results.jsonl
+!evals/**/*_results.jsonl
 *.json
 *.jsonl
 *.tsv

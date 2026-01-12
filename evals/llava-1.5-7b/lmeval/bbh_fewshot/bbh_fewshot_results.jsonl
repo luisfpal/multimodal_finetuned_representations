@@ -1,0 +1,2 @@
+{"experiment_name": "finetuned_pretrained/llava-hf_llava-1.5-7b-hf_finetuned", "exact_match,none": 0.37198587006604206, "exact_match_stderr,none": 0.005580075055546101, "alias": "bbh_fewshot"}
+{"experiment_name": "finetuned_pretrained/llava-hf_llava-1.5-7b-hf_pretrained", "exact_match,none": 0.3650744893257564, "exact_match_stderr,none": 0.005566978669662398, "alias": "bbh_fewshot"}
