@@ -35,12 +35,10 @@ DATASETS_CONFIG = {
     "cocoqa_txt": {
         "texts_qa": True,
         **COCOQA_DATASET_ARGS,
-        "chat_mode": True,
     },
     "cocoqa_img": {
         "images_qa": True,
         **COCOQA_DATASET_ARGS,
-        "chat_mode": True,
     },
 }
 

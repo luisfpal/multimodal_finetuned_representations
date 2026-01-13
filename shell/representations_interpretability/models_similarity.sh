@@ -9,7 +9,7 @@ BATCH_SIZE="25"
 SEED="42"
 
 # Directory configuration
-PROJECT_DIR="$HOME/Desktop/project_versions/multimodal_finetuned_representations"
+PROJECT_DIR="$HOME/multimodal_finetuned_representations"
 RESULTS_DIR="$PROJECT_DIR/results"
 
 # Script configuration
