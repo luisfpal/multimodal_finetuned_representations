@@ -92,6 +92,16 @@ for MODEL_NAME in "${MODELS[@]}"; do
 
 
 
-    echo "✅ Completed: $MODEL_NAME"
+        echo "✅ Completed: $MODEL_NAME"
 
-doneecho -e "\n====== All Analyses Complete ======"
+
+
+    done
+
+
+
+
+
+
+
+    echo -e "\n====== All Analyses Complete ======"
