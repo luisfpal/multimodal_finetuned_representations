@@ -25,7 +25,6 @@ SEED="42"
 # Directory configuration
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
 RESULTS_DIR="$PROJECT_DIR/results"
-MODEL_CACHE_DIR="$HOME/scratch/huggingface/hub"
 
 # Script configuration
 FILENAME="residual_stream_trace_and_measures_evaluation.py"
@@ -35,7 +34,6 @@ FILEPATH="$PROJECT_DIR/scripts/$FILENAME"
 SCRIPT_ARGS=()
 SCRIPT_ARGS+=(--results-dir "$RESULTS_DIR")
 SCRIPT_ARGS+=(--dataset-path-or-name "$DATASET_PATH_OR_NAME")
-SCRIPT_ARGS+=(--model-cache-dir "$MODEL_CACHE_DIR")
 SCRIPT_ARGS+=(--batch-size "$BATCH_SIZE")
 SCRIPT_ARGS+=(--dataset-type "$DATASET_TYPE")
 SCRIPT_ARGS+=(--residual-stream-types "$RESIDUAL_STREAM_TYPES")
@@ -61,7 +59,6 @@ mkdir -p "$RESULTS_DIR"
 echo "====== Residual Stream Analysis Configuration ======"
 echo "Dataset: $DATASET_PATH_OR_NAME"
 echo "Results directory: $RESULTS_DIR"
-echo "Model cache directory: $MODEL_CACHE_DIR"
 echo "Dataset type: $DATASET_TYPE"
 echo "Residual stream types: $RESIDUAL_STREAM_TYPES"
 echo "Token pooling methods: $TOKENS_POOLING_METHODS"

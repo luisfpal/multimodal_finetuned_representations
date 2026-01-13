@@ -1,21 +1,27 @@
-import torch
 import argparse
-import os
 import gc
+import os
 import time
+from typing import List, Union
+
+import torch
+from dotenv import load_dotenv
 from safetensors.torch import save_file
-from typing import Union, List
+
 from src.residual_stream_tracer import residual_stream_tracer
 from utils import (
-    setup_multimodal_model,
-    get_dataloader,
-    get_dataloader_for_captioning,
-    seed_all,
-    compute_layers_residual_stream_similarities,
     compute_heads_projection_residual_stream_similarities,
     compute_layers_intrinsic_dimension,
     compute_layers_residual_stream_entropy,
+    compute_layers_residual_stream_similarities,
+    get_dataloader,
+    get_dataloader_for_captioning,
+    seed_all,
+    setup_multimodal_model,
 )
+
+# Load environment variables
+load_dotenv()
 
 # Use float16 for relatively light weight memory usage and fast extraction
 MODEL_DTYPE = torch.float16
@@ -194,7 +200,6 @@ def main():
     # Required arguments
     parser.add_argument("--results-dir", type=str, required=True)
     parser.add_argument("--dataset-path-or-name", type=str, required=True)
-    parser.add_argument("--model-cache-dir", type=str, required=True)
     parser.add_argument("--batch-size", type=int, default=1)
 
     # Analysis configuration
@@ -278,6 +283,13 @@ def main():
     seed_all(args.seed)
     results_dir = os.path.expanduser(args.results_dir)
 
+    # Get cache dir from env
+    model_cache_dir = os.getenv(
+        "HF_HUB_CACHE",
+        os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
+    )
+    print(f"📂 Using model cache directory: {model_cache_dir}")
+
     print(f"🔧 Processing {len(dataset_types)} dataset types: {dataset_types}")
     print(
         f"🔧 Processing {len(residual_stream_types)} residual stream types: {residual_stream_types}"
@@ -347,7 +359,7 @@ def main():
                     model, processor = setup_multimodal_model(
                         **{
                             **model_args,
-                            "model_cache_dir": args.model_cache_dir,
+                            "model_cache_dir": model_cache_dir,
                         }
                     )
 

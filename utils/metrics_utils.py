@@ -863,6 +863,73 @@ def compute_layers_residual_stream_similarities(
     return residual_stream_measures
 
 
+def compute_cross_layers_residual_stream_similarities(
+    residual_stream_network1: torch.Tensor,
+    residual_stream_network2: torch.Tensor,
+    similarity_measures: List[str],
+    **kwargs,
+) -> Dict[str, torch.Tensor]:
+    """
+    Compute measures of the residual stream of two networks, comparing every layer of network1
+    with every layer of network2.
+
+    Args:
+        residual_stream_network1: Tensor of shape (num_layers_1, num_samples, hidden_size)
+        residual_stream_network2: Tensor of shape (num_layers_2, num_samples, hidden_size)
+        similarity_measures:
+            - neighborhood_overlap
+            - linear_cka
+            - svcca
+        **kwargs:
+            - maxk: int = 30 for neighborhood_overlap
+            - accept_rate: float = 0.95 for svcca
+
+    Returns:
+        Dict of tensors of measures of the residual stream of shape (num_layers_1, num_layers_2)
+    """
+    num_layers_1, num_samples, _ = residual_stream_network1.shape
+    num_layers_2, num_samples_2, _ = residual_stream_network2.shape
+
+    if num_samples != num_samples_2:
+        raise ValueError("The number of samples of the two networks must be the same")
+
+    residual_stream_measures = {}
+
+    # Pre-calculate update interval for progress bar
+    total_comparisons = num_layers_1 * num_layers_2
+    update_every = max(1, int(0.1 * total_comparisons))
+
+    for measure in similarity_measures:
+        print(f"    - Computing {measure} matrix ({num_layers_1}x{num_layers_2})...")
+        residual_stream_measures[measure] = torch.zeros(
+            num_layers_1, num_layers_2, dtype=torch.float64
+        )
+
+        progress_bar = tqdm(
+            total=total_comparisons, desc=f"Computing {measure}", unit="pair"
+        )
+        last_update = 0
+
+        for i in range(num_layers_1):
+            for j in range(num_layers_2):
+                residual_stream_measures[measure][i, j] = compute_similarity(
+                    residual_stream_network1[i],
+                    residual_stream_network2[j],
+                    measure,
+                    **kwargs,
+                )
+
+                # Update progress bar
+                current_idx = i * num_layers_2 + j + 1
+                if current_idx % update_every == 0 or current_idx == total_comparisons:
+                    progress_bar.update(current_idx - last_update)
+                    last_update = current_idx
+
+        progress_bar.close()
+
+    return residual_stream_measures
+
+
 def compute_layers_intrinsic_dimension(
     residual_stream: torch.Tensor,
     algorithm: str = "scaling_gride",
