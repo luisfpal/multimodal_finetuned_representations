@@ -75,7 +75,7 @@ OUTPUT_DIR="$PROJECT_ROOT/evals/$MODEL/lmms_eval/$TASK_NAME"
 
 # Model names
 FINE_TUNED_MODEL_NAME="llava-hf/llava-1.5-7b-hf"
-PRETRAINED_MODEL_NAME="l11p/llava-v1.5-7b-pretrained-lbasile"
+PRETRAINED_MODEL_NAME="l11p/llava-v1.5-7b-pretrained-liuhaotian"
 LMMS_EVAL_MODEL="llava_hf"
 
 # Cache directories

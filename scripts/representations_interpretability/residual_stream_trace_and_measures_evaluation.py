@@ -63,13 +63,13 @@ DATASETS = {
     "cocoqa_img": {
         "images_qa": True,
         **COCOQA_DATASET_ARGS,
-        "chat_mode": True,  #! check this
+        "chat_mode": True,
     },
     "coco_captioning": {
         "downsample_size": 2500,
         # use chat mode and captioning prompt
         # for extracting the residual stream
-        "chat_mode": True,  #! check this
+        "chat_mode": True,
         "concatenate_captions_and_add_prompt": True,
         # use plain text and concatenate captions
         # for extracting the residual stream

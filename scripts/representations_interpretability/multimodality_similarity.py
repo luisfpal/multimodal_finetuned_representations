@@ -34,12 +34,10 @@ DATASETS_CONFIG = {
     "cocoqa_txt": {
         "texts_qa": True,
         **COCOQA_DATASET_ARGS,
-        "chat_mode": True,
     },
     "cocoqa_img": {
         "images_qa": True,
         **COCOQA_DATASET_ARGS,
-        "chat_mode": True,
     },
 }
 
@@ -122,7 +120,7 @@ def main():
     print(f"{'-' * 80}")
 
     # 1. Extract Text Representations
-    print(f"  👉 Extracting Text Representations...")
+    print("  👉 Extracting Text Representations...")
     res_txt = residual_stream_tracer(
         model=model,
         processed_dataloader=dl_txt,
@@ -132,7 +130,7 @@ def main():
     )
 
     # 2. Extract Image Representations
-    print(f"  👉 Extracting Image Representations...")
+    print("  👉 Extracting Image Representations...")
     res_img = residual_stream_tracer(
         model=model,
         processed_dataloader=dl_img,
@@ -142,7 +140,7 @@ def main():
     )
 
     # 3. Compute Similarities
-    print(f"  👉 Computing Similarities...")
+    print("  👉 Computing Similarities...")
     print(f"    - Measures: {SIMILARITY_MEASURES}")
 
     sim_results = compute_cross_layers_residual_stream_similarities(
@@ -153,13 +151,20 @@ def main():
     )
 
     # Save each measure
+    metadata = {
+        "row_modality": "text",
+        "col_modality": "image",
+        "description": "Rows represent text layers, Columns represent image layers",
+    }
+    print("    ℹ️  Matrix orientation: Rows=Text, Columns=Image")
+
     for measure_name, measure_val in sim_results.items():
         # Simplified filename: {model_name}_{measure_name}.safetensors
         save_path = os.path.join(
             similarities_dir,
             f"{model_name}_{measure_name}.safetensors",
         )
-        save_file({f"{measure_name}": measure_val}, save_path)
+        save_file({f"{measure_name}": measure_val}, save_path, metadata=metadata)
         print(f"    💾 Saved: {save_path}")
 
     # Cleanup

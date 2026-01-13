@@ -1,57 +1,121 @@
 #!/bin/bash
-# ====================== Configuration ====================== #
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+# SLURM settings
 ACCOUNT="dssc"
 JOB_NAME="experiment"
-PARTITION="DGX"
-GPUS=1
+NUM_GPUS=1              # Number of GPUs
 CPUS=16
-
-TIME="00:20:00"
 MEM="64GB"
+TIME="02:00:00"
+NODELIST=""             # Empty = any available node
+EXCLUDE=""              # Empty = no exclusions
 
-# TIME="06:00:00"
-# MEM="100GB"
-# MEM="564GB"
-# TIME="06:00:00"
-
+# Project paths
 PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
-LOG_DIR="$PROJECT_ROOT/.experiments_logs"
+SCRIPTS_DIR="$PROJECT_ROOT/shell/representations_interpretability"
+LOG_DIR="$PROJECT_ROOT/logs"
+SCRIPT_NAME="multimodality_similarity.sh"
+
+# =============================================================================
+# Job Execution Script
+# =============================================================================
+
+read -r -d '' JOB_COMMANDS << JOB_EOF || true
+# =============================================================================
+# ENVIRONMENT SETUP
+# =============================================================================
+
+TOKENIZERS_PARALLELISM="false"
+
+# Load environment variables from .env
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
+# Activate virtual environment
+source "$PROJECT_ROOT/.venv/bin/activate"
+
+# Change to working directory
+cd "$SCRIPTS_DIR"
+
+# Disable tokenizer parallelism warnings
+export TOKENIZERS_PARALLELISM=\$TOKENIZERS_PARALLELISM
+
+# =============================================================================
+# RUN ANALYSIS
+# =============================================================================
+
+bash "$SCRIPT_NAME"
+JOB_EOF
+
+# =============================================================================
+# Auto-detect GPU partition
+# =============================================================================
+
+GPU_INFO=$(sinfo -h -o "%P %G" 2>/dev/null | grep -iE "A100|H100" | head -1)
+[[ -z "$GPU_INFO" ]] && GPU_INFO=$(sinfo -h -o "%P %G" 2>/dev/null | grep -i gpu | head -1)
+
+if [[ -n "$GPU_INFO" ]]; then
+    PARTITION=$(echo "$GPU_INFO" | awk '{gsub(/\*/, ""); print $1}')
+    GPU_TYPE=$(echo "$GPU_INFO" | awk -F: '{print $2}')
+    echo "🔍 Detected: PARTITION=$PARTITION, GPU=$GPU_TYPE"
+else
+    PARTITION="DGX"; GPU_TYPE="A100"
+    echo "⚠️  Defaults: PARTITION=$PARTITION, GPU=$GPU_TYPE"
+fi
+
+# =============================================================================
+# Generate SBATCH Script
+# =============================================================================
+
 mkdir -p "$LOG_DIR"
-
-# SCRIPT="compute_id_correlation.sh"
-# SCRIPT="modalities_similarities.sh"
-# SCRIPT="transplanting_layers_qa_benchmarking.sh"
-# SCRIPT="transplanting_layers_caption_benchmarking.sh"
-SCRIPT="pretrained_and_finetuned_benchmarking.sh"
-
-# ====================== SBATCH Script Creation ====================== #
 SBATCH_SCRIPT=$(mktemp /tmp/sbatch_experiment.XXXXXX.sh)
 
-cat <<EOT >"$SBATCH_SCRIPT"
-#!/bin/bash
-#SBATCH --account=$ACCOUNT
+# Build SBATCH directives with conditional nodelist/exclude
+SBATCH_DIRECTIVES="#SBATCH --account=$ACCOUNT
 #SBATCH --job-name=$JOB_NAME
 #SBATCH --partition=$PARTITION
-#SBATCH --gres=gpu:$GPUS
+#SBATCH --gres=gpu:$GPU_TYPE:$NUM_GPUS
 #SBATCH --cpus-per-task=$CPUS
 #SBATCH --mem=$MEM
 #SBATCH --time=$TIME
 #SBATCH --output=$LOG_DIR/slurm-%j.out
-#SBATCH --error=$LOG_DIR/slurm-%j.out
+#SBATCH --error=$LOG_DIR/slurm-%j.out"
 
-# Activate environment
-source "$PROJECT_ROOT/.venv/bin/activate"
+[[ -n "$NODELIST" ]] && SBATCH_DIRECTIVES+="
+#SBATCH --nodelist=$NODELIST"
+[[ -n "$EXCLUDE" ]] && SBATCH_DIRECTIVES+="
+#SBATCH --exclude=$EXCLUDE"
 
-# Run script
-bash "$PROJECT_ROOT/shell/$SCRIPT"
+cat <<EOT >"$SBATCH_SCRIPT"
+#!/bin/bash
+$SBATCH_DIRECTIVES
+
+$JOB_COMMANDS
 EOT
 
-# ====================== Job Submission ====================== #
-echo "🟢 Submitting SBATCH job for experiment: $SCRIPT"
-echo "----------------------------------------------------"
-cat "$SBATCH_SCRIPT"
-echo "----------------------------------------------------"
+# =============================================================================
+# Submit Job
+# =============================================================================
 
-JOB_ID=$(sbatch "$SBATCH_SCRIPT" | awk '{print $4}')
-echo "✅ Job submitted with ID: $JOB_ID"
-echo "📁 Unified output: $LOG_DIR/slurm-$JOB_ID.out"
+echo "🟢 Submitting job: $SCRIPT_NAME"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+JOB_OUTPUT=$(sbatch "$SBATCH_SCRIPT" 2>&1)
+
+if [ $? -eq 0 ]; then
+    JOB_ID=$(echo "$JOB_OUTPUT" | awk '{print $4}')
+    echo "✅ Job ID: $JOB_ID"
+    echo "📁 Output: $LOG_DIR/slurm-$JOB_ID.out"
+    echo ""
+    echo "Monitor: tail -f $LOG_DIR/slurm-$JOB_ID.out"
+else
+    echo "❌ Failed: $JOB_OUTPUT"
+    exit 1
+fi

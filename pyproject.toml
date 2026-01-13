@@ -2,7 +2,7 @@
 name = "menv"
 version = "2.0.0"
 description = "Multimodal Finetuned Representations Analysis Project Environment"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     # ============================================================================
     # Core ML/DL Stack
