@@ -24,7 +24,7 @@ MODEL_DTYPE = torch.float16
 ATTN_IMPLEMENTATION = "flash_attention_2"
 RESIDUAL_STREAM_TYPE = "output_layer"
 TOKENS_POOLING_METHOD = "last"
-SIMILARITY_MEASURES = ["neighborhood_overlap", "linear_cka"]
+SIMILARITY_MEASURES = ["neighborhood_overlap", "linear_cka", "distance_correlation"]
 
 COCOQA_DATASET_ARGS = {
     "guide_text": "Answer the question using a single word or phrase.\n",
@@ -151,6 +151,22 @@ def main():
         print(f"🌍 Dataset: {dataset_name}")
         print(f"{'-' * 80}")
 
+        # Check for existing results
+        missing_measures = []
+        for measure_name in SIMILARITY_MEASURES:
+            filename = f"{dataset_name}_{model_a_id}_vs_{model_b_id}_{measure_name}.safetensors"
+            save_path = os.path.join(similarities_dir, filename)
+            if not os.path.exists(save_path):
+                missing_measures.append(measure_name)
+            else:
+                print(f"    ✅ Found existing: {filename}")
+
+        if not missing_measures:
+            print("    ⏩ All measures computed. Skipping...")
+            continue
+
+        print(f"    ⚠️  Missing measures: {missing_measures}")
+
         # Phase 1: Model A
         print(f"\n[Phase 1] Processing Model A: {model_a_id}")
         res_a = extract_representation(
@@ -175,12 +191,12 @@ def main():
 
         # Phase 3: Compute Similarity
         print(f"\n[Phase 3] Computing Similarities: {model_a_id} vs {model_b_id}")
-        print(f"    - Measures: {SIMILARITY_MEASURES}")
+        print(f"    - Measures: {missing_measures}")
 
         sim_results = compute_cross_layers_residual_stream_similarities(
             res_a,
             res_b,
-            similarity_measures=SIMILARITY_MEASURES,
+            similarity_measures=missing_measures,
             maxk=30,
         )
 
