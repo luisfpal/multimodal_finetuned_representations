@@ -92,6 +92,22 @@ def main():
     # Identify model name for filename
     model_name = args.model_name_or_path.split("/")[-1]
 
+    # Check for existing results first to avoid unnecessary loading
+    missing_measures = []
+    for measure_name in SIMILARITY_MEASURES:
+        filename = f"{model_name}_{measure_name}.safetensors"
+        save_path = os.path.join(similarities_dir, filename)
+        if not os.path.exists(save_path):
+            missing_measures.append(measure_name)
+        else:
+            print(f"    ✅ Found existing: {filename}")
+
+    if not missing_measures:
+        print("    ⏩ All measures computed. Skipping...")
+        return
+
+    print(f"    ⚠️  Missing measures: {missing_measures}")
+
     # Prepare Dataloaders
     print("\n📚 Preparing dataloaders...")
 
@@ -141,12 +157,12 @@ def main():
 
     # 3. Compute Similarities
     print("  👉 Computing Similarities...")
-    print(f"    - Measures: {SIMILARITY_MEASURES}")
+    print(f"    - Measures: {missing_measures}")
 
     sim_results = compute_cross_layers_residual_stream_similarities(
         res_txt,
         res_img,
-        similarity_measures=SIMILARITY_MEASURES,
+        similarity_measures=missing_measures,
         maxk=30,  # Default
     )
 
