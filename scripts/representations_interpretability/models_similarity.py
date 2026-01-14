@@ -24,7 +24,12 @@ MODEL_DTYPE = torch.float16
 ATTN_IMPLEMENTATION = "flash_attention_2"
 RESIDUAL_STREAM_TYPE = "output_layer"
 TOKENS_POOLING_METHOD = "last"
-SIMILARITY_MEASURES = ["neighborhood_overlap", "linear_cka", "distance_correlation"]
+SIMILARITY_MEASURES = [
+    "neighborhood_overlap",
+    "linear_cka",
+    "distance_correlation",
+    "id_correlation",
+]
 
 COCOQA_DATASET_ARGS = {
     "guide_text": "Answer the question using a single word or phrase.\n",

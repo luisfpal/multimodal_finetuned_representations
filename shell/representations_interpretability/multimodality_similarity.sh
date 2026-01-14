@@ -31,7 +31,7 @@ MODELS=(
 # --- Environment Setup ---
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# --- Run Analysis ---
+# --- Run Analysis
 echo "====== Multimodality Similarity Analysis ======"
 echo "Dataset: $DATASET_PATH_OR_NAME"
 echo "Results directory: $RESULTS_DIR"
