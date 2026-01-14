@@ -428,6 +428,8 @@ def compute_id_correlation_similarity(
     fraction: float = 0.9,
     return_pvalue: bool = False,
     permutations: int = 100,
+    id1: float = None,
+    id2: float = None,
 ) -> float:
     """
     Compute ID correlation between two datasets.
@@ -440,6 +442,8 @@ def compute_id_correlation_similarity(
         fraction: Fraction of points for twoNN
         return_pvalue: Whether to compute and return p-value (warning: expensive)
         permutations: Number of permutations for p-value computation
+        id1: Precomputed ID for data1 (optional optimization)
+        id2: Precomputed ID for data2 (optional optimization)
 
     Returns:
         ID correlation score (and optionally p-value, but currently only score is returned to fit interface)
@@ -453,12 +457,20 @@ def compute_id_correlation_similarity(
     data1 = standardize(data1)
     data2 = standardize(data2)
 
-    # Compute individual IDs
-    id_1 = compute_intrinsic_dimension(
-        data1, algorithm=algorithm, k=k, fraction=fraction
+    # Compute individual IDs if not provided
+    id_1 = (
+        id1
+        if id1 is not None
+        else compute_intrinsic_dimension(
+            data1, algorithm=algorithm, k=k, fraction=fraction
+        )
     )
-    id_2 = compute_intrinsic_dimension(
-        data2, algorithm=algorithm, k=k, fraction=fraction
+    id_2 = (
+        id2
+        if id2 is not None
+        else compute_intrinsic_dimension(
+            data2, algorithm=algorithm, k=k, fraction=fraction
+        )
     )
 
     upper_bound = id_1 + id_2
@@ -564,9 +576,16 @@ def compute_similarity(
     elif measure == "id_correlation":
         algorithm = kwargs.get("algorithm", "twoNN")
         return_pvalue = kwargs.get("return_pvalue", False)
+        id1 = kwargs.get("id1", None)
+        id2 = kwargs.get("id2", None)
         # Pass other kwargs that might be relevant for ID estimation
         return compute_id_correlation_similarity(
-            data1, data2, algorithm=algorithm, return_pvalue=return_pvalue
+            data1,
+            data2,
+            algorithm=algorithm,
+            return_pvalue=return_pvalue,
+            id1=id1,
+            id2=id2,
         )
 
 
@@ -963,6 +982,9 @@ def compute_layers_residual_stream_similarities(
     return residual_stream_measures
 
 
+
+
+
 def compute_cross_layers_residual_stream_similarities(
     residual_stream_network1: torch.Tensor,
     residual_stream_network2: torch.Tensor,
@@ -1005,6 +1027,29 @@ def compute_cross_layers_residual_stream_similarities(
             num_layers_1, num_layers_2, dtype=torch.float64
         )
 
+        # Precompute IDs if dealing with id_correlation to avoid redundant calculations
+        precomputed_ids1 = None
+        precomputed_ids2 = None
+        if measure == "id_correlation":
+            algorithm = kwargs.get("algorithm", "twoNN")
+            k = kwargs.get("k", 100)
+            fraction = kwargs.get("fraction", 0.9)
+
+            # Helper for ID precomputation
+            def _precompute_ids(network):
+                ids = torch.zeros(network.shape[0], dtype=torch.float64)
+                for idx in range(network.shape[0]):
+                    data = network[idx]
+                    data = _ensure_device(data)
+                    data = standardize(data)
+                    ids[idx] = compute_intrinsic_dimension(
+                        data, algorithm=algorithm, k=k, fraction=fraction
+                    )
+                return ids
+
+            precomputed_ids1 = _precompute_ids(residual_stream_network1)
+            precomputed_ids2 = _precompute_ids(residual_stream_network2)
+
         progress_bar = tqdm(
             total=total_comparisons, desc=f"Computing {measure}", unit="pair"
         )
@@ -1012,11 +1057,17 @@ def compute_cross_layers_residual_stream_similarities(
 
         for i in range(num_layers_1):
             for j in range(num_layers_2):
+                # Inject precomputed IDs into kwargs if available
+                current_kwargs = kwargs.copy()
+                if precomputed_ids1 is not None:
+                    current_kwargs["id1"] = precomputed_ids1[i].item()
+                    current_kwargs["id2"] = precomputed_ids2[j].item()
+
                 residual_stream_measures[measure][i, j] = compute_similarity(
                     residual_stream_network1[i],
                     residual_stream_network2[j],
                     measure,
-                    **kwargs,
+                    **current_kwargs,
                 )
 
                 # Update progress bar
