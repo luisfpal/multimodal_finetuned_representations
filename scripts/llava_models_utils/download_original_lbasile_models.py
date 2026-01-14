@@ -3,30 +3,36 @@ import sys
 import traceback
 from pathlib import Path
 
+from dotenv import load_dotenv
 import torch
 from rich.console import Console
 from rich.table import Table
 
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from utils import (
     load_hf_model_and_processor_or_tokenizer,
     setup_multimodal_model,
 )
 
+load_dotenv()
 
 # ===== Configuration =====
-MODEL_CACHE_DIR = os.path.expanduser("~/scratch/huggingface/hub")
+MODEL_CACHE_DIR = os.getenv(
+    "HF_HUB_CACHE",
+    os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
+)
 
 MODELS_COLLECTION = {
     # "Llava1.5-7B": "lbasile/llava-",
     # "Llava1.5-7B-frozen": "lbasile/llava_frozen-",
     # "Llava1.5-7B-0-16": "lbasile/llava_0_16-",
     # "Llava1.5-7B-16-32": "lbasile/llava_16_32-",
+    "Llava1.5-7B-8-16": "lbasile/llava_8_16-",
+    "Llava1.5-7B-0-8": "lbasile/llava_0_8-",
     # "Llava1.5-7B": "l11p/llava-v1.5-7b-lbasile-full-step-",
     # "Llava1.5-7B-frozen": "l11p/llava-v1.5-7b-lbasile-frozen-llm-step-",
-    "Llava1.5-7B-0-16": "l11p/llava-v1.5-7b-lbasile-layers-0-16-step-",
+    # "Llava1.5-7B-0-16": "l11p/llava-v1.5-7b-lbasile-layers-0-16-step-",
     # "Llava1.5-7B-16-32": "l11p/llava-v1.5-7b-lbasile-layers-16-32-step-",
 }
 
@@ -105,7 +111,7 @@ def check_collection(collection_name):
 
     # Get model names
     collection_prefix = MODELS_COLLECTION[collection_name]
-    model_names = [f"{collection_prefix}{i}" for i in range(1000, 10001, 1000)]
+    model_names = [f"{collection_prefix}{i}" for i in range(10000, 10001, 1000)]
 
     # Track results
     successful_models = []

@@ -2,7 +2,7 @@
 # This script runs modalities similarities analysis
 
 # --- Configuration Section ---
-DATASET_PATH_OR_NAME="~/scratch/datasets/cocoqa_unified"
+DATASET_PATH_OR_NAME=${COCOVQA_CACHE}
 
 # Analysis configuration
 RESIDUAL_STREAM_TYPES="output_layer"
@@ -83,4 +83,4 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 TOKENIZERS_PARALLELISM=false python "${DEBUGGER_ARGS[@]}" "${FILEPATH}" "${SCRIPT_ARGS[@]}"
 
 echo -e "\n====== Analysis Complete ======"
-echo "Results saved to: $RESULTS_DIR" 
+echo "Results saved to: $RESULTS_DIR"

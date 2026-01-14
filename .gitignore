@@ -58,3 +58,5 @@ evals/**/*
 
 # Claude files
 
+# Internal docs
+internal_docs/

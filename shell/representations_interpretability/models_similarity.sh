@@ -2,7 +2,7 @@
 # This script runs model vs model similarity analysis
 
 # --- Configuration Section ---
-DATASET_PATH_OR_NAME="$HOME/scratch/datasets/cocoqa_unified"
+DATASET_PATH_OR_NAME=${COCOVQA_CACHE}
 
 # Processing parameters
 BATCH_SIZE="25"

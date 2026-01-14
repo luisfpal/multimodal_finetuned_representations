@@ -2,6 +2,7 @@ import os
 import gc
 import torch
 import io
+from dotenv import load_dotenv
 from huggingface_hub import create_repo, HfApi
 from utils import setup_multimodal_model, load_hf_model_and_processor_or_tokenizer
 
@@ -13,7 +14,13 @@ PRETRAINED_PROJECTOR_NAME_ORIGINAL = (
 PRETRAINED_PROJECTOR_NAME_LORENZO = (
     "lbasile/llava-v1.5-mlp2x-336px-pretrain-vicuna-7b-v1.5"
 )
-CACHE_DIR = os.path.expanduser("~/scratch/huggingface/hub/")
+
+load_dotenv()
+
+CACHE_DIR = os.getenv(
+    "HF_HUB_CACHE",
+    os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
+)
 
 
 def push_models_to_hub():

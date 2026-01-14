@@ -1,7 +1,14 @@
 import os
 import sys
 
-CACHE_DIR = os.path.expanduser("~/scratch/huggingface/hub/")
+from dotenv import load_dotenv
+
+load_dotenv()
+
+CACHE_DIR = os.getenv(
+    "HF_HUB_CACHE",
+    os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
+)
 os.environ["HF_HUB_CACHE"] = CACHE_DIR
 import gc
 import io
@@ -16,7 +23,9 @@ MODELS_COLLECTION = {
     # "Llava1.5-7B": "lbasile/llava-",
     # "Llava1.5-7B-0-16": "lbasile/llava_0_16-",
     # "Llava1.5-7B-16-32": "lbasile/llava_16_32-",
-    "Llava1.5-7B-frozen": "lbasile/llava_frozen-",
+    # "Llava1.5-7B-frozen": "lbasile/llava_frozen-",
+    "Llava1.5-7B-8-16": "lbasile/llava_8_16-",
+    "Llava1.5-7B-0-8": "lbasile/llava_0_8-",
 }
 
 # Reference model with proper processor config
@@ -33,6 +42,8 @@ def get_collection_description(collection_name):
         "Llava1.5-7B-0-16": "layers 0-16",
         "Llava1.5-7B-16-32": "layers 16-32",
         "Llava1.5-7B-frozen": "frozen layers",
+        "Llava1.5-7B-0-8": "layers 0-8",
+        "Llava1.5-7B-8-16": "layers 8-16",
     }
     return descriptions.get(collection_name, collection_name)
 
@@ -97,7 +108,7 @@ tags:
 `{source_model_name}` with proper chat template and processor config added.
 """
         
-        fixed_model.push_to_hub(target_repo_id, commit_message="Add proper processor config")
+        fixed_model.half().push_to_hub(target_repo_id, commit_message="Add proper processor config")
         reference_processor.push_to_hub(target_repo_id)
         
         # Upload README
@@ -144,7 +155,7 @@ def main():
     print("[green]✓ Reference processor loaded[/green]")
 
     # Process each collection
-    checkpoints = list(range(1000, 10001, 1000))
+    checkpoints = list(range(10000, 10001, 1000))
     total_models = len(MODELS_COLLECTION) * len(checkpoints)
     
     print(f"\n[bold cyan]Processing {total_models} models across {len(MODELS_COLLECTION)} collections[/bold cyan]\n")
@@ -169,6 +180,10 @@ def main():
                 target_repo_name = f"llava-v1.5-7b-lbasile-layers-16-32-step-{checkpoint}"
             elif collection_name == "Llava1.5-7B-frozen":
                 target_repo_name = f"llava-v1.5-7b-lbasile-frozen-llm-step-{checkpoint}"
+            elif collection_name == "Llava1.5-7B-0-8":
+                target_repo_name = f"llava-v1.5-7b-lbasile-layers-0-8-step-{checkpoint}"
+            elif collection_name == "Llava1.5-7B-8-16":
+                target_repo_name = f"llava-v1.5-7b-lbasile-layers-8-16-step-{checkpoint}"
             else:
                 # Fallback for any new collections
                 collection_suffix = collection_name.replace("Llava1.5-7B-", "").lower()
