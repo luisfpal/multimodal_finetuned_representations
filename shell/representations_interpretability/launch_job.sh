@@ -10,7 +10,7 @@ JOB_NAME="experiment"
 NUM_GPUS=1              # Number of GPUs
 CPUS=16
 MEM="64GB"
-TIME="01:00:00"
+TIME="03:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 

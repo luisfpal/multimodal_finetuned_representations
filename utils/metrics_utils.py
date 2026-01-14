@@ -407,6 +407,92 @@ def rbf(X: torch.Tensor, sigma=None) -> torch.Tensor:
     return KX
 
 
+def standardize(data: torch.Tensor) -> torch.Tensor:
+    """
+    Standardize the data (zero mean, unit variance).
+
+    Args:
+        data: Input tensor
+
+    Returns:
+        Standardized tensor
+    """
+    return (data - data.mean(0)) / (data.std(0) + 1e-9)
+
+
+def compute_id_correlation_similarity(
+    data1: Union[np.ndarray, torch.Tensor],
+    data2: Union[np.ndarray, torch.Tensor],
+    algorithm: str = "twoNN",
+    k: int = 100,
+    fraction: float = 0.9,
+    return_pvalue: bool = False,
+    permutations: int = 100,
+) -> float:
+    """
+    Compute ID correlation between two datasets.
+
+    Args:
+        data1: First dataset/representation
+        data2: Second dataset/representation
+        algorithm: Algorithm to use for ID estimation ('twoNN', 'MLE', etc.)
+        k: Number of nearest neighbors for MLE
+        fraction: Fraction of points for twoNN
+        return_pvalue: Whether to compute and return p-value (warning: expensive)
+        permutations: Number of permutations for p-value computation
+
+    Returns:
+        ID correlation score (and optionally p-value, but currently only score is returned to fit interface)
+    """
+    # Preprocess and move to GPU if available
+    data1, data2 = _preprocess_data(
+        data1, data2, output_format="tensor", remove_duplicates=False
+    )
+    data1, data2 = _ensure_device(data1, data2)
+
+    data1 = standardize(data1)
+    data2 = standardize(data2)
+
+    # Compute individual IDs
+    id_1 = compute_intrinsic_dimension(
+        data1, algorithm=algorithm, k=k, fraction=fraction
+    )
+    id_2 = compute_intrinsic_dimension(
+        data2, algorithm=algorithm, k=k, fraction=fraction
+    )
+
+    upper_bound = id_1 + id_2
+    lower_bound = min(id_1, id_2)
+
+    # Compute joint ID
+    # Concatenate along feature dimension
+    joint_data = torch.cat([data1, data2], dim=1)
+    original_id = compute_intrinsic_dimension(
+        joint_data, algorithm=algorithm, k=k, fraction=fraction
+    )
+
+    corr = (upper_bound - original_id) / (upper_bound - lower_bound)
+
+    if return_pvalue:
+        # Note: This is computationally expensive, especially for cross-layer analysis
+        count = 0
+        for _ in range(permutations):
+            # Shuffle data2
+            shuffled_data2 = data2[torch.randperm(data2.size(0))]
+            joint_shuffled = torch.cat([data1, shuffled_data2], dim=1)
+            shuffled_id = compute_intrinsic_dimension(
+                joint_shuffled, algorithm=algorithm, k=k, fraction=fraction
+            )
+            if shuffled_id < original_id:
+                count += 1
+
+        # p_value = (count + 1) / (permutations + 1)
+        # For now, we only return correlation to match the compute_similarity signature
+        pass
+
+    return corr
+
+
 def compute_similarity(
     data1: Union[np.ndarray, torch.Tensor],
     data2: Union[np.ndarray, torch.Tensor],
@@ -424,11 +510,16 @@ def compute_similarity(
             - 'distance_correlation': Distance correlation measure
             - 'svcca': SVCCA similarity measure
             - 'linear_cka': Linear CKA similarity measure
+            - 'rbf_cka': RBF CKA similarity measure
+            - 'id_correlation': ID correlation measure
         **kwargs: Additional parameters specific to each measure:
             For 'neighborhood_overlap':
                 - maxk (int): Maximum number of nearest neighbors (default: 30)
                 - use_dadapy (bool): Whether to use dadapy (default: False)
                 - metric (str): Distance metric 'euclidean' or 'cosine' (default: 'euclidean')
+            For 'id_correlation':
+                - algorithm (str): ID estimation algorithm (default: 'twoNN')
+                - return_pvalue (bool): Whether to compute p-value (default: False)
 
     Returns:
         Similarity score between the two representations
@@ -442,6 +533,7 @@ def compute_similarity(
         # "svcca",
         "linear_cka",
         "rbf_cka",
+        "id_correlation",
     }
 
     if measure not in available_measures:
@@ -468,6 +560,14 @@ def compute_similarity(
     elif measure == "rbf_cka":
         sigma = kwargs.get("sigma", None)
         return compute_rbf_cka_similarity(data1, data2, sigma)
+
+    elif measure == "id_correlation":
+        algorithm = kwargs.get("algorithm", "twoNN")
+        return_pvalue = kwargs.get("return_pvalue", False)
+        # Pass other kwargs that might be relevant for ID estimation
+        return compute_id_correlation_similarity(
+            data1, data2, algorithm=algorithm, return_pvalue=return_pvalue
+        )
 
 
 def compute_intrinsic_dimension(
