@@ -10,7 +10,7 @@ JOB_NAME="experiment"
 NUM_GPUS=1              # Number of GPUs
 CPUS=16
 MEM="64GB"
-TIME="03:00:00"
+TIME="02:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -20,8 +20,8 @@ SCRIPTS_DIR="$PROJECT_ROOT/shell/representations_interpretability"
 LOG_DIR="$PROJECT_ROOT/logs"
 
 # Script selection
-# SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
-SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
+SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
+# SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
 
 # =============================================================================
 # Job Execution Script
