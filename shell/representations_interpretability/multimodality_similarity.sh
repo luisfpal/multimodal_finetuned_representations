@@ -2,7 +2,13 @@
 # This script runs multimodality similarity analysis (Text vs Image)
 
 # --- Configuration Section ---
-DATASET_PATH_OR_NAME="$HOME/scratch/datasets/cocoqa_unified"
+DATASET_PATH_OR_NAME=${COCOVQA_CACHE}
+# Uncomment below for Lorenzo runs
+# export PYTHONPATH=${HOME}/multimodal_finetuned_representations
+# export HF_HUB_CACHE=/orfeo/cephfs/scratch/dssc/lpalaciosflores/huggingface/hub
+# DATASET_PATH_OR_NAME=/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/cocoqa_unified
+## Activate virtual environment
+# source "$PROJECT_DIR/.venv/bin/activate"
 
 # Analysis configuration
 # Uses defaults from python script:
@@ -11,7 +17,7 @@ DATASET_PATH_OR_NAME="$HOME/scratch/datasets/cocoqa_unified"
 # SIMILARITY_MEASURES="neighborhood_overlap,linear_cka"
 
 # Processing parameters
-BATCH_SIZE="25"
+BATCH_SIZE="1"
 SEED="42"
 
 # Directory configuration
@@ -25,7 +31,7 @@ FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
 # Models to evaluate
 MODELS=(
     "llava-hf/llava-1.5-7b-hf"
-    "l11p/llava-v1.5-7b-pretrained-lbasile"
+    "l11p/llava-v1.5-7b-pretrained-liuhaotian"
 )
 
 # --- Environment Setup ---
@@ -41,7 +47,7 @@ for MODEL_NAME in "${MODELS[@]}"; do
     echo "🤖 Processing Model: $MODEL_NAME"
     echo "----------------------------------------------------------------"
 
-    python "$FILEPATH" \
+    python3 "$FILEPATH" \
         --results-dir "$RESULTS_DIR" \
         --dataset-path-or-name "$DATASET_PATH_OR_NAME" \
         --model-name-or-path "$MODEL_NAME" \

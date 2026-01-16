@@ -2,7 +2,6 @@ import os
 import gc
 import torch
 import io
-from dotenv import load_dotenv
 from huggingface_hub import create_repo, HfApi
 from utils import setup_multimodal_model, load_hf_model_and_processor_or_tokenizer
 
@@ -14,13 +13,7 @@ PRETRAINED_PROJECTOR_NAME_ORIGINAL = (
 PRETRAINED_PROJECTOR_NAME_LORENZO = (
     "lbasile/llava-v1.5-mlp2x-336px-pretrain-vicuna-7b-v1.5"
 )
-
-load_dotenv()
-
-CACHE_DIR = os.getenv(
-    "HF_HUB_CACHE",
-    os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
-)
+CACHE_DIR = os.path.expanduser("~/scratch/huggingface/hub/")
 
 
 def push_models_to_hub():
@@ -34,7 +27,7 @@ def push_models_to_hub():
         replace_pretrained_projector=True,
         device_map="cpu",
         attn_implementation="sdpa",
-        model_dtype=torch.float32,
+        model_dtype=torch.float16,
         skip_processor=False,
     )
 
@@ -74,7 +67,7 @@ Original pretrained LLaVA v1.5 7B model with Vicuna 1.5 LM and pretrained projec
         replace_pretrained_projector=True,
         device_map="cpu",
         attn_implementation="sdpa",
-        model_dtype=torch.float32,
+        model_dtype=torch.float16,
         skip_processor=False,
     )
 
@@ -112,37 +105,8 @@ Lorenzo Basile's (lbasile) pretrained LLaVA v1.5 7B model with Vicuna 1.5 LM and
     gc.collect()
 
 
-def save_models_locally():
-    print("Downloading original pretrained model...")
-    model, processor = load_hf_model_and_processor_or_tokenizer(
-        model_name_or_path="l11p/llava-v1.5-7b-pretrained-liuhaotian",
-        cache_dir=CACHE_DIR,
-        dtype=torch.float32,
-        device_map="cpu",
-        attn_implementation="sdpa",
-    )
-
-    del model, processor
-    torch.cuda.empty_cache()
-    gc.collect()
-
-    print("Downloading Lorenzo's pretrained model...")
-    model, processor = load_hf_model_and_processor_or_tokenizer(
-        model_name_or_path="l11p/llava-v1.5-7b-pretrained-lbasile",
-        cache_dir=CACHE_DIR,
-        dtype=torch.float32,
-        device_map="cpu",
-        attn_implementation="sdpa",
-    )
-    del model, processor
-    torch.cuda.empty_cache()
-    gc.collect()
-
-
 def main():
-    # push_models_to_hub()
-    save_models_locally()
-
+    push_models_to_hub()
 
 if __name__ == "__main__":
     main()

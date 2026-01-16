@@ -7,10 +7,12 @@
 # SLURM settings
 ACCOUNT="dssc"
 JOB_NAME="experiment"
+PARTITION="H100"
+GPU_TYPE="H100"
 NUM_GPUS=1              # Number of GPUs
 CPUS=16
 MEM="64GB"
-TIME="02:00:00"
+TIME="07:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -56,22 +58,6 @@ export TOKENIZERS_PARALLELISM=\$TOKENIZERS_PARALLELISM
 
 bash "$SCRIPT_NAME"
 JOB_EOF
-
-# =============================================================================
-# Auto-detect GPU partition
-# =============================================================================
-
-GPU_INFO=$(sinfo -h -o "%P %G" 2>/dev/null | grep -iE "A100|H100" | head -1)
-[[ -z "$GPU_INFO" ]] && GPU_INFO=$(sinfo -h -o "%P %G" 2>/dev/null | grep -i gpu | head -1)
-
-if [[ -n "$GPU_INFO" ]]; then
-    PARTITION=$(echo "$GPU_INFO" | awk '{gsub(/\*/, ""); print $1}')
-    GPU_TYPE=$(echo "$GPU_INFO" | awk -F: '{print $2}')
-    echo "🔍 Detected: PARTITION=$PARTITION, GPU=$GPU_TYPE"
-else
-    PARTITION="DGX"; GPU_TYPE="A100"
-    echo "⚠️  Defaults: PARTITION=$PARTITION, GPU=$GPU_TYPE"
-fi
 
 # =============================================================================
 # Generate SBATCH Script

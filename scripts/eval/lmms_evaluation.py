@@ -27,6 +27,22 @@ RANDOM_SEED = NUMPY_RANDOM_SEED = TORCH_RANDOM_SEED = FEWSHOT_RANDOM_SEED = 42
 DEFAULT_MAX_NEW_TOKENS = 128
 LONG_ANSWER_MAX_NEW_TOKENS = 1024
 
+# Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
+TASK_LIMITS = {
+    # "scienceqa_img": 25,  # 2018 samples
+    # "mme": 25,  # 2374 samples
+    "textvqa_val": 2000,  # 5000 samples
+    "pope": 2000,  # 9000 samples
+    "gqa": 2000,  # 12578 samples
+    "seedbench": 2000,  # 17990 samples
+    "mmbench_en_dev": 2000,  # 4330 samples
+    "mmbench_cn_dev": 2000,  # 4330 samples
+    "mmvet": 20,  # 218 samples (API judge required)
+    "vizwiz_vqa_val": 2000,  # 4320 samples
+    "vqav2_val": 2000,  # 214000 samples
+    # "llava_in_the_wild": 15,  # 60 samples, heavy post processing
+}
+
 # Tasks requiring longer outputs (reasoning, descriptions)
 LONG_ANSWER_TASKS = {
     "llava_in_the_wild",
@@ -70,6 +86,8 @@ MODELS_COLLECTION = {
     "Llava1.5-7B-frozen": "l11p/llava-v1.5-7b-lbasile-frozen-llm-step-",
     "Llava1.5-7B-0-16": "l11p/llava-v1.5-7b-lbasile-layers-0-16-step-",
     "Llava1.5-7B-16-32": "l11p/llava-v1.5-7b-lbasile-layers-16-32-step-",
+    "Llava1.5-7B-0-8": "l11p/llava-v1.5-7b-lbasile-layers-0-8-step-",
+    "Llava1.5-7B-8-16": "l11p/llava-v1.5-7b-lbasile-layers-8-16-step-",
 }
 
 
@@ -196,20 +214,31 @@ def run_evaluation(
 ) -> float:
     """
     Run a single model evaluation and save results.
-    
+
     Returns elapsed time in seconds.
     """
     model_identifier = model_name.replace("/", "_")
     label = model_label or model_name
-    
+
     print(f"[cyan]>>> {label}[/cyan]")
     start_time = time.time()
-    
+
+    # --- Limit Logic ---
+    # 1. User-provided --limit takes highest priority.
+    # 2. If no override, check for a task-specific default limit.
+    # 3. Otherwise, no limit.
+    limit = args.limit
+    if limit is None:
+        limit = TASK_LIMITS.get(args.task_name)
+
+    if limit:
+        print(f"[yellow]Applying sample limit: {limit}[/yellow]")
+
     # Device mapping logic (inferred from NUM_GPUS):
     # - NUM_GPUS>1: device_map="" (empty) → accelerate distributed mode
     # - NUM_GPUS=1: device_map=auto → plain python with HF auto-sharding
     num_gpus = int(os.environ.get("NUM_GPUS", 1))
-    
+
     if num_gpus > 1:
         # Empty string signals to llava_hf that we're using accelerate distributed
         # The model will use accelerator.device for device placement
@@ -217,7 +246,7 @@ def run_evaluation(
     else:
         # Single GPU: use HF auto device mapping
         model_args = f"pretrained={model_name},device_map=auto"
-    
+
     results = simple_evaluate(
         model=args.lmms_eval_model,
         model_args=model_args,
@@ -225,8 +254,8 @@ def run_evaluation(
         num_fewshot=args.num_fewshot,
         batch_size=args.batch_size,
         log_samples=True,
-        limit=args.limit,
-        # system_instruction=SYSTEM_INSTRUCTION,
+        limit=limit,
+        system_instruction=SYSTEM_INSTRUCTION,
         apply_chat_template="chat" in args.lmms_eval_model,  # Auto-enable for chat models
         cli_args=create_cli_args(output_dir),
         gen_kwargs=gen_kwargs,
@@ -235,10 +264,9 @@ def run_evaluation(
         torch_random_seed=TORCH_RANDOM_SEED,
         fewshot_random_seed=FEWSHOT_RANDOM_SEED,
     )
-    
     elapsed_sec = time.time() - start_time
     print(f"[green]✓ {label}: {format_elapsed_time(elapsed_sec)}[/green]")
-    
+
     # In distributed mode, only rank 0 should save results
     # This prevents race conditions and duplicate saves
     is_main_process = True
@@ -251,7 +279,7 @@ def run_evaluation(
                     print("[dim]  (Rank {}: skipping save - main process handles it)[/dim]".format(dist.get_rank()))
         except Exception:
             pass  # Not in distributed mode
-    
+
     # Only main process saves results
     if is_main_process:
         # Save metrics (with defensive checks for NoneType)
@@ -267,7 +295,7 @@ def run_evaluation(
             )
         else:
             print(f"[yellow]⚠ Warning: Incomplete results for {args.task_name}, skipping metrics save[/yellow]")
-        
+
         # Save responses (with defensive check)
         response_identifier = f"{model_identifier}_{suffix}" if suffix else model_identifier
         if results and "samples" in results:
@@ -280,11 +308,11 @@ def run_evaluation(
             )
         else:
             print("[yellow]⚠ Warning: No samples found, skipping responses save[/yellow]")
-    
+
     # Memory cleanup WITHOUT barriers (barriers cause deadlock if one process errors)
     del results
     gc.collect()
-    
+
     # Clear CUDA cache - no synchronization needed
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -293,9 +321,9 @@ def run_evaluation(
             with torch.cuda.device(device_id):
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
-    
+
     gc.collect()
-    
+
     return elapsed_sec
 
 
@@ -314,16 +342,16 @@ def eval_finetuned_pretrained(args) -> None:
 
     eval_start_time = time.time()
 
-    # # Evaluate finetuned model
-    # run_evaluation(
-    #     model_name=args.fine_tuned_model_name,
-    #     output_dir=effective_output_dir,
-    #     args=args,
-    #     gen_kwargs=gen_kwargs,
-    #     model_label="finetuned model",
-    #     prefix="finetuned_pretrained",
-    #     suffix="finetuned",
-    # )
+    # Evaluate finetuned model
+    run_evaluation(
+        model_name=args.fine_tuned_model_name,
+        output_dir=effective_output_dir,
+        args=args,
+        gen_kwargs=gen_kwargs,
+        model_label="finetuned model",
+        prefix="finetuned_pretrained",
+        suffix="finetuned",
+    )
 
     # Evaluate pretrained model
     print()
@@ -361,7 +389,7 @@ def eval_single(args) -> None:
         prefix="single",
         suffix="",
     )
-    
+
     print()
     print("[green]✓ Complete[/green]")
     print(f"[cyan]  Saved to: {args.output_dir}[/cyan]")
@@ -379,7 +407,7 @@ def eval_collection(args) -> None:
         return
 
     model_prefix = MODELS_COLLECTION[args.collection_name]
-    checkpoints = list(range(1000, 10001, 1000))
+    checkpoints = list(range(4000, 10001, 1000))
 
     os.makedirs(args.output_dir, exist_ok=True)
     effective_output_dir = os.path.join(args.output_dir, args.collection_name)
@@ -404,28 +432,28 @@ def eval_collection(args) -> None:
                 prefix=args.collection_name,
                 suffix="",
             )
-            
+
             # Memory cleanup after checkpoint (no barriers - prevents deadlock)
             print("[dim]→ Cleaning up...[/dim]")
-            
+
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
-            
+
             gc.collect()
-            
+
             # NO barrier here - causes deadlock if one process errors
             # Memory cleanup doesn't need perfect synchronization
-            
+
         except Exception as e:
             print(f"[bold red]✗ Error: {model_name}[/bold red]")
             print(f"  {str(e)[:200]}")  # Truncate long errors
-            
+
             # Cleanup on error (no barriers to prevent deadlock)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             gc.collect()
-            
+
             continue
         print()
 

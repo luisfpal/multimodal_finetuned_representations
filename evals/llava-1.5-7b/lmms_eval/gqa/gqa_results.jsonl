@@ -40,3 +40,6 @@
 {"experiment_name": "Llava1.5-7B-16-32/l11p_llava-v1.5-7b-lbasile-layers-16-32-step-10000", "alias": "gqa", "exact_match,none": 0.5657497217363651, "exact_match_stderr,none": 0.0044197092141201, "elapsed_time": "1h 5m 11s"}
 {"experiment_name": "Llava1.5-7B-0-16/l11p_llava-v1.5-7b-lbasile-layers-0-16-step-10000", "alias": "gqa", "exact_match,none": 0.6128955318810622, "exact_match_stderr,none": 0.0043432896122893765, "elapsed_time": "1h 5m 23s"}
 {"experiment_name": "Llava1.5-7B-frozen/l11p_llava-v1.5-7b-lbasile-frozen-llm-step-10000", "alias": "gqa", "exact_match,none": 0.46454126252186356, "exact_match_stderr,none": 0.0044471996037433155, "elapsed_time": "1h 6m 33s"}
+{"experiment_name": "single/l11p_llava-v1.5-7b-lbasile-layers-8-16-step-10000", "alias": "gqa", "exact_match,none": 0.6034345682938465, "exact_match_stderr,none": 0.004361983209256785, "elapsed_time": "25m 1s"}
+{"experiment_name": "single/l11p_llava-v1.5-7b-lbasile-layers-0-8-step-10000", "alias": "gqa", "exact_match,none": 0.586579742407378, "exact_match_stderr,none": 0.00439107521688694, "elapsed_time": "59m 31s"}
+{"experiment_name": "single/l11p_llava-7b-lbasile", "alias": "gqa", "exact_match,none": 0.6045, "exact_match_stderr,none": 0.010936163625212346, "elapsed_time": "2m 46s"}

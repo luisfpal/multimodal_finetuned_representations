@@ -168,6 +168,69 @@ def compute_neighborhood_overlap(
         return overlap_sum / (maxk * N)
 
 
+def compute_information_imbalance(
+    data1: Union[np.ndarray, torch.Tensor],
+    data2: Union[np.ndarray, torch.Tensor],
+    metric: str = "euclidean",
+) -> float:
+    """
+    Compute Information Imbalance from data1 to data2.
+    Measures how well distances in data1 predict neighbors in data2.
+
+    Args:
+        data1: First dataset/representation (Space A)
+        data2: Second dataset/representation (Space B)
+        metric: Distance metric 'euclidean' or 'cosine'
+
+    Returns:
+        Information Imbalance score (lower is better)
+    """
+    # Preprocess and move to GPU if available
+    # We keep duplicates to preserve the exact structure of the representation
+    data1, data2 = _preprocess_data(
+        data1, data2, output_format="tensor", remove_duplicates=False
+    )
+    data1, data2 = _ensure_device(data1, data2)
+
+    N = data1.shape[0]
+
+    with torch.no_grad():
+        if metric == "cosine":
+            data1 = F.normalize(data1, dim=1)
+            data2 = F.normalize(data2, dim=1)
+            # Euclidean distance on normalized vectors is monotonic with cosine distance
+
+        # 1. Find Nearest Neighbors in Space A (data1)
+        # Distances in A
+        d1 = torch.cdist(data1, data1)
+
+        # Get index of first NN (k=2, index 1 because index 0 is self)
+        # largest=False -> smallest distances
+        _, indices_1 = torch.topk(d1, k=2, dim=1, largest=False)
+        nn_indices_1 = indices_1[:, 1]  # shape (N,)
+
+        del d1  # Save memory
+
+        # 2. Compute Ranks in Space B (data2)
+        d2 = torch.cdist(data2, data2)
+
+        # Extract distances to the specific neighbors identified in A
+        # d2[i, nn_indices_1[i]]
+        row_indices = torch.arange(N, device=d2.device)
+        dists_to_nn = d2[row_indices, nn_indices_1].unsqueeze(1)  # shape (N, 1)
+
+        # Count how many points in B are strictly closer than this distance
+        # This corresponds to the rank (0-based)
+        # matches: imb = 2*torch.mean((ind_B==ind_A[:,1].unsqueeze(1)).int().argmax(dim=1).float())/len(A)
+        ranks = (d2 < dists_to_nn).sum(dim=1).float()
+
+        # 3. Compute Imbalance
+        # The factor 2/N normalizes the rank (which averages N/2 for random) to 1.
+        imb = 2 * ranks.mean() / N
+
+        return imb.item()
+
+
 # https://github.com/lorenzobasile/IDCorrelation/blob/main/utils/metrics.py
 def compute_distance_correlation(
     latent: Union[np.ndarray, torch.Tensor], control: Union[np.ndarray, torch.Tensor]
@@ -546,6 +609,9 @@ def compute_similarity(
         "linear_cka",
         "rbf_cka",
         "id_correlation",
+        "information_imbalance",
+        "information_imbalance_reversed",
+        "information_imbalance_mean",
     }
 
     if measure not in available_measures:
@@ -558,6 +624,21 @@ def compute_similarity(
         use_dadapy = kwargs.get("use_dadapy", False)
         metric = kwargs.get("metric", "euclidean")
         return compute_neighborhood_overlap(data1, data2, maxk, use_dadapy, metric)
+
+    elif measure == "information_imbalance":
+        metric = kwargs.get("metric", "euclidean")
+        return compute_information_imbalance(data1, data2, metric)
+
+    elif measure == "information_imbalance_reversed":
+        metric = kwargs.get("metric", "euclidean")
+        return compute_information_imbalance(data2, data1, metric)
+
+    elif measure == "information_imbalance_mean":
+        metric = kwargs.get("metric", "euclidean")
+        return 0.5 * (
+            compute_information_imbalance(data1, data2, metric)
+            + compute_information_imbalance(data2, data1, metric)
+        )
 
     elif measure == "distance_correlation":
         return compute_distance_correlation(data1, data2)

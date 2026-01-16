@@ -7,7 +7,7 @@ set -e  # Exit on error
 # Uncomment ONE task to evaluate:
 #
 # Safe tasks (no external API):
-#   scienceqa_img, mme, pope, gqa, textvqa_val, seedbench
+#   scienceqa_img, mme, pope, gqa, textvqa_val, seedbench, vizwiz_vqa_val, vqav2_val
 #
 # Submission-only (no LLM judge):
 #   vizwiz_vqa_test, vqav2_test
@@ -19,24 +19,25 @@ set -e  # Exit on error
 # =============================================================================
 # EVALUATION TIMING REFERENCE (1 A100 GPU, 40GB VRAM)
 # =============================================================================
-# ┌─────────────────┬─────────────┬─────────────┬─────────────────────┬─────────────┐
-# │ Benchmark       │ Finetuned   │ Pretrained  │ Collection (~ per)  │ Notes       │
-# ├─────────────────┼─────────────┼─────────────┼─────────────────────┼─────────────┤
-# │ scienceqa_img   │ ~4'         │ ~30'        │ -                   │ Safe        │
-# │ mme            │ ~7'         │ ~41'        │ ~4h25m              │ Safe        │
-# │ textvqa_val    │ ~14'        │ ~2h11'      │ ~55m                │ Safe        │
-# │ pope           │ ~16'        │ ~2h10'      │ ~1h30m              │ Safe        │
-# │ gqa            │ ~31'        │ ~4h4'       │ ~1h30m              │ Safe        │
-# │ seedbench      │ ~5h3'       │ ~15h        │ multi-GPU rec'd     │ Safe        │
-# │ mmbench_en_dev │ ~8'         │ ~2h24'      │ ~10m                │ API req'd   │
-# │ mmbench_cn_dev │ ~11'        │ ~4h         │ -                   │ API req'd   │
-# │ llava_in_the_wild│ ~7'       │ ~1h4'       │ ~20m                │ API req'd   │
-# │ mmvet          │ ~2h41'      │ ~45'        │ -                   │ API req'd   │
-# └─────────────────┴─────────────┴─────────────┴─────────────────────┴─────────────┘
+# ┌─────────────────┬─────────┬─────────────┬─────────────┬─────────────────────┬─────────────┐
+# │ Benchmark       │ Samples │ Finetuned   │ Pretrained  │ Collection (~ per)  │ Notes       │
+# ├─────────────────┼─────────┼─────────────┼─────────────┼─────────────────────┼─────────────┤
+# │ scienceqa_img   │ 2018    │ ~4'         │ ~30'        │ -                   │ Safe        │
+# │ mme            │ 2374    │ ~7'         │ ~41'        │ ~4h25m              │ Safe        │
+# │ textvqa_val    │ 5000    │ ~14'        │ ~2h11'      │ ~55m                │ Safe        │
+# │ pope           │ 9000    │ ~16'        │ ~2h10'      │ ~1h30m              │ Safe        │
+# │ gqa            │ 12578   │ ~31'        │ ~4h4'       │ ~1h30m              │ Safe        │
+# │ seedbench      │ 17990   │ ~5h3'       │ ~15h        │ multi-GPU rec'd     │ Safe        │
+# │ mmbench_en_dev │ 4330    │ ~8'         │ ~2h24'      │ ~10m                │ API req'd   │
+# │ mmbench_cn_dev │ 4330    │ ~11'        │ ~4h         │ -                   │ API req'd   │
+# │ llava_in_the_wild│ 60     │ ~7'        │ ~1h4'       │ ~20m                │ API req'd   │
+# │ mmvet          │ 218       │ ~2h41'      │ ~45'        │ -                   │ API req'd   │
+# │ vizwiz_vqa_val │ 4320    │ -          │ -          │ -                   │ Safe        │
+# │ vqav2_val      │ 214000  │ -          │ -          │ -                   │ Safe        │
+# └─────────────────┴─────────┴─────────────┴─────────────┴─────────────────────┴─────────────┘
 #
 # Collection models: Llava1.5-7B, Llava1.5-7B-0-16, Llava1.5-7B-frozen, Llava1.5-7B-16-32
 # API tasks: Use openai/gpt-oss-120b for reliable scoring (Orfeo Qwen may fail)
-# =============================================================================
 
 # Available tasks (uncomment one):
 # TASK_NAME="scienceqa_img" # Done
@@ -46,11 +47,15 @@ set -e  # Exit on error
 # TASK_NAME="gqa" # Done
 # TASK_NAME="seedbench" # Running
 # TASK_NAME="mmbench_en_dev" # Done
-# TASK_NAME="mmbench_cn_dev" # Unfinished: breaks for Llava1.5-7B-frozen starting on checkpoint 4000
 # TASK_NAME="llava_in_the_wild" # Done
+# TASK_NAME="vizwiz_vqa_val" # To do
+# TASK_NAME="vqav2_val" # To do
+# TASK_NAME="mmbench_cn_dev" # To finish
 # TASK_NAME="mmvet" # Orfeo models are not good enough to parse the answers?
-# TASK_NAME="vizwiz_vqa_test" # To consider
-# TASK_NAME="vqav2_test" # Intensive # To consider
+
+# This script expects TASK_NAME to be set via environment variable.
+# Fallback to specified task name if not set.
+TASK_NAME="${TASK_NAME:-vizwiz_vqa_val}"
 
 # =============================================================================
 # EVALUATION PARAMETERS
@@ -58,19 +63,19 @@ set -e  # Exit on error
 
 BATCH_SIZE=1                # Limitation of lmms-eval for LLaVA models (must be 1)
 NUM_FEWSHOT=""              # Empty = default, or set number (e.g., "5")
-LIMIT=""                  # Empty = all samples, or set number (e.g., "100")
+# Default sample limits are now defined in the Python script.
+# Set LIMIT here to override for a specific run, e.g., LIMIT="50"
+LIMIT=""                    # Empty = use Python script's default, or set number
 MAX_NEW_TOKENS=""           # Empty = auto (128/1024 based on task), or set number
 
 # Multi-GPU: Inherited from launch.sh, defaults to 1 if not set
 NUM_GPUS="${NUM_GPUS:-1}"
-# Execution mode automatically inferred: NUM_GPUS>1 → accelerate, NUM_GPUS=1 → plain python
-
 
 # =============================================================================
 # PATHS & MODEL CONFIGURATION
 # =============================================================================
 MODEL="llava-1.5-7b"  # Used for output directory naming
-PROJECT_ROOT="$HOME/multimodal_representations_analysis"
+PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 OUTPUT_DIR="$PROJECT_ROOT/evals/$MODEL/lmms_eval/$TASK_NAME"
 
 # Model names
@@ -96,18 +101,14 @@ export HF_DATASETS_CACHE="$DATASETS_CACHE_DIR"
 export LMMS_EVAL_USE_CACHE="True"
 export LMMS_EVAL_HOME="$HOME/scratch/lmms_eval_cache"
 
-# Multi-GPU: Prevent CUDA memory fragmentation (recommended by PyTorch)
+# Multi-GPU: Prevent CUDA memory fragmentation
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
-# Note: OPENAI_API_KEY is either:
-#   1. Loaded from .env (Groq fallback)
-#   2. Generated by launch.sh from Orfeo JWT (if Orfeo config present)
 # =============================================================================
 # EXECUTION
 # ==============================================================================
 
 PYTHON_SCRIPT="scripts/eval/lmms_evaluation.py"
-PYTHON_SCRIPT="scripts/eval/lmeval_evaluation.py"
 
 # =============================================================================
 # EVALUATION CONFIGURATION
@@ -129,16 +130,6 @@ if [ -n "$NUM_FEWSHOT" ]; then
 else
     printf "║ Few-shot: %-49s ║\n" "default"
 fi
-if [ -n "$LIMIT" ]; then
-    printf "║ Limit: %-52s ║\n" "$LIMIT samples"
-else
-    printf "║ Limit: %-52s ║\n" "all samples"
-fi
-if [ -n "$MAX_NEW_TOKENS" ]; then
-    printf "║ Max Tokens: %-47s ║\n" "$MAX_NEW_TOKENS"
-else
-    printf "║ Max Tokens: %-47s ║\n" "auto"
-fi
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -155,19 +146,16 @@ base_args=(
 [ -n "$NUM_FEWSHOT" ] && base_args+=(--num-fewshot "$NUM_FEWSHOT")
 [ -n "$LIMIT" ] && base_args+=(--limit "$LIMIT")
 [ -n "$MAX_NEW_TOKENS" ] && base_args+=(--max-new-tokens "$MAX_NEW_TOKENS")
-# [ "$CACHE_REQUESTS" = "true" ] && base_args+=(--cache-requests)  # Disabled
 
-# Run evaluation function (auto-select: accelerate if NUM_GPUS>1, else plain python)
+# Run evaluation function
 run_evaluation() {
     export NUM_GPUS
-    
+
     if [ "$NUM_GPUS" -gt 1 ]; then
-        # Multi-GPU with accelerate (data parallelism)
         echo "[Accelerate distributed: $NUM_GPUS GPUs]"
         accelerate launch --num_processes="$NUM_GPUS" \
             "$PROJECT_ROOT/$PYTHON_SCRIPT" "${base_args[@]}" "$@"
     else
-        # Single GPU with plain python (HF auto device mapping)
         echo "[Plain Python: device_map=auto]"
         python "$PROJECT_ROOT/$PYTHON_SCRIPT" "${base_args[@]}" "$@"
     fi
@@ -178,42 +166,21 @@ run_evaluation() {
 # =============================================================================
 
 if [ -n "$SINGLE_MODEL" ]; then
-    # Mode 1: Single model
     echo "[Single Model]"
     run_evaluation --model-name-or-path "$SINGLE_MODEL"
 
 elif [ "$FINETUNED_PRETRAINED" = "true" ]; then
-    # Mode 2: Finetuned + Pretrained
     echo "[Finetuned + Pretrained]"
     run_evaluation \
         --fine-tuned-model-name "$FINE_TUNED_MODEL_NAME" \
         --pretrained-model-name "$PRETRAINED_MODEL_NAME"
 
 elif [ -n "$COLLECTION_NAME" ]; then
-    # Mode 3: Collection
     echo "[Collection]"
     run_evaluation --collection-name "$COLLECTION_NAME"
 
 else
-    # No mode specified - show usage
-    cat << 'EOF'
-Error: No evaluation mode specified.
-
-USAGE:
-  1. Edit script to set TASK_NAME and parameters
-  2. Run with one of these environment variables:
-
-  SINGLE_MODEL=llava-hf/llava-1.5-7b-hf ./lmms_evaluation.sh
-  FINETUNED_PRETRAINED=true ./lmms_evaluation.sh
-  COLLECTION_NAME=Llava1.5-7B ./lmms_evaluation.sh
-
-PARAMETERS (edit in script):
-  TASK_NAME         - Task to evaluate (e.g., textvqa_val)
-  BATCH_SIZE        - Batch size (default: 1)
-  NUM_FEWSHOT       - Few-shot examples (empty = default)
-  LIMIT             - Max samples (empty = all)
-  MAX_NEW_TOKENS    - Max generation tokens (empty = auto)
-EOF
+    echo "Error: No evaluation mode specified."
     exit 1
 fi
 

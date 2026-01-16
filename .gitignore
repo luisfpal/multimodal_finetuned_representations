@@ -30,6 +30,10 @@ logs/
 # Experimental files
 tinkering/
 
+# Backup files and directories
+*.bak
+backup/
+
 # Evaluation data directories (exclude large subdirs)
 evals/**/finetuned_pretrained/
 evals/**/Llava1.5-7B*/
@@ -60,3 +64,6 @@ evals/**/*
 
 # Internal docs
 internal_docs/
+
+# Tests
+tests/

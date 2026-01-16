@@ -29,11 +29,14 @@ SIMILARITY_MEASURES = [
     "linear_cka",
     "distance_correlation",
     "id_correlation",
+    "information_imbalance",
+    "information_imbalance_reversed",
+    "information_imbalance_mean",
 ]
 
 COCOQA_DATASET_ARGS = {
     "guide_text": "Answer the question using a single word or phrase.\n",
-    "downsample_size": 2500,
+    "downsample_size": 10000,
 }
 
 DATASETS_CONFIG = {

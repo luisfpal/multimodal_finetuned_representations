@@ -1,21 +1,40 @@
 #!/bin/bash
-
 # =============================================================================
-# Configuration
+# HOW TO USE
+# =============================================================================
+# This script submits a SLURM job for flexible evaluation scenarios on a
+# SINGLE benchmark. The benchmark to run is NOT set here; it is set inside
+# the `lmms_evaluation.sh` script.
+#
+# This launcher is for:
+# - Evaluating a whole collection of model checkpoints against one benchmark.
+# - Evaluating the main finetuned vs. pretrained models against one benchmark.
+# - Evaluating a single model against one benchmark.
+#
+# Usage:
+# 1. Configure the SLURM settings below.
+# 2. Go to `shell/eval/lmms_evaluation.sh` and uncomment the single `TASK_NAME`
+#    you want to run.
+# 3. Come back to this file and set the `EVAL_MODE` variable to choose what
+#    set of models to run against that benchmark.
+# 4. Run the script:
+#    bash shell/eval/launch_lmms.sh
 # =============================================================================
 
 # SLURM settings
 ACCOUNT="dssc"
 JOB_NAME="experiment"
+PARTITION="DGX"
+GPU_TYPE="A100"
 NUM_GPUS=1              # Number of GPUs for data parallelism (1 = single GPU, more stable)
-CPUS=16
-MEM="48GB"
-TIME="08:00:00"        
-NODELIST="dgx001"             # Empty = any available node
-EXCLUDE="dgx002"              # Empty = no exclusions
+CPUS=12
+MEM="64GB"
+TIME="01:00:00"
+NODELIST=""             # Empty = any available node
+EXCLUDE=""              # Empty = no exclusions
 
 # Project paths (must be defined before JOB_COMMANDS heredoc)
-PROJECT_ROOT="$HOME/multimodal_representations_analysis"
+PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 SCRIPTS_DIR="$PROJECT_ROOT/shell/eval"
 LOG_DIR="$PROJECT_ROOT/logs"
 SCRIPT_NAME="lmms_evaluation.sh"
@@ -29,10 +48,10 @@ SCRIPT_NAME="lmms_evaluation.sh"
 #   "FINETUNED_PRETRAINED=true" - Finetuned preset
 #   "SINGLE_MODEL=<model_id>" - Specific model
 #   "COLLECTIONS" - Loop all collections below
-EVAL_MODE="FINETUNED_PRETRAINED=true"
+# EVAL_MODE="FINETUNED_PRETRAINED=true"
 # EVAL_MODE="COLLECTIONS"
-# EVAL_MODE="SINGLE_MODEL=l11p/llava-v1.5-7b-lbasile-full-step-1000"
-# EVAL_MODE="COLLECTION_NAME=Llava1.5-7B-16-32"
+EVAL_MODE="SINGLE_MODEL=l11p/llava-7b-lbasile"
+# EVAL_MODE="COLLECTION_NAME=Llava1.5-7B-8-16"
 
 # Collections to evaluate (used when EVAL_MODE="COLLECTIONS")
 COLLECTIONS=(
@@ -50,6 +69,48 @@ read -r -d '' JOB_COMMANDS << JOB_EOF || true
 # =============================================================================
 # ENVIRONMENT SETUP
 # =============================================================================
+
+# Robust CUDA configuration for both H100 (module) and A100 (manual)
+setup_cuda() {
+    # 1. Try module load (standard on H100)
+    if command -v module &> /dev/null; then
+        module load cuda/12.1 2>/dev/null || true
+    fi
+
+    # 2. If nvcc is missing/broken, try to find a valid existing installation
+    #    This often happens on A100 nodes where modules might differ
+    if ! command -v nvcc &> /dev/null || [ ! -x "\$(command -v nvcc)" ]; then
+        # List of potential CUDA paths to check (prefer 12.1, then 12.x, then default)
+        local candidates=("/usr/local/cuda-12.1" "/usr/local/cuda-12.2" "/usr/local/cuda-12" "/usr/local/cuda")
+
+        for path in "\${candidates[@]}"; do
+            if [ -x "\$path/bin/nvcc" ]; then
+                echo "🔧 Manually configuring CUDA from: \$path"
+                export CUDA_HOME="\$path"
+                export PATH="\$path/bin:\$PATH"
+                export LD_LIBRARY_PATH="\$path/lib64:\$LD_LIBRARY_PATH"
+                break
+            fi
+        done
+    fi
+
+    # Verification and Enforcement
+    if command -v nvcc &> /dev/null; then
+        local nvcc_path=\$(command -v nvcc)
+        # Resolve symlinks if possible, or assume standard structure
+        local cuda_root=\$(dirname \$(dirname "\$nvcc_path"))
+
+        echo "✓ CUDA active: \$nvcc_path"
+        echo "  → Enforcing CUDA_HOME=\$cuda_root"
+
+        export CUDA_HOME="\$cuda_root"
+        export PATH="\$cuda_root/bin:\$PATH"
+        export LD_LIBRARY_PATH="\$cuda_root/lib64:\$LD_LIBRARY_PATH"
+    else
+        echo "⚠️  WARNING: nvcc not found! Compilation may fail."
+    fi
+}
+setup_cuda
 
 TOKENIZERS_PARALLELISM="false"
 
@@ -84,14 +145,14 @@ if [ -n "\${ORFEO_AUTH_URL}" ] && [ -n "\${ORFEO_CLIENT_ID}" ]; then
       -d "username=\${ORFEO_USERNAME}" \\
       -d "password=\${ORFEO_CLIENT_SECRET}" \\
       -d "scope=profile" | jq -r '.access_token')
-    
+
     if [ -z "\$JWT" ] || [ "\$JWT" = "null" ]; then
         echo "❌ Failed to get JWT token from Orfeo!"
         exit 1
     fi
-    
+
     echo "✓ JWT token acquired"
-    
+
     # Export for Python/lmms-eval
     export OPENAI_API_KEY="\$JWT"
     export OPENAI_API_URL="\${ORFEO_LLM_URL}"
@@ -119,22 +180,6 @@ else
     $EVAL_MODE "$SCRIPTS_DIR/$SCRIPT_NAME"
 fi
 JOB_EOF
-
-# =============================================================================
-# Auto-detect GPU partition
-# =============================================================================
-
-GPU_INFO=$(sinfo -h -o "%P %G" 2>/dev/null | grep -iE "A100|H100" | head -1)
-[[ -z "$GPU_INFO" ]] && GPU_INFO=$(sinfo -h -o "%P %G" 2>/dev/null | grep -i gpu | head -1)
-
-if [[ -n "$GPU_INFO" ]]; then
-    PARTITION=$(echo "$GPU_INFO" | awk '{gsub(/\*/, ""); print $1}')
-    GPU_TYPE=$(echo "$GPU_INFO" | awk -F: '{print $2}')
-    echo "🔍 Detected: PARTITION=$PARTITION, GPU=$GPU_TYPE"
-else
-    PARTITION="DGX"; GPU_TYPE="A100"
-    echo "⚠️  Defaults: PARTITION=$PARTITION, GPU=$GPU_TYPE"
-fi
 
 # =============================================================================
 # Generate SBATCH Script

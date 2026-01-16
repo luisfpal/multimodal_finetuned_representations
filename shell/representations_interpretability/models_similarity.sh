@@ -20,7 +20,7 @@ FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
 # Model A (Rows)
 MODEL_A="llava-hf/llava-1.5-7b-hf"
 # Model B (Columns)
-MODEL_B="l11p/llava-v1.5-7b-pretrained-lbasile"
+MODEL_B="l11p/llava-v1.5-7b-pretrained-liuhaotian"
 
 # --- Environment Setup ---
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
