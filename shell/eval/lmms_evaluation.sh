@@ -86,7 +86,8 @@ LMMS_EVAL_MODEL="llava_hf"
 # Cache directories
 HF_HOME="$HOME/scratch/huggingface"
 MODEL_CACHE_DIR="$HF_HOME/hub"
-DATASETS_CACHE_DIR="$HF_HOME/datasets"
+# DATASETS_CACHE_DIR="$HF_HOME/datasets"
+DATASETS_CACHE_DIR="/orfeo/cephfs/scratch/dssc/lpalaciosflores/huggingface/datasets"
 
 # =============================================================================
 # ENVIRONMENT VARIABLES

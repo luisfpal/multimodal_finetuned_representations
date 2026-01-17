@@ -21,9 +21,9 @@ ACCOUNT="dssc"
 JOB_NAME="experiment"
 PARTITION="DGX"
 GPU_TYPE="A100"
-NUM_GPUS=3
+NUM_GPUS=5
 CPUS=16
-MEM="72GB"
+MEM="128GB"
 TIME="02:00:00"
 NODELIST="dgx002"
 EXCLUDE=""
@@ -44,8 +44,8 @@ SCRIPT_NAME="lmms_evaluation.sh"
 # MODEL_TO_EVAL="l11p/llava-v1.5-7b-lbasile-layers-8-16-step-10000"
 # MODEL_TO_EVAL="l11p/llava-v1.5-7b-lbasile-layers-0-8-step-10000"
 # MODEL_TO_EVAL="l11p/llava-7b-lbasile"
-# MODEL_TO_EVAL="l11p/llava-v1.5-7b-lbasile-full-step-10000"
-MODEL_TO_EVAL="llava-hf/llava-1.5-7b-hf"
+MODEL_TO_EVAL="l11p/llava-v1.5-7b-lbasile-full-step-10000"
+# MODEL_TO_EVAL="llava-hf/llava-1.5-7b-hf"
 
 
 # =============================================================================
@@ -66,9 +66,9 @@ TASKS=(
     "gqa"
     "vizwiz_vqa_val"
     "vqav2_val"
-    "seedbench"
     "mmbench_cn_dev"
     "pope"
+    "seedbench"
 )
 
 # =============================================================================

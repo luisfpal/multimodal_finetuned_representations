@@ -221,7 +221,6 @@ def compute_information_imbalance(
 
         # Count how many points in B are strictly closer than this distance
         # This corresponds to the rank (0-based)
-        # matches: imb = 2*torch.mean((ind_B==ind_A[:,1].unsqueeze(1)).int().argmax(dim=1).float())/len(A)
         ranks = (d2 < dists_to_nn).sum(dim=1).float()
 
         # 3. Compute Imbalance
@@ -1061,9 +1060,6 @@ def compute_layers_residual_stream_similarities(
                 **kwargs,
             )
     return residual_stream_measures
-
-
-
 
 
 def compute_cross_layers_residual_stream_similarities(

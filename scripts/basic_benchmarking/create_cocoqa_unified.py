@@ -1,5 +1,7 @@
 """
 Create a unified dataset from COCO-QA Vietnamese test split and COCO-Karpathy restval split.
+The final dataset has the captions and question-answer pairs in English.
+The COCO-QA Vietnamese dataset is used for convenience and easy access on huggingface.
 
 The resulting dataset combines images with both captions and question-answer pairs.
 
@@ -18,7 +20,9 @@ The dataset is saved to disk in the following format:
 
 import os
 from collections import defaultdict
+
 from datasets import Dataset
+
 from utils.dataset import get_hf_dataset_split
 
 # Setup

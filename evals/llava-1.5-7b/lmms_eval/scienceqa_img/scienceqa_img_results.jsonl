@@ -46,3 +46,4 @@
 {"experiment_name": "single/l11p_llava-v1.5-7b-lbasile-layers-0-8-step-10000", "alias": "scienceqa_img", "exact_match,none": 0.6608824987605354, "exact_match_stderr,none": 0.010543673853531603, "elapsed_time": "17m 46s"}
 {"experiment_name": "single/l11p_llava-7b-lbasile", "alias": "scienceqa_img", "exact_match,none": 0.6752602875557759, "exact_match_stderr,none": 0.01042936919799033, "elapsed_time": "3m 57s"}
 {"experiment_name": "single/llava-hf_llava-1.5-7b-hf", "alias": "scienceqa_img", "exact_match,none": 0.661378284581061, "exact_match_stderr,none": 0.010539914903990928, "elapsed_time": "4m 15s"}
+{"experiment_name": "single/l11p_llava-v1.5-7b-lbasile-full-step-10000", "alias": "scienceqa_img", "exact_match,none": 0.6752602875557759, "exact_match_stderr,none": 0.01042936919799033, "elapsed_time": "12m 45s"}
