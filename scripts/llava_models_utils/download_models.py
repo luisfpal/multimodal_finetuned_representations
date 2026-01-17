@@ -2,11 +2,10 @@ import argparse
 import os
 import sys
 from pathlib import Path
+
 from huggingface_hub import snapshot_download
 
 # --- Configuration ---
-# Can be overridden by command-line arguments
-DEFAULT_CACHE_DIR = os.path.expanduser("~/scratch/huggingface/hub")
 
 # Define model collections. The `{}` is a placeholder for the checkpoint number.
 MODELS_COLLECTION = {
@@ -77,7 +76,7 @@ def main():
     parser.add_argument(
         "--cache-dir",
         type=str,
-        default=DEFAULT_CACHE_DIR,
+        required=True,
         help="Hugging Face cache directory.",
     )
     args = parser.parse_args()

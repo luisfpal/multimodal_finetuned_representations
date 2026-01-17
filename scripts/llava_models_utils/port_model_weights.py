@@ -10,16 +10,6 @@ from huggingface_hub import HfApi, create_repo
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from utils.model_utils import load_hf_model_and_processor_or_tokenizer
 
-# --- Configuration ---
-
-# Default cache directory for Hugging Face models
-DEFAULT_CACHE_DIR = os.path.expanduser("~/scratch/huggingface/hub/")
-
-# The model whose architecture and processor config will be used as the target.
-DEFAULT_REFERENCE_MODEL = "llava-hf/llava-1.5-7b-hf"
-
-# The Hugging Face organization to push the ported models to.
-DEFAULT_TARGET_ORG = "l11p"
 
 # Checkpoints to process for each collection.
 CHECKPOINTS = list(range(1000, 10001, 1000))
@@ -183,19 +173,19 @@ def main():
     parser.add_argument(
         "--reference-model",
         type=str,
-        default=DEFAULT_REFERENCE_MODEL,
+        required=True,
         help="The reference model ID for architecture and processor.",
     )
     parser.add_argument(
         "--target-org",
         type=str,
-        default=DEFAULT_TARGET_ORG,
+        required=True,
         help="The target organization on the Hub (for collections).",
     )
     parser.add_argument(
         "--cache-dir",
         type=str,
-        default=DEFAULT_CACHE_DIR,
+        required=True,
         help="Hugging Face cache directory.",
     )
     args = parser.parse_args()

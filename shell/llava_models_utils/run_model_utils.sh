@@ -5,24 +5,33 @@ set -e # Exit immediately if a command exits with a non-zero status.
 #  MODEL UTILITIES RUN SCRIPT
 # =================================================================================
 #
-#  Usage:
-#  1. Set the `MODE` variable to either "download" or "port".
-#  2. Edit the variables in the corresponding configuration section below.
-#  3. Run the script.
+#  How to Use:
+#  1. Set the `MODE` variable below to "download" or "port".
+#  2. Configure the variables in the relevant section (A, B, or C).
+#  3. Run the script: `bash shell/llava_models_utils/run_model_utils.sh`
 #
 # =================================================================================
 
 
 # =================================================================================
-#  1. USER CONFIGURATION
+#  1. CORE CONFIGURATION
 # =================================================================================
 
-# --- CHOOSE MODE ---
-# Set the operation you want to perform. Available modes: "download", "port"
-MODE="download"
+# --- A) CHOOSE MODE ---
+# Set the operation to perform. Available modes: "download", "port".
+MODE="port"
+
+# --- B) CACHE DIRECTORY ---
+# All downloaded models will be stored here.
+# It's recommended to use a directory on your scratch space.
+CACHE_DIR="$HOME/scratch/huggingface/hub"
 
 
-# --- A) DOWNLOAD MODE CONFIGURATION ---
+# =================================================================================
+#  2. MODE-SPECIFIC CONFIGURATION
+# =================================================================================
+
+# --- C) DOWNLOAD MODE ---
 
 # List of individual models to download.
 MODELS_TO_DOWNLOAD=(
@@ -38,10 +47,19 @@ COLLECTIONS_TO_DOWNLOAD=(
 )
 
 
-# --- B) PORT MODE CONFIGURATION ---
+# --- D) PORT MODE ---
 
-# List of source models and their corresponding target repo IDs.
-# The number of models in each list below must be equal.
+# This is the model whose architecture and processor config will be used as the
+# 'template' for porting. The default contains the correct format.
+REFERENCE_MODEL="llava-hf/llava-1.5-7b-hf"
+
+# The Hugging Face organization to push the ported models to.
+# This only applies when porting a 'collection' of checkpoints.
+TARGET_ORG="l11p"
+
+# -- Option 1: Port a list of specified models --
+# The source model and the target repository can be the same if you are just
+# fixing a broken configuration. The number of models in each list must be equal.
 SOURCE_MODELS_TO_PORT=(
   "lbasile/llava-7b"
   # "lbasile/llava-v1-7b"
@@ -51,21 +69,22 @@ TARGET_REPOS_FOR_PORT=(
   # "l11p/llava-v1-7b-lbasile-original"
 )
 
-# List of collections to port. Leave empty to ignore.
+# -- Option 2: Port a collection of checkpoints --
+# These are predefined sets of models (e.g., all checkpoints for an experiment).
+# Leave empty to ignore.
 COLLECTIONS_TO_PORT=(
   "lbasile-7b-raw"
 )
 
 
 # =================================================================================
-#  2. EXECUTION LOGIC (DO NOT EDIT BELOW THIS LINE)
+#  3. EXECUTION LOGIC (DO NOT EDIT BELOW THIS LINE)
 # =================================================================================
 
 # --- Script Constants ---
-PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+PROJECT_ROOT=$(realpath "$(dirname "${BASH_SOURCE[0]}")/../../")
 DOWNLOAD_SCRIPT="$PROJECT_ROOT/scripts/llava_models_utils/download_models.py"
 PORT_SCRIPT="$PROJECT_ROOT/scripts/llava_models_utils/port_model_weights.py"
-CACHE_DIR="$HOME/scratch/huggingface/hub"
 
 
 # --- Function Definitions ---
@@ -93,10 +112,12 @@ run_port() {
   echo "Running Porting Script..."
 
   PORT_ARGS=()
+  # Add arguments for specified models if provided
   if [ ${#SOURCE_MODELS_TO_PORT[@]} -gt 0 ]; then
     PORT_ARGS+=(--source-model-id "${SOURCE_MODELS_TO_PORT[@]}")
     PORT_ARGS+=(--target-repo-id "${TARGET_REPOS_FOR_PORT[@]}")
   fi
+  # Add arguments for collections if provided
   if [ ${#COLLECTIONS_TO_PORT[@]} -gt 0 ]; then
     PORT_ARGS+=(--collection "${COLLECTIONS_TO_PORT[@]}")
   fi
@@ -108,7 +129,13 @@ run_port() {
 
   # This operation requires a GPU and specific memory configuration
   export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
-  python "$PORT_SCRIPT" --cache-dir "$CACHE_DIR" "${PORT_ARGS[@]}"
+
+  # Execute the python script with all arguments
+  python "$PORT_SCRIPT" \
+    --cache-dir "$CACHE_DIR" \
+    --reference-model "$REFERENCE_MODEL" \
+    --target-org "$TARGET_ORG" \
+    "${PORT_ARGS[@]}"
 }
 
 # --- Main Execution ---
@@ -117,6 +144,7 @@ echo "================================================="
 echo "        Llava Model Utilities"
 echo "================================================="
 echo "Mode: $MODE"
+echo "Cache Dir: $CACHE_DIR"
 echo "-------------------------------------------------"
 
 case "$MODE" in

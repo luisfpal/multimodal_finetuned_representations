@@ -26,7 +26,9 @@ set -e # Exit immediately if a command exits with a non-zero status.
 DEFAULT_MODEL_NAME="llava-hf/llava-1.5-7b-hf"
 
 # 2. Shared Hugging Face cache directory paths.
-#    Set these to your personal scratch space to avoid re-downloading.
+#    For simplicity, you can leave HF_DATASETS_CACHE_PATH as is.
+#    However, you MUST adjust HF_HUB_CACHE_PATH to a directory in your
+#    own scratch space where you want to download and store models.
 #    We are setting these explicitly and leaving HF_HOME unset to avoid potential
 #    permission issues on the cluster's filesystem.
 HF_HUB_CACHE_PATH="/orfeo/cephfs/scratch/dssc/lpalaciosflores/huggingface/hub"
