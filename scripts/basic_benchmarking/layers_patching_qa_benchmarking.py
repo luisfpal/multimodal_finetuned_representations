@@ -1,11 +1,11 @@
-from utils import (
-    get_dataloader,
-    benchmark_model_vqa_processed_dataloader,
-)
 from src.patching_benchmarking_common import (
-    run_patching_benchmarking,
     create_common_parser,
+    run_patching_benchmarking,
     setup_patching_methods,
+)
+from utils import (
+    benchmark_model_vqa_processed_dataloader,
+    get_dataloader,
 )
 
 COCOQA_DATASET_ARGS = {
@@ -62,7 +62,7 @@ def main():
         dataset_config=DATASETS,
         get_dataloader_func=get_dataloader,
         benchmark_func=benchmark_model_vqa_processed_dataloader,
-        results_subdir="layers_patching_qa_benchmarking_v2",
+        results_subdir="layers_patching_qa_benchmarking",
     )
 
 

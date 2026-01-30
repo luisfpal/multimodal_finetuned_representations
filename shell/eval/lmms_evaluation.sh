@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e  # Exit on error
 
+# ⚠️ ! WARNING: This script not intended for direct execution. ⚠️
+# It is launched by 'shell/eval/launch.sh' with proper environment variables.
+# You can also use `shell/eval/run_local_evaluation.sh``
+
 # =============================================================================
 # TASK SELECTION
 # =============================================================================
@@ -51,7 +55,6 @@ set -e  # Exit on error
 # TASK_NAME="vizwiz_vqa_val" # To do
 # TASK_NAME="vqav2_val" # To do
 # TASK_NAME="mmbench_cn_dev" # To finish
-# TASK_NAME="mmvet" # Orfeo models are not good enough to parse the answers?
 
 # This script expects TASK_NAME to be set via environment variable.
 # Fallback to specified task name if not set.
@@ -74,20 +77,26 @@ NUM_GPUS="${NUM_GPUS:-1}"
 # =============================================================================
 # PATHS & MODEL CONFIGURATION
 # =============================================================================
-MODEL="llava-1.5-7b"  # Used for output directory naming
+MODEL="llava-1.5-7b"  # ⚠️Used for output directory naming⚠️
 PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 OUTPUT_DIR="$PROJECT_ROOT/evals/$MODEL/lmms_eval/$TASK_NAME"
 
 # Model names
-FINE_TUNED_MODEL_NAME="llava-hf/llava-1.5-7b-hf"
-PRETRAINED_MODEL_NAME="l11p/llava-v1.5-7b-pretrained-liuhaotian"
-LMMS_EVAL_MODEL="llava_hf"
+FINE_TUNED_MODEL_NAME="lbasile/llava_7b"
+PRETRAINED_MODEL_NAME="l11p/llava-v1.5-7b-pretrained-lbasile"
+#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
+LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
+
+# Handle No Image flag
+NO_IMAGE="${NO_IMAGE:-false}"
+if [ "$NO_IMAGE" = "true" ]; then
+    MODEL="${MODEL}_noimage"
+fi
 
 # Cache directories
 HF_HOME="$HOME/scratch/huggingface"
 MODEL_CACHE_DIR="$HF_HOME/hub"
-# DATASETS_CACHE_DIR="$HF_HOME/datasets"
-DATASETS_CACHE_DIR="/orfeo/cephfs/scratch/dssc/lpalaciosflores/huggingface/datasets"
+DATASETS_CACHE_DIR="$HF_HOME/datasets"
 
 # =============================================================================
 # ENVIRONMENT VARIABLES
@@ -147,6 +156,7 @@ base_args=(
 [ -n "$NUM_FEWSHOT" ] && base_args+=(--num-fewshot "$NUM_FEWSHOT")
 [ -n "$LIMIT" ] && base_args+=(--limit "$LIMIT")
 [ -n "$MAX_NEW_TOKENS" ] && base_args+=(--max-new-tokens "$MAX_NEW_TOKENS")
+[ "$NO_IMAGE" = "true" ] && base_args+=(--no-image)
 
 # Run evaluation function
 run_evaluation() {

@@ -1,28 +1,43 @@
-import hashlib
-import datasets
-from torch.utils.data import Dataset, DataLoader
-from datasets import load_dataset, load_from_disk
-import os
-import numpy as np
-from typing import Dict, Any, Optional, List, Union
-from .model_utils import ProcessorType
-from .constants import (
-    SQA_ANSWER_CHOICES,
-    MMLU_ANSWER_CHOICES,
-    MMBENCH_ANSWER_CHOICES,
-    SYSTEM_ROLE,
-    ASSISTANT_ROLE,
-    ANSWER_TEXT,
-    SHORT_CAPTION_PROMPT,
-)
-from PIL import Image
-import base64
-from io import BytesIO
 import argparse
-from functools import partial
+import base64
+import hashlib
+import os
 import re
+from functools import partial
+from io import BytesIO
+from typing import Any, Dict, List, Optional
 
-MULTIPLE_CHOICE_BENCHMARKS = ["mmlu", "scienceqa", "mmbench", "mme"]
+import datasets
+import numpy as np
+from datasets import load_dataset, load_from_disk
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+from transformers import PreTrainedModel
+
+from .constants import (
+    ANSWER_TEXT,
+    ASSISTANT_ROLE,
+    MMBENCH_ANSWER_CHOICES,
+    MME_ANSWER_CHOICES,
+    MMLU_ANSWER_CHOICES,
+    SHORT_CAPTION_PROMPT,
+    SQA_ANSWER_CHOICES,
+    SYSTEM_ROLE,
+    POPE_ANSWER_CHOICES,
+    AI2D_ANSWER_CHOICES,
+)
+from .internvl_utils import apply_chat_template as apply_internvl_chat_template
+from .internvl_utils import get_pixel_values
+from .model_utils import ProcessorType
+
+MULTIPLE_CHOICE_BENCHMARKS = [
+    "mmlu",
+    "scienceqa",
+    "mmbench",
+    "mme",
+    "ai2d",
+    "pope",
+]
 
 
 def get_hf_dataset_split(
@@ -54,6 +69,28 @@ def get_hf_dataset_split(
             dataset_kwargs["name"] = "all"
 
         dataset = load_dataset(**dataset_kwargs)
+
+        if isinstance(dataset, datasets.DatasetDict):
+            # If split is explicitly None, or provided but not found
+            if split and split in dataset:
+                return dataset[split]
+
+            # Fallback logic
+            available_splits = list(dataset.keys())
+            if len(available_splits) == 1:
+                print(
+                    f"  ⚠️ Requested split '{split}' not found. Using the only available split: '{available_splits[0]}'"
+                )
+                return dataset[available_splits[0]]
+
+            if "train" in dataset:
+                print(f"  ⚠️ Requested split '{split}' not found. Fallback to 'train'.")
+                return dataset["train"]
+
+            raise ValueError(
+                f"Split '{split}' not found in dataset. Available splits: {available_splits}"
+            )
+
         return dataset
     except Exception as e:
         # Catching a broad exception, but could be more specific depending on expected errors
@@ -69,28 +106,35 @@ class MultipleChoiceDatasetBenchmark(Dataset):
         dataset_path_or_name: str,
         cache_dir: str,
         split: str = "test",
+        question_instruction_type: Optional[str] = "test",
         texts_qa: bool = False,
         images_qa: bool = False,
-        question_instruction_type: Optional[str] = None,
         downsample_size: Optional[int] = None,
         seed: Optional[int] = None,
+        remove_yes_no: bool = False,
+        filter_mmbench_4_choices: bool = False,
     ):
+        self.dataset_path_or_name = dataset_path_or_name.lower()
+
         if (
             "scienceqa" not in dataset_path_or_name.lower()
             and "mmlu" not in dataset_path_or_name.lower()
             and "mmbench" not in dataset_path_or_name.lower()
             and "mme" not in dataset_path_or_name.lower()
+            and "ai2d" not in dataset_path_or_name.lower()
+            and "pope" not in dataset_path_or_name.lower()
         ):
             raise ValueError(
                 f"Dataset {dataset_path_or_name} is not supported. "
-                "Only 'scienceqa', 'mmlu', 'mmbench', and 'mme' datasets are supported."
+                "Only 'scienceqa', 'mmlu', 'mmbench', 'ai2d', 'pope', and 'mme' datasets are supported."
             )
 
         if texts_qa and images_qa:
             raise ValueError("texts_qa and images_qa cannot be both True.")
 
-        self.dataset_path_or_name = dataset_path_or_name
         self.question_instruction_type = question_instruction_type
+        self.texts_qa = texts_qa
+        self.images_qa = images_qa
 
         # Load the initial dataset
         dataset = get_hf_dataset_split(
@@ -98,6 +142,37 @@ class MultipleChoiceDatasetBenchmark(Dataset):
             cache_dir=cache_dir,
             split=split,
         )
+
+        # Filter yes/no questions if requested
+        if remove_yes_no:
+            print("Filtering out Yes/No questions...")
+            initial_len = len(dataset)
+            # Assuming 'answer' field contains the answer (e.g., "Yes", "No", "A", "B")
+            # Standardizing check to be case-insensitive against "yes" and "no"
+            dataset = dataset.filter(
+                lambda x: str(x["answer"]).strip().lower() not in ["yes", "no"]
+            )
+            print(
+                f"Filtered {initial_len - len(dataset)} samples (from {initial_len} to {len(dataset)})"
+            )
+
+        if filter_mmbench_4_choices and "mmbench" in self.dataset_path_or_name:
+            print("Filtering MMBench to samples with 4 choices...")
+            initial_len = len(dataset)
+
+            def has_4_choices(example):
+                count = 0
+                for choice in MMBENCH_ANSWER_CHOICES:
+                    val = example.get(choice, None)
+                    if val is not None and str(val).lower() != "nan":
+                        count += 1
+                return count == 4
+
+            dataset = dataset.filter(has_4_choices)
+            print(
+                f"Filtered {initial_len - len(dataset)} samples (from {initial_len} to {len(dataset)})"
+            )
+
         # Apply downsampling if requested and if dataset is larger than requested size
         if downsample_size and downsample_size < len(dataset):
             print(
@@ -111,10 +186,18 @@ class MultipleChoiceDatasetBenchmark(Dataset):
         if mm_dataset:
             if images_qa:
                 dataset = dataset.filter(lambda example: example["image"] is not None)
-            if (
-                texts_qa
-            ):  # This implies multimodal dataset but we only want text samples from it
-                dataset = dataset.filter(lambda example: example["image"] is None)
+            if texts_qa:
+                # If using texts_qa, we need captions.
+                # If the dataset was patched, it should have a 'caption' field.
+                if "caption" not in dataset.features:
+                    raise ValueError(
+                        f"Dataset {dataset_path_or_name} does not have a 'caption' field required for texts_qa=True."
+                    )
+
+                # We do NOT filter out images here because the dataset technically has images,
+                # we just choose not to return them in __getitem__.
+                # However, we should ensure the caption is not None.
+                dataset = dataset.filter(lambda example: example["caption"] is not None)
 
         self.dataset = dataset
 
@@ -126,63 +209,117 @@ class MultipleChoiceDatasetBenchmark(Dataset):
         question_text = question_data["question"]
 
         if (
-            "mmlu" in self.dataset_path_or_name.lower()
-            or "scienceqa" in self.dataset_path_or_name.lower()
+            "mmlu" in self.dataset_path_or_name
+            or "scienceqa" in self.dataset_path_or_name
         ):
             choices_list = question_data["choices"]
-        elif "mmbench" in self.dataset_path_or_name.lower():
+        elif "mmbench" in self.dataset_path_or_name:
             choices_list = []
             for choice in MMBENCH_ANSWER_CHOICES:
                 choice_data = question_data.get(choice, None)
                 if choice_data is not None:
                     choices_list.append(choice_data)
-        elif "mme" in self.dataset_path_or_name.lower():
-            choices_list = ["Yes", "No"]
+        elif "ai2d" in self.dataset_path_or_name:
+            choices_list = question_data["options"]
+        elif "pope" in self.dataset_path_or_name:
+            choices_list = POPE_ANSWER_CHOICES
+        elif "mme" in self.dataset_path_or_name:
+            choices_list = MME_ANSWER_CHOICES
 
         context_text = question_data.get("hint", None)
-        subject = question_data.get("subject", None)
+        context_text = "" if context_text == "nan" else context_text
+        subject = question_data.get("subject", question_data.get("category", None))
 
         def format_subject(subject):
             return subject.replace("_", " ")
 
-        if "scienceqa" in self.dataset_path_or_name.lower():
+        if "scienceqa" in self.dataset_path_or_name:
             answer_letter = SQA_ANSWER_CHOICES[question_data["answer"]]
-        elif "mmlu" in self.dataset_path_or_name.lower():
+        elif "mmlu" in self.dataset_path_or_name:
             answer_letter = MMLU_ANSWER_CHOICES[question_data["answer"]]
+        elif "ai2d" in self.dataset_path_or_name:
+            # AI2D might differ in answer format (int index vs letter)
+            answer_raw = question_data["answer"]
+            if isinstance(answer_raw, int):
+                answer_letter = AI2D_ANSWER_CHOICES[answer_raw]
+            elif isinstance(answer_raw, str) and answer_raw.isdigit():
+                answer_letter = AI2D_ANSWER_CHOICES[int(answer_raw)]
+            else:
+                answer_letter = answer_raw
+        elif "pope" in self.dataset_path_or_name:
+            # Map "yes"/"no" to "Yes"/"No"
+            answer_raw = question_data["answer"]
+            if str(answer_raw).lower() == "yes":
+                answer_letter = "Yes"
+            elif str(answer_raw).lower() == "no":
+                answer_letter = "No"
+            else:
+                answer_letter = answer_raw
         else:
+            # Yes/No for MME
+            # A/B/C/D for MMBench
             answer_letter = question_data["answer"]
 
         full_question_prompt = ""
-        if self.question_instruction_type == "singular":
-            full_question_prompt = f"The following is a multiple choice question (with answers) about {format_subject(subject)}.\n\n"
-        elif self.question_instruction_type == "plural":
-            full_question_prompt = f"The following are multiple choice questions (with answers) about {format_subject(subject)}.\n\n"
+
+        # Add caption context if texts_qa is True
+        if self.texts_qa:
+            caption = question_data.get("caption")
+            if caption:
+                full_question_prompt += f"Below is a description of an image. Use it to answer the question.\n\n{caption}\n\n"
+            else:
+                # Should have been filtered out, but just in case
+                pass
+
+        if subject is not None and "mmlu" in self.dataset_path_or_name:
+            if self.question_instruction_type == "singular":
+                full_question_prompt += f"The following is a multiple choice question (with answers) about {format_subject(subject)}.\n\n"
+            elif self.question_instruction_type == "plural":
+                full_question_prompt += f"The following are multiple choice questions (with answers) about {format_subject(subject)}.\n\n"
 
         if context_text is not None and context_text != "":
-            full_question_prompt += f"Context: {context_text}\n"
-        full_question_prompt += f"{question_text}\n"
+            if "scienceqa" in self.dataset_path_or_name:
+                full_question_prompt += "Context: "
+            full_question_prompt += f"{context_text} "
+        full_question_prompt += f"{question_text} "
 
-        if choices_list is not None:
-            last_choice = choices_list[-1]
-            for letter_ord, choice_text in zip(
-                range(ord("A"), ord("Z") + 1), choices_list
-            ):
-                full_question_prompt += f"{chr(letter_ord)}: {choice_text}"
-                full_question_prompt += "\n" if choice_text != last_choice else ""
+        if (
+            "mme" not in self.dataset_path_or_name
+            and "pope" not in self.dataset_path_or_name
+        ):
+            if "mmbench" in self.dataset_path_or_name:
+                full_question_prompt += "There are several options:\n"
+            else:
+                full_question_prompt += "\n"
+
+            if choices_list is not None:
+                last_choice = choices_list[-1]
+                for letter_ord, choice_text in zip(
+                    range(ord("A"), ord("Z") + 1), choices_list
+                ):
+                    full_question_prompt += f"{chr(letter_ord)}: {choice_text}"
+                    full_question_prompt += "\n" if choice_text != last_choice else ""
 
         sample = {
             "question": full_question_prompt,
             "answer_letter": answer_letter,
         }
-        # Retrieve the image. It might be None if the sample doesn't have one.
-        image = question_data.get("image", None)
 
-        # Handle MMBench base64-encoded images
-        if image is not None and "mmbench" in self.dataset_path_or_name.lower():
-            if isinstance(image, str):
-                # Decode base64 image
-                img_bytes = base64.b64decode(image)
-                image = Image.open(BytesIO(img_bytes)).convert("RGB")
+        # Retrieve the image. It might be None if the sample doesn't have one or if texts_qa is True.
+        image = None
+        if not self.texts_qa:
+            image = question_data.get("image", None)
+
+            # Handle MMBench base64-encoded images
+            if image is not None and "mmbench" in self.dataset_path_or_name:
+                if isinstance(image, str):
+                    # Decode base64 image
+                    img_bytes = base64.b64decode(image)
+                    image = Image.open(BytesIO(img_bytes)).convert("RGB")
+
+            # Ensure RGB
+            if isinstance(image, Image.Image):
+                image = image.convert("RGB")
 
         sample["image"] = image
 
@@ -228,42 +365,106 @@ class OpenVQADataset(Dataset):
 
     Args:
         dataset_path_or_name: Path to the dataset directory or Hugging Face dataset identifier.
+        cache_dir: Directory to cache the dataset.
+        split: Dataset split to load.
         downsample_size: Maximum number of samples to use
         seed: Random seed for reproducibility
         images_qa: Whether to remove images from the dataset
         texts_qa: Whether to remove captions from the dataset
+        remove_yes_no: Whether to remove Yes/No questions/answers from the dataset
     """
 
     def __init__(
         self,
         dataset_path_or_name: str,
+        cache_dir: Optional[str] = None,
+        split: str = "train",
         downsample_size: Optional[int] = None,
         seed: int = 42,
         images_qa: bool = False,
         texts_qa: bool = False,
+        remove_yes_no: bool = False,
     ):
         if images_qa and texts_qa:
             raise ValueError("images_qa and texts_qa cannot be both True.")
 
         self.images_qa = images_qa
         self.texts_qa = texts_qa
+        self.dataset_path_or_name = dataset_path_or_name
         # Random number generator for reproducibility and stable one-to-one
         # question-answer pair selection between images_qa and texts_qa datasets
         self.rng = np.random.RandomState(seed=seed)
 
-        dataset_dir = os.path.expanduser(dataset_path_or_name)
-
-        if not os.path.exists(dataset_dir):
-            raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
-
+        # Load dataset from Hugging Face Hub or Cache
         try:
-            # Load the initial dataset
-            dataset = load_from_disk(dataset_dir)
+            dataset = load_dataset(
+                dataset_path_or_name, split=split, cache_dir=cache_dir
+            )
         except Exception as e:
-            raise RuntimeError(f"Failed to load dataset from {dataset_dir}: {e}")
+            # Try loading from disk if it's a local path
+            try:
+                dataset = load_from_disk(dataset_path_or_name)
+            except Exception as disk_e:
+                raise RuntimeError(
+                    f"Failed to load dataset '{dataset_path_or_name}'. "
+                    f"HF Hub error: {e}, Disk error: {disk_e}"
+                )
 
         # Add an idx column to the dataset
         dataset = dataset.add_column("idx", list(range(len(dataset))))
+
+        # Detect schema: check for 'questions_and_answers' field
+        self.has_qa_list = "questions_and_answers" in dataset.features
+
+        # Filter Yes/No questions if requested
+        if remove_yes_no:
+            print("Filtering out Yes/No questions from OpenVQADataset...")
+
+            # Determine num_proc based on CPU count (using half as requested in general context)
+            num_proc = max(1, (os.cpu_count() or 2) // 2)
+
+            if self.has_qa_list:
+
+                def filter_yes_no_answers_list(example):
+                    qa_list = example["questions_and_answers"]
+                    # Keep only QA pairs where answer is NOT yes/no
+                    filtered_qa = [
+                        qa
+                        for qa in qa_list
+                        if qa["answer"].strip().lower() not in ["yes", "no"]
+                    ]
+                    example["questions_and_answers"] = filtered_qa
+                    return example
+
+                # 1. Filter the internal list of questions
+                dataset = dataset.map(
+                    filter_yes_no_answers_list,
+                    num_proc=num_proc,
+                    desc="Filtering Yes/No answers",
+                )
+
+                # 2. Remove samples that have no questions left
+                initial_len = len(dataset)
+                dataset = dataset.filter(
+                    lambda x: len(x["questions_and_answers"]) > 0,
+                    desc="Removing empty samples",
+                )
+                print(
+                    f"Filtered {initial_len - len(dataset)} empty samples (from {initial_len} to {len(dataset)})"
+                )
+
+            else:
+                # Flat schema (e.g. GQA)
+                # Check 'answer' field
+                initial_len = len(dataset)
+                dataset = dataset.filter(
+                    lambda x: str(x["answer"]).strip().lower() not in ["yes", "no"],
+                    num_proc=num_proc,
+                    desc="Filtering Yes/No answers (flat)",
+                )
+                print(
+                    f"Filtered {initial_len - len(dataset)} samples (from {initial_len} to {len(dataset)})"
+                )
 
         # Apply downsampling if requested and if dataset is larger than requested size
         if downsample_size and downsample_size < len(dataset):
@@ -274,7 +475,14 @@ class OpenVQADataset(Dataset):
 
         # Filter images or captions based on keep_images flag
         if images_qa:
-            dataset = dataset.remove_columns("captions")
+            # GQA might name it 'caption' (singular) or 'captions' (plural)
+            # COCOQA uses 'captions'
+            # Safe remove if present
+            cols_to_remove = [
+                c for c in ["captions", "caption"] if c in dataset.column_names
+            ]
+            if cols_to_remove:
+                dataset = dataset.remove_columns(cols_to_remove)
         elif texts_qa:
             dataset = dataset.remove_columns("image")
 
@@ -284,7 +492,9 @@ class OpenVQADataset(Dataset):
         self.dataset = dataset
 
         # Pre-compute deterministic question-answer selection for each sample
-        self._precompute_qa_selection()
+        # Only needed if we have a list of QA pairs
+        if self.has_qa_list:
+            self._precompute_qa_selection()
 
     def _hash_qa(self, qa_dict):
         """
@@ -333,33 +543,72 @@ class OpenVQADataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        full_question_prompt = ""
         question_data = self.dataset[idx]
-        questions_and_answers = question_data["questions_and_answers"]
+        full_question_prompt = ""
 
-        # Use pre-computed selection for deterministic behavior
-        selected_qa_idx = self._selected_qa_indices[idx]
-        unique_qa_dict = questions_and_answers[selected_qa_idx]
+        # Get Question and Answer
+        if self.has_qa_list:
+            # Use pre-computed selection for deterministic behavior
+            questions_and_answers = question_data["questions_and_answers"]
+            selected_qa_idx = self._selected_qa_indices[idx]
+            unique_qa_dict = questions_and_answers[selected_qa_idx]
 
+            q_text = unique_qa_dict["question"]
+            a_text = unique_qa_dict["answer"]
+        else:
+            # Flat schema (GQA, TextVQA)
+            q_text = question_data["question"]
+            if (
+                "textvqa" in self.dataset_path_or_name.lower()
+                and "answers" in question_data
+            ):
+                # TextVQA has 'answers' list. Pick the most frequent one (majority voting)
+                # or just the first one if we need a single string.
+                # For logit lens, we need a single target. TextVQA usually has 10 answers.
+                # We'll pick the most frequent one.
+                answers = question_data["answers"]
+                if isinstance(answers, list) and len(answers) > 0:
+                    # Simple majority
+                    from collections import Counter
+
+                    c = Counter(answers)
+                    a_text = c.most_common(1)[0][0]
+                else:
+                    a_text = ""
+            else:
+                a_text = question_data["answer"]
+
+        # Handle Captions
         if self.texts_qa:
-            captions = question_data.get("captions")
-            if captions:
-                # Concatenate all the captions
-                full_question_prompt += f"Below are {len(captions)} descriptions of an image. Use them to answer the question.\n\n"
-                for idx, caption in zip(range(len(captions)), captions):
-                    full_question_prompt += f"{idx + 1}: {caption}\n"
+            # Check for 'caption' (singular string) or 'captions' (list)
+            if "captions" in question_data:
+                captions = question_data["captions"]
+                if isinstance(captions, list):
+                    full_question_prompt += f"Below are {len(captions)} descriptions of an image. Use them to answer the question.\n\n"
+                    for i, caption in enumerate(captions):
+                        full_question_prompt += f"{i + 1}: {caption}\n"
+                else:
+                    # Fallback if it's somehow a string
+                    full_question_prompt += f"Below is a description of the image. Use it to answer the question.\n\n{captions}\n"
+            elif "caption" in question_data:
+                caption = question_data["caption"]
+                full_question_prompt += f"Below is a description of the image. Use it to answer the question.\n\n{caption}\n"
             else:
                 raise ValueError("No captions found in the dataset")
 
-        full_question_prompt += f"\n{unique_qa_dict['question']}?\n"
+        full_question_prompt += f"{q_text}"
+        if "cocoqa" in self.dataset_path_or_name.lower():
+            full_question_prompt += "?"
+
+        # Image ID extraction (handle different field names)
+        # GQA uses 'imageId', COCOQA uses 'image_id'
+        img_id_raw = question_data.get("image_id") or question_data.get("imageId")
 
         sample = {
             "idx": question_data.get("idx", None),
             "question": full_question_prompt,
-            "answer_letter": unique_qa_dict["answer"],
-            "image_id": extract_image_id(question_data.get("image_id", None)),
-            # `answer_letter` is actually a word but it's called letter for convenience
-            # and alignment with the multiple choice benchmarks
+            "answer_letter": a_text,
+            "image_id": extract_image_id(str(img_id_raw)) if img_id_raw else None,
         }
 
         if self.images_qa:
@@ -495,7 +744,7 @@ def _format_as_conversations(questions, images, args):
         content = []
         if image is not None:
             content.append({"type": "image"})
-        content.append({"type": "text", "text": f"{question}{guide_text}"})
+        content.append({"type": "text", "text": f"{question}\n{guide_text}\n"})
 
         conversation = [{"role": "user", "content": content}]
         conversation.insert(0, SYSTEM_ROLE)
@@ -564,6 +813,7 @@ def collate_vqa_batch(
     answer_letters_with_processed_batch,
     chat_template_exists=True,
     chat_mode=True,
+    model: Optional[PreTrainedModel] = None,
 ):
     # Custom collate function to handle images and text
     questions = [item["question"] for item in batch]
@@ -573,39 +823,60 @@ def collate_vqa_batch(
     image_ids = [item.get("image_id", None) for item in batch]
 
     if processor is not None:
-        # For simplicity, define args for backward code compatibility
-        # todo: redesign the interface if used in the future
-        args = argparse.Namespace(
-            chat_mode=chat_mode,
-            continue_final_message=True,
-            guide_text=guide_text,
-            # !"enforced" but consistent for these experiments
-        )
-
-        prompts = format_prompts(
-            questions=questions,
-            images=images,
-            args=args,
-            processor=processor,
-            chat_template_exists=chat_template_exists,
-            # !"enforced" but consistent for these experiments
-        )
-
         processor_kwargs = {
-            "text": prompts,
             "return_tensors": "pt",
-            "padding": (True if len(prompts) > 1 else False),
+            "padding": (True if len(questions) > 1 else False),
         }
 
-        # todo: improve this, it is not neat
-        if any(image is not None for image in images):
-            processor_kwargs["images"] = images
+        if "llava" in processor.__class__.__name__.lower():
+            # For simplicity, define args for backward code compatibility
+            # todo: redesign the interface if used in the future
+            args = argparse.Namespace(
+                chat_mode=chat_mode,
+                continue_final_message=False,
+                guide_text=guide_text,
+                # !"enforced" but consistent for these experiments
+            )
+
+            prompts = format_prompts(
+                questions=questions,
+                images=images,
+                args=args,
+                processor=processor,
+                chat_template_exists=chat_template_exists,
+                # !"enforced" but consistent for these experiments
+            )
+            processor_kwargs["text"] = prompts
+
+            # todo: improve this, it is not neat
+            if any(image is not None for image in images):
+                processor_kwargs["images"] = images
+
+        elif "intern" in processor.__class__.__name__.lower() and model is not None:
+            has_images = any(image is not None for image in images)
+            if has_images:
+                pixel_values, num_patches_list = get_pixel_values(images)
+                queries = apply_internvl_chat_template(
+                    model=model,
+                    text=questions,
+                    num_patches_list=num_patches_list,
+                    guide_text=guide_text,
+                )
+            else:
+                # Text-only mode: format with chat template but no image tokens
+                pixel_values = None
+                queries = apply_internvl_chat_template(model=model, text=questions, guide_text=guide_text)
+            processor_kwargs["text"] = queries
 
         tokenized = processor(**processor_kwargs)
+
+        outputs = (tokenized,)
+        if model and "intern" in processor.__class__.__name__.lower() and pixel_values is not None:
+            outputs += (pixel_values,)
         if answer_letters_with_processed_batch:
             # !not so neat but it's a backward compatibility feature
-            return tokenized, answer_letters
-        return tokenized
+            return outputs + (answer_letters,)
+        return outputs
 
     # Raw mode (default)
     return {
@@ -626,6 +897,7 @@ def collate_captioning_batch(
     return_images=False,
     chat_mode=True,
     image_first=True,
+    model: Optional[PreTrainedModel] = None,
 ):
     # Sanity check
     if return_image_ids and not return_captions:
@@ -640,35 +912,48 @@ def collate_captioning_batch(
     image_ids = [item["image_id"] for item in batch]
 
     if processor is not None:
-        # For simplicity, define args for backward code compatibility
-        # todo: redesign the interface if used in the future
-        args = argparse.Namespace(
-            chat_mode=chat_mode,
-            continue_final_message=True,
-            # !"enforced" but consistent for these experiments
-            image_first=image_first,
-        )
-
-        prompts = format_prompts(
-            # todo: rename questions to user_prompts
-            # this is a backward compatibility feature
-            questions=user_prompts,
-            images=images,
-            args=args,
-            processor=processor,
-            chat_template_exists=chat_template_exists,
-        )
-
         processor_kwargs = {
-            "text": prompts,
-            "images": images,
             "return_tensors": "pt",
-            "padding": (True if len(prompts) > 1 else False),
+            "padding": (True if len(user_prompts) > 1 else False),
         }
+
+        if "llava" in processor.__class__.__name__.lower():
+            # For simplicity, define args for backward code compatibility
+            # todo: redesign the interface if used in the future
+            args = argparse.Namespace(
+                chat_mode=chat_mode,
+                continue_final_message=False,
+                # !"enforced" but consistent for these experiments
+                image_first=image_first,
+            )
+
+            prompts = format_prompts(
+                # todo: rename questions to user_prompts
+                # this is a backward compatibility feature
+                questions=user_prompts,
+                images=images,
+                args=args,
+                processor=processor,
+                chat_template_exists=chat_template_exists,
+            )
+
+            processor_kwargs["text"] = prompts
+            processor_kwargs["images"] = images
+
+        elif "intern" in processor.__class__.__name__.lower() and model is not None:
+            pixel_values, num_patches_list = get_pixel_values(images)
+            queries = apply_internvl_chat_template(
+                model=model,
+                text=user_prompts,
+                num_patches_list=num_patches_list,
+            )
+            processor_kwargs["text"] = queries
 
         tokenized = processor(**processor_kwargs)
         # Build return tuple based on requested data
         result = [tokenized]
+        if model and "intern" in processor.__class__.__name__.lower():
+            result.append(pixel_values)
         if return_captions:
             result.append(captions)
         if return_image_ids:
@@ -702,6 +987,9 @@ def get_dataloader(
     guide_text: str = "Answer the question using a single word or phrase.\n",
     answer_letters_with_processed_batch: bool = False,
     chat_template_exists: bool = True,
+    remove_yes_no: bool = False,
+    filter_mmbench_4_choices: bool = False,
+    model: Optional[PreTrainedModel] = None,
 ):
     """
     Get a DataLoader for either multiple choice benchmarks or open-ended VQA datasets.
@@ -728,6 +1016,8 @@ def get_dataloader(
         answer_letters_with_processed_batch: Whether to include answer letters in the processed batch,
             it just applies when a processor is provided.
         chat_template_exists: Whether to use the chat template for formatting prompts.
+        remove_yes_no: Whether to remove Yes/No questions from the dataset.
+        filter_mmbench_4_choices: Whether to filter MMBench samples to only those with 4 choices.
     """
 
     print("\nLoading dataloader...")
@@ -750,14 +1040,29 @@ def get_dataloader(
             question_instruction_type=question_instruction_type,
             downsample_size=downsample_size,
             seed=seed,
+            remove_yes_no=remove_yes_no,
+            filter_mmbench_4_choices=filter_mmbench_4_choices,
         )
-    else:
+    elif (
+        "vqav2" in dataset_path_or_name.lower()
+        or "cocoqa" in dataset_path_or_name.lower()
+        or "gqa" in dataset_path_or_name.lower()
+        or "textvqa" in dataset_path_or_name.lower()
+    ):
         dataset = OpenVQADataset(
             dataset_path_or_name=dataset_path_or_name,
+            cache_dir=cache_dir,
+            split=split or "train",
             downsample_size=downsample_size,
             seed=seed,
             images_qa=images_qa,
             texts_qa=texts_qa,
+            remove_yes_no=remove_yes_no,
+        )
+    else:
+        raise ValueError(
+            f"Dataset {dataset_path_or_name} is not supported. "
+            "Only multiple choice benchmarks and open-ended VQA datasets are supported."
         )
 
     collate_fn = partial(
@@ -766,6 +1071,7 @@ def get_dataloader(
         guide_text=guide_text,
         answer_letters_with_processed_batch=answer_letters_with_processed_batch,
         chat_template_exists=chat_template_exists,
+        model=model,
     )
 
     return DataLoader(
@@ -793,6 +1099,7 @@ def get_dataloader_for_captioning(
     concatenate_captions: bool = False,
     chat_mode: bool = True,
     image_first: bool = True,
+    model: Optional[PreTrainedModel] = None,
 ):
     dataset = ImageCaptioningDataset(
         dataset_path_or_name=dataset_path_or_name,
@@ -811,6 +1118,7 @@ def get_dataloader_for_captioning(
         return_images=return_images,
         chat_mode=chat_mode,
         image_first=image_first,
+        model=model,
     )
 
     return DataLoader(

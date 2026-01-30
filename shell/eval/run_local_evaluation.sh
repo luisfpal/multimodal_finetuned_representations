@@ -14,6 +14,7 @@
 #    bash shell/eval/run_local_evaluation.sh "your-hf-org/your-model-name"
 #
 # 3. Configure the `DEFAULT_MODEL_NAME` and cache paths below as needed.
+
 # =============================================================================
 
 set -e # Exit immediately if a command exits with a non-zero status.
@@ -23,20 +24,11 @@ set -e # Exit immediately if a command exits with a non-zero status.
 # =============================================================================
 
 # 1. Default model to evaluate if no command-line argument is provided.
-DEFAULT_MODEL_NAME="llava-hf/llava-1.5-7b-hf"
+DEFAULT_MODEL_NAME="lbasile/llava_13b"
 
-# 2. Shared Hugging Face cache directory paths.
-#    For simplicity, you can leave HF_DATASETS_CACHE_PATH as is.
-#    However, you MUST adjust HF_HUB_CACHE_PATH to a directory in your
-#    own scratch space where you want to download and store models.
-#    We are setting these explicitly and leaving HF_HOME unset to avoid potential
-#    permission issues on the cluster's filesystem.
-HF_HUB_CACHE_PATH="/orfeo/cephfs/scratch/dssc/lpalaciosflores/huggingface/hub"
-HF_DATASETS_CACHE_PATH="/orfeo/cephfs/scratch/dssc/lpalaciosflores/huggingface/datasets"
-
-# 3. GPU configuration. This script is designed for single-GPU interactive use.
-#    Using more than 1 GPU would require `accelerate launch`.
-NUM_GPUS=1
+# 2. Model class in the lmms-eval library
+#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
+LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
 
 # =============================================================================
 # SCRIPT SETUP & ARGUMENT PARSING
@@ -44,6 +36,7 @@ NUM_GPUS=1
 
 # If a command-line argument is provided, it overrides the default model name.
 MODEL_TO_EVAL="${1:-$DEFAULT_MODEL_NAME}"
+EXTRA_ARGS="${2:-}"
 
 if [ -z "$MODEL_TO_EVAL" ]; then
     echo "❌ Error: No model specified."
@@ -55,8 +48,15 @@ fi
 echo "▶️  Model to evaluate: $MODEL_TO_EVAL"
 
 # Get the absolute path of the project root (assuming the script is in a subdirectory)
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/lmms_evaluation.py"
+
+# Load environment variables from .env (if needed)
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 
 # =============================================================================
 # BENCHMARK CONFIGURATION
@@ -64,18 +64,18 @@ PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/lmms_evaluation.py"
 
 # List of benchmarks to evaluate against.
 TASKS=(
-    "scienceqa_img"
-    "mme"
-    "textvqa_val"
-    "pope"
-    "gqa"
-    "seedbench"
-    "mmbench_en_dev"
+    # "scienceqa_img"
+    # "mme"
+    # "textvqa_val"
+    # "pope"
+    # "gqa"
+    # "seedbench"
+    # "mmbench_en_dev"
     "llava_in_the_wild"
-    "vizwiz_vqa_val"
-    "vqav2_val"
-    "mmbench_cn_dev"
-    # "mmvet"
+    # "vizwiz_vqa_val"
+    # "vqav2_val"
+    # "mmbench_cn_dev"
+    # "docvqa_val"
 )
 
 # =============================================================================
@@ -94,10 +94,8 @@ else
 fi
 
 # --- Hugging Face Cache ---
-# Unset HF_HOME to avoid conflicts and use the specific cache paths below.
-unset HF_HOME
-export HF_HUB_CACHE="$HF_HUB_CACHE_PATH"
-export HF_DATASETS_CACHE="$HF_DATASETS_CACHE_PATH"
+export HF_HUB_CACHE="$HF_HUB_CACHE"
+export HF_DATASETS_CACHE="$HF_DATASETS_CACHE"
 echo "✓ HF_HUB_CACHE set to: $HF_HUB_CACHE"
 echo "✓ HF_DATASETS_CACHE set to: $HF_DATASETS_CACHE"
 
@@ -108,12 +106,23 @@ export LMMS_EVAL_HOME="$HOME/scratch/lmms_eval_cache"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 # --- CUDA Setup ---
-# Robustly find and set up CUDA environment.
+# Robust CUDA configuration for both H100 (module) and A100 (manual)
 setup_cuda() {
-    if ! command -v nvcc &> /dev/null; then
+    echo ""
+    # 1. Try module load (standard on H100)
+    if command -v module &> /dev/null; then
+        module load cuda/12.1 2>/dev/null || true
+    fi
+
+    # 2. If nvcc is missing/broken, try to find a valid existing installation
+    #    This often happens on A100 nodes where modules might differ
+    if ! command -v nvcc &> /dev/null || [ ! -x "$(command -v nvcc)" ]; then
+        # List of potential CUDA paths to check (prefer 12.1, then 12.x, then default)
         local candidates=("/usr/local/cuda-12.1" "/usr/local/cuda-12.2" "/usr/local/cuda-12" "/usr/local/cuda")
+
         for path in "${candidates[@]}"; do
             if [ -x "$path/bin/nvcc" ]; then
+                echo "🔧 Manually configuring CUDA from: $path"
                 export CUDA_HOME="$path"
                 export PATH="$path/bin:$PATH"
                 export LD_LIBRARY_PATH="$path/lib64:$LD_LIBRARY_PATH"
@@ -122,11 +131,22 @@ setup_cuda() {
         done
     fi
 
+    # Verification and Enforcement
     if command -v nvcc &> /dev/null; then
-        echo "✓ CUDA found: $(command -v nvcc)"
+        local nvcc_path=$(command -v nvcc)
+        # Resolve symlinks if possible, or assume standard structure
+        local cuda_root=$(dirname $(dirname "$nvcc_path"))
+
+        echo "✓ CUDA active: $nvcc_path"
+        echo "  → Enforcing CUDA_HOME=$cuda_root"
+
+        export CUDA_HOME="$cuda_root"
+        export PATH="$cuda_root/bin:$PATH"
+        export LD_LIBRARY_PATH="$cuda_root/lib64:$LD_LIBRARY_PATH"
     else
-        echo "⚠️ WARNING: nvcc not found. GPU operations may fail."
+        echo "⚠️  WARNING: nvcc not found! Compilation may fail."
     fi
+    echo ""
 }
 setup_cuda
 
@@ -174,7 +194,11 @@ for TASK_NAME in "${TASKS[@]}"; do
     task_start_time=$SECONDS
 
     # Define a unique output directory for this model and task
-    OUTPUT_DIR="$PROJECT_ROOT/evals/$(basename "$MODEL_TO_EVAL" | sed 's/\//_/g')/lmms_eval/$TASK_NAME"
+    MODEL_SUBDIR=$(basename "$MODEL_TO_EVAL" | sed 's/\//_/g')
+    if [[ "$EXTRA_ARGS" == *"--no-image"* ]]; then
+        MODEL_SUBDIR="${MODEL_SUBDIR}_noimage"
+    fi
+    OUTPUT_DIR="$PROJECT_ROOT/evals/$MODEL_SUBDIR/lmms_eval/$TASK_NAME"
     mkdir -p "$OUTPUT_DIR"
 
     # Build the arguments for the Python script
@@ -183,12 +207,12 @@ for TASK_NAME in "${TASKS[@]}"; do
         --model-cache-dir "$HF_HUB_CACHE"
         --output-dir "$OUTPUT_DIR"
         --task-name "$TASK_NAME"
-        --lmms-eval-model "llava_hf" # This seems to be the default for your setup
+        --lmms-eval-model "$LMMS_EVAL_MODEL"
         --batch-size 1 # LLaVA models in lmms-eval often require batch size 1
     )
 
     echo "[Plain Python: device_map=auto on 1 GPU]"
-    python "$PYTHON_SCRIPT" "${base_args[@]}"
+    python "$PYTHON_SCRIPT" "${base_args[@]}" $EXTRA_ARGS
 
     task_elapsed=$(( SECONDS - task_start_time ))
     echo "✓ Task '$TASK_NAME' completed in ${task_elapsed}s."

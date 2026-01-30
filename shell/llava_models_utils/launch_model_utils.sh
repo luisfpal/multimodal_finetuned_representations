@@ -11,8 +11,8 @@ PARTITION="EPYC" # Or DGX/H100 if GPU is needed for porting
 GPU_TYPE="" # e.g., A100. Leave empty for CPU jobs (downloading)
 NUM_GPUS=0 # 1 for porting, 0 for downloading
 CPUS=8
-MEM="48GB"
-TIME="00:20:00"
+MEM="64GB"
+TIME="01:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 

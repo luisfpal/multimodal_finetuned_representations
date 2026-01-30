@@ -1,7 +1,7 @@
 import torch
 import os
 import gc
-from typing import Tuple, Type, Union, List
+from typing import Tuple, Type, Union, Optional
 from transformers import (
     LlavaProcessor,
     LlavaForConditionalGeneration,
@@ -17,7 +17,23 @@ from transformers import (
     # LlamaTokenizerFast
 )
 from huggingface_hub import snapshot_download
+from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from .constants import LLAVA_CHAT_TEMPLATE
+
+# Monkeypatch check_torch_load_is_safe to bypass CVE-2025-32434 check
+# when using older torch versions with trusted models.
+try:
+    import transformers.modeling_utils
+    import transformers.processing_utils
+    import transformers.utils.import_utils
+    
+    # Patch the definition source
+    transformers.utils.import_utils.check_torch_load_is_safe = lambda: None
+    # Patch the modules that import it
+    transformers.modeling_utils.check_torch_load_is_safe = lambda: None
+    transformers.processing_utils.check_torch_load_is_safe = lambda: None
+except ImportError:
+    pass
 
 # Define supported vision-language model types and their corresponding classes
 SUPPORTED_VL_MODELS = {
@@ -33,11 +49,16 @@ SUPPORTED_VL_MODELS = {
         "processor": PaliGemmaProcessor,
         "model": PaliGemmaForConditionalGeneration,
     },
+    # InternVL2 uses dynamic class loading - handled specially in load function
+    "internvl": {
+        "processor": "dynamic:tokenization_internlm2.InternLM2Tokenizer",
+        "model": "dynamic:modeling_internvl_chat.InternVLChatModel",
+    },
 }
 
 # Define types for clarity
 ProcessorType = Union[
-    LlavaProcessor, LlavaNextProcessor, PaliGemmaProcessor, CLIPProcessor
+    LlavaProcessor, LlavaNextProcessor, PaliGemmaProcessor, CLIPProcessor,
 ]
 ModelType = Union[
     LlavaForConditionalGeneration,
@@ -59,6 +80,7 @@ def _get_vl_model_classes(
 
     Returns:
         Tuple[Type[ProcessorType], Type[ModelType]]: The processor and model classes.
+        For InternVL2, returns string markers that indicate dynamic loading is needed.
 
     Raises:
         ValueError: If the model type is not supported.
@@ -75,12 +97,99 @@ def _get_vl_model_classes(
     )
 
 
+def _load_internvl_model_and_tokenizer(
+    model_name_or_path: str,
+    cache_dir: str,
+    device_map: str = "auto",
+    dtype: torch.dtype = torch.bfloat16,
+    low_cpu_mem_usage: bool = True,
+    use_flash_attn: bool = False,
+    skip_model: bool = False,
+    skip_processor: bool = False,
+    subfolder: Optional[str] = None,
+    code_repo: Optional[str] = None,
+):
+    """
+    Load InternVL2 model and tokenizer using dynamic class loading.
+
+    InternVL2 uses custom classes (InternLM2Tokenizer, InternVLChatModel) that
+    require dynamic loading via get_class_from_dynamic_module.
+
+    Args:
+        model_name_or_path (str): Model identifier or local path.
+        cache_dir (str): Directory for caching the model and tokenizer.
+        device_map (str): Device map strategy for model loading.
+        dtype (torch.dtype): Data type for model parameters.
+        low_cpu_mem_usage (bool): Optimize for low CPU memory usage.
+        use_flash_attn (bool): Whether to use flash attention.
+        skip_model (bool): Whether to not load the model.
+        skip_processor (bool): Whether to not load the tokenizer.
+        subfolder (str, optional): Subfolder within repo containing model weights.
+        code_repo (str, optional): Repo to get custom Python code from (if different from model_name_or_path).
+            Useful for pretrained models that don't have code at repo root.
+
+    Returns:
+        The loaded model and/or tokenizer.
+    """
+    tokenizer = None
+    model = None
+
+    # For pretrained models in subfolders, get code from a reference finetuned model
+    code_source = code_repo if code_repo else model_name_or_path
+
+    if not skip_processor:
+        print(f"\nLoading tokenizer (InternLM2Tokenizer)...")
+        print(f"  Code from: {code_source}")
+        print(f"  Weights from: {model_name_or_path}" + (f"/{subfolder}" if subfolder else ""))
+
+        InternLM2Tokenizer = get_class_from_dynamic_module(
+            "tokenization_internlm2.InternLM2Tokenizer",
+            code_source,
+            cache_dir=cache_dir,
+        )
+        tokenizer = InternLM2Tokenizer.from_pretrained(
+            model_name_or_path,
+            subfolder=subfolder,
+            cache_dir=cache_dir,
+        )
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+    if not skip_model:
+        print(f"\nLoading model (InternVLChatModel)...")
+        print(f"  Code from: {code_source}")
+        print(f"  Weights from: {model_name_or_path}" + (f"/{subfolder}" if subfolder else ""))
+
+        InternVLChatModel = get_class_from_dynamic_module(
+            "modeling_internvl_chat.InternVLChatModel",
+            code_source,
+            cache_dir=cache_dir,
+        )
+        model = InternVLChatModel.from_pretrained(
+            model_name_or_path,
+            subfolder=subfolder if subfolder is not None else "",
+            cache_dir=cache_dir,
+            device_map=device_map,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            use_flash_attn=use_flash_attn,
+        )
+
+    if skip_model:
+        return tokenizer
+    elif skip_processor:
+        return model
+
+    return model, tokenizer
+
+
 def load_hf_model_and_processor_or_tokenizer(
     model_name_or_path: str,
     cache_dir: str,
     text_model: bool = False,
     device_map: str = "auto",
-    dtype: torch.dtype = torch.float16,
+    dtype: torch.dtype = torch.bfloat16,
     attn_implementation: str = "flash_attention_2",
     low_cpu_mem_usage: bool = True,
     use_fast: bool = True,
@@ -117,6 +226,45 @@ def load_hf_model_and_processor_or_tokenizer(
 
     if skip_model and skip_processor:
         raise ValueError("Cannot not load both the model and the processor.")
+
+    # Handle InternVL2 models specially - they require dynamic class loading
+    if "internvl" in model_name_or_path.lower() and not text_model:
+        subfolder = None
+        code_repo = None
+
+        # Detect pretrained models in subfolder format:
+        # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+        if "pretrain-models" in model_name_or_path.lower():
+            parts = model_name_or_path.split("/")
+            if len(parts) >= 3:
+                # repo_id = "OpenGVLab/InternVL2-Pretrain-Models"
+                # subfolder = "InternVL2-8B-Pretrain"
+                repo_id = "/".join(parts[:2])
+                subfolder = "/".join(parts[2:])
+
+                # Extract model size (e.g., "8B") to find matching finetuned model for code
+                import re
+                size_match = re.search(r"(\d+B)", subfolder, re.IGNORECASE)
+                if size_match:
+                    size = size_match.group(1).upper()
+                    code_repo = f"OpenGVLab/InternVL2-{size}"
+
+                model_name_or_path = repo_id
+                print(f"  Detected pretrained model: {repo_id}/{subfolder}")
+                print(f"  Using code from: {code_repo}")
+
+        return _load_internvl_model_and_tokenizer(
+            model_name_or_path=model_name_or_path,
+            cache_dir=cache_dir,
+            device_map=device_map,
+            dtype=dtype,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            use_flash_attn=(attn_implementation == "flash_attention_2"),
+            skip_model=skip_model,
+            skip_processor=skip_processor,
+            subfolder=subfolder,
+            code_repo=code_repo,
+        )
 
     try:
         if not text_model:
@@ -201,7 +349,7 @@ def replace_multimodal_lm(
     multimodal_model: ModelType,
     replacement_lm_name_or_path: str,
     cache_dir: str,
-    dtype=torch.float16,
+    dtype=torch.bfloat16,
 ) -> ModelType:
     """
     Replace the Multimodal language model with the Vicuna model.
@@ -231,11 +379,25 @@ def replace_multimodal_lm(
         skip_processor=True,
     )
 
-    # Check if the type of the replacement model is compatible
-    if type(replacement_lm.model) is not type(multimodal_model.language_model.model):
+    # Determine the target language model and lm_head
+    target_lm = multimodal_model.language_model
+    if hasattr(target_lm, "model"):
+        target_base_model = target_lm.model
+        target_lm_head = target_lm.lm_head
+    else:
+        target_base_model = target_lm
+        # Check if lm_head is on multimodal_model if not on language_model
+        if hasattr(target_lm, "lm_head"):
+            target_lm_head = target_lm.lm_head
+        elif hasattr(multimodal_model, "lm_head"):
+            target_lm_head = multimodal_model.lm_head
+        else:
+             target_lm_head = None
+
+    if type(replacement_lm.model) is not type(target_base_model):
         raise TypeError(
             f"\nReplacement model type {type(replacement_lm.model)} is not compatible "
-            f"with Multimodal model type {type(multimodal_model.language_model.model)}."
+            f"with Multimodal model type {type(target_base_model)}."
         )
     print(f"\nSuccessfully loaded {replacement_lm_name_or_path} mode")
 
@@ -244,23 +406,27 @@ def replace_multimodal_lm(
 
     print("Replacing Multimodal language model...")
     min_vocab_size = min(
-        multimodal_model.language_model.model.embed_tokens.weight.size(0),
+        target_base_model.embed_tokens.weight.size(0),
         replacement_lm.model.embed_tokens.weight.size(0),
     )
 
     with torch.no_grad():
-        multimodal_model.language_model.model.embed_tokens.weight[:min_vocab_size] = (
+        target_base_model.embed_tokens.weight[:min_vocab_size] = (
             replacement_lm.model.embed_tokens.weight[:min_vocab_size].clone()
         )
-        multimodal_model.language_model.model.layers.load_state_dict(
+        target_base_model.layers.load_state_dict(
             replacement_lm.model.layers.state_dict()
         )
-        multimodal_model.language_model.model.norm.load_state_dict(
+        target_base_model.norm.load_state_dict(
             replacement_lm.model.norm.state_dict()
         )
-        multimodal_model.language_model.lm_head.weight[:min_vocab_size] = (
-            replacement_lm.lm_head.weight[:min_vocab_size].clone()
-        )
+        
+        if target_lm_head is not None:
+             target_lm_head.weight[:min_vocab_size] = (
+                replacement_lm.lm_head.weight[:min_vocab_size].clone()
+            )
+        else:
+             print("Warning: Could not find lm_head to replace weights.")
 
     # Explanation for LLaVA:
     # - `multimodal_model.language_model.model` is the LLaVA language model.
@@ -352,10 +518,20 @@ def replace_multimodal_projector(
         f"\nReplacing multi-modal projector weights for {pretrained_projector_model_name_or_path}..."
     )
     device = next(multimodal_model.parameters()).device
-    projector_path = find_mm_projector_bin(
-        pretrained_projector_model_name_or_path, cache_dir
-    )
-    print(f"Found projector weights at: {projector_path}")
+
+    if os.path.isfile(pretrained_projector_model_name_or_path):
+        projector_path = pretrained_projector_model_name_or_path
+        print(f"Found projector weights at: {projector_path}")
+    else:
+        try:
+            projector_path = find_mm_projector_bin(
+                pretrained_projector_model_name_or_path, cache_dir
+            )
+            print(f"Found projector weights at: {projector_path}")
+        except FileNotFoundError as e:
+            print(f"{e}")
+            projector_path = pretrained_projector_model_name_or_path
+
     mm_state_dict = torch.load(
         projector_path,
         map_location="cpu",

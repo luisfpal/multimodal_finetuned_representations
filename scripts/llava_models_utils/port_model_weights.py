@@ -58,7 +58,7 @@ def port_weights_and_push(
             model_name_or_path=source_model_id,
             cache_dir=cache_dir,
             device_map="cpu",
-            dtype=torch.float16,
+            dtype=torch.bfloat16,
             attn_implementation="sdpa",
             skip_processor=True,
         )
@@ -70,7 +70,7 @@ def port_weights_and_push(
             model_name_or_path=reference_model_id,
             cache_dir=cache_dir,
             device_map="cpu",
-            dtype=torch.float16,
+            dtype=torch.bfloat16,
             attn_implementation="sdpa",
             skip_processor=True,
         )

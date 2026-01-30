@@ -14,18 +14,23 @@
 #    to evaluate.
 # 3. Run the script:
 #    bash shell/eval/launch_lmms_specific.sh
+
+# ⚠️⚠️⚠️ Adjust the following variables in `/shell/eval/lmms_evaluation.sh` ⚠️⚠️⚠️
+# for models other than LLaVA 1.5 7B:
+#  - MODEL
+#  - LMMS_EVAL_MODEL, according to the names in the lmms-eval documentation.
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="dssc"
+ACCOUNT="lade"
 JOB_NAME="experiment"
-PARTITION="DGX"
-GPU_TYPE="A100"
-NUM_GPUS=5
+PARTITION="H100"
+GPU_TYPE="H100"
+NUM_GPUS=1
 CPUS=16
-MEM="128GB"
-TIME="02:00:00"
-NODELIST="dgx002"
+MEM="48GB"
+TIME="01:00:00"
+NODELIST=""
 EXCLUDE=""
 
 # Project paths
@@ -41,12 +46,11 @@ SCRIPT_NAME="lmms_evaluation.sh"
 # =============================================================================
 
 # Uncomment the model you want to evaluate:
-# MODEL_TO_EVAL="l11p/llava-v1.5-7b-lbasile-layers-8-16-step-10000"
-# MODEL_TO_EVAL="l11p/llava-v1.5-7b-lbasile-layers-0-8-step-10000"
-# MODEL_TO_EVAL="l11p/llava-7b-lbasile"
-MODEL_TO_EVAL="l11p/llava-v1.5-7b-lbasile-full-step-10000"
-# MODEL_TO_EVAL="llava-hf/llava-1.5-7b-hf"
+MODEL_TO_EVAL="lbasile/llava_7b"
 
+NO_IMAGE="false"
+#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
+LMMS_EVAL_MODEL="llava_hf" 
 
 # =============================================================================
 # Job Execution Script
@@ -58,17 +62,17 @@ read -r -d '' JOB_COMMANDS << JOB_EOF || true
 # =============================================================================
 
 TASKS=(
-    "scienceqa_img"
+    # "scienceqa_img"
     "mme"
-    "mmbench_en_dev"
-    "textvqa_val"
-    "llava_in_the_wild"
-    "gqa"
-    "vizwiz_vqa_val"
-    "vqav2_val"
-    "mmbench_cn_dev"
-    "pope"
-    "seedbench"
+    # "mmbench_en_dev"
+    # "textvqa_val"
+    # "llava_in_the_wild"
+    # "gqa"
+    # "vizwiz_vqa_val"
+    # "vqav2_val"
+    # "mmbench_cn_dev"
+    # "pope"
+    # "seedbench"
 )
 
 # =============================================================================
@@ -131,6 +135,8 @@ chmod +x "$SCRIPT_NAME"
 
 export TOKENIZERS_PARALLELISM=false
 export NUM_GPUS=$NUM_GPUS
+export NO_IMAGE=$NO_IMAGE
+export LMMS_EVAL_MODEL=$LMMS_EVAL_MODEL
 
 # =============================================================================
 # ORFEO LLM JWT AUTHENTICATION
@@ -211,6 +217,8 @@ export PROJECT_ROOT="$PROJECT_ROOT"
 export SCRIPTS_DIR="$SCRIPTS_DIR"
 export SCRIPT_NAME="$SCRIPT_NAME"
 export MODEL_TO_EVAL="$MODEL_TO_EVAL"
+export NO_IMAGE="$NO_IMAGE"
+export LMMS_EVAL_MODEL="$LMMS_EVAL_MODEL"
 
 $JOB_COMMANDS
 EOT

@@ -5,14 +5,14 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="dssc"
+ACCOUNT="lade"
 JOB_NAME="experiment"
 PARTITION="H100"
 GPU_TYPE="H100"
 NUM_GPUS=1              # Number of GPUs
 CPUS=16
-MEM="64GB"
-TIME="07:00:00"
+MEM="128GB"
+TIME="05:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -22,8 +22,26 @@ SCRIPTS_DIR="$PROJECT_ROOT/shell/representations_interpretability"
 LOG_DIR="$PROJECT_ROOT/logs"
 
 # Script selection
-SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
-# SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
+# SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
+SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
+# SCRIPT_NAME="intrinsic_dimension.sh"  # For intrinsic dimension analysis
+# SCRIPT_NAME="intra_model_similarity.sh"  # For intra-model similarity analysis
+# SCRIPT_NAME="multimodality_specific_pooling_similarity.sh" # For multimodality with specific pooling analysis
+
+# =============================================================================
+# Centralized Configuration for All Analysis Scripts
+# =============================================================================
+
+# Dataset parameters
+# For COCOQA, VQAv2, MME and GQA use:
+export GUIDE_TEXT="Answer the question using a single word or phrase.\n"
+# For MMBench use:
+# export GUIDE_TEXT="Answer with the option's letter from the given choices directly."
+export DOWNSAMPLE_SIZE="10000"
+
+# Representations storage configuration
+export REPRESENTATIONS_DIR="$HOME/scratch"
+export SAVE_REPRESENTATIONS="true"  # Set to "false" to disable saving
 
 # =============================================================================
 # Job Execution Script

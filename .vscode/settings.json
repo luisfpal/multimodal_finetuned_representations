@@ -12,5 +12,15 @@
         "kernel_selections": {
             "python": "menv"
         }
+    },
+    "chat.tools.terminal.autoApprove": {
+        "/^python3 /u/dssc/lpalaciosflores/multimodal_finetuned_representations/scripts/basic_benchmarking/create_vqav2_coco_icq\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^/u/dssc/lpalaciosflores/multimodal_finetuned_representations/\\.venv/bin/python /u/dssc/lpalaciosflores/multimodal_finetuned_representations/scripts/basic_benchmarking/create_vqav2_coco_icq\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }

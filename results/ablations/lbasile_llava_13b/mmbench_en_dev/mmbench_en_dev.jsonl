@@ -1,0 +1,2 @@
+{"layers_ablated": 0, "alias": "mmbench_en_dev", "gpt_eval_score,none": 92.0, "gpt_eval_score_stderr,none": "N/A", "submission,none": null, "submission_stderr,none": "N/A"}
+{"layers_ablated": 0, "alias": "mmbench_en_dev", "gpt_eval_score,none": 75.0, "gpt_eval_score_stderr,none": "N/A", "submission,none": null, "submission_stderr,none": "N/A"}

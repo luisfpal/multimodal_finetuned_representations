@@ -29,6 +29,8 @@ SQA_ANSWER_CHOICES = ["A", "B", "C", "D", "E"]
 MMLU_ANSWER_CHOICES = ["A", "B", "C", "D"]
 MMBENCH_ANSWER_CHOICES = ["A", "B", "C", "D"]
 MME_ANSWER_CHOICES = ["Yes", "No"]
+AI2D_ANSWER_CHOICES = ["A", "B", "C", "D"]
+POPE_ANSWER_CHOICES = ["Yes", "No"]
 COCOQA_VI_DIGITS_MAP = {
     "1": "one",
     "2": "two",
@@ -49,54 +51,3 @@ SHORT_CAPTION_PROMPT = (
     "Be specific about what you see without being overly detailed. "
     "THE CAPTION SHOULD BE A SINGLE SENTENCE, NOT MULTIPLE SENTENCES!!!"
 )
-# COCO dataset info that at some point were useful to make the pycocoevalcap work
-COCO_INFO = {
-    "description": "This is stable 1.0 version of the 2014 MS COCO dataset.",
-    "url": "http://mscoco.org",
-    "version": "1.0",
-    "year": 2014,
-    "contributor": "Microsoft COCO group",
-    "date_created": "2015-01-27 09:11:52.357475",
-}
-COCO_LICENSES = [
-    {
-        "url": "http://creativecommons.org/licenses/by-nc-sa/2.0/",
-        "id": 1,
-        "name": "Attribution-NonCommercial-ShareAlike License",
-    },
-    {
-        "url": "http://creativecommons.org/licenses/by-nc/2.0/",
-        "id": 2,
-        "name": "Attribution-NonCommercial License",
-    },
-    {
-        "url": "http://creativecommons.org/licenses/by-nc-nd/2.0/",
-        "id": 3,
-        "name": "Attribution-NonCommercial-NoDerivs License",
-    },
-    {
-        "url": "http://creativecommons.org/licenses/by/2.0/",
-        "id": 4,
-        "name": "Attribution License",
-    },
-    {
-        "url": "http://creativecommons.org/licenses/by-sa/2.0/",
-        "id": 5,
-        "name": "Attribution-ShareAlike License",
-    },
-    {
-        "url": "http://creativecommons.org/licenses/by-nd/2.0/",
-        "id": 6,
-        "name": "Attribution-NoDerivs License",
-    },
-    {
-        "url": "http://flickr.com/commons/usage/",
-        "id": 7,
-        "name": "No known copyright restrictions",
-    },
-    {
-        "url": "http://www.usa.gov/copyright.shtml",
-        "id": 8,
-        "name": "United States Government Work",
-    },
-]

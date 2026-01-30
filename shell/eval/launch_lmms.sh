@@ -18,7 +18,12 @@
 # 3. Come back to this file and set the `EVAL_MODE` variable to choose what
 #    set of models to run against that benchmark.
 # 4. Run the script:
-#    bash shell/eval/launch_lmms.sh
+#   👉 bash shell/eval/launch_lmms.sh
+
+# ⚠️⚠️⚠️ Adjust the following variables in `/shell/eval/lmms_evaluation.sh` ⚠️⚠️⚠️
+# for models other than LLaVA 1.5 7B:
+#  - MODEL
+#  - LMMS_EVAL_MODEL, according to the names in the lmms-eval documentation.
 # =============================================================================
 
 # SLURM settings
@@ -50,13 +55,16 @@ SCRIPT_NAME="lmms_evaluation.sh"
 #   "COLLECTIONS" - Loop all collections below
 # EVAL_MODE="FINETUNED_PRETRAINED=true"
 # EVAL_MODE="COLLECTIONS"
-EVAL_MODE="SINGLE_MODEL=l11p/llava-7b-lbasile"
-# EVAL_MODE="COLLECTION_NAME=Llava1.5-7B-8-16"
+EVAL_MODE="SINGLE_MODEL=lbasile/llava_7b"
+# EVAL_MODE="COLLECTION_NAME=Llava1.5-7B-0-16"
+
+# Configuration
+NO_IMAGE="false"
+#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
+LMMS_EVAL_MODEL="llava_hf" 
 
 # Collections to evaluate (used when EVAL_MODE="COLLECTIONS")
 COLLECTIONS=(
-    "Llava1.5-7B"
-    "Llava1.5-7B-frozen"
     "Llava1.5-7B-0-16"
     "Llava1.5-7B-16-32"
 )
@@ -132,6 +140,10 @@ export TOKENIZERS_PARALLELISM=\$TOKENIZERS_PARALLELISM
 
 # Export NUM_GPUS for data parallelism
 export NUM_GPUS=$NUM_GPUS
+
+# Export Configuration
+export NO_IMAGE=$NO_IMAGE
+export LMMS_EVAL_MODEL=$LMMS_EVAL_MODEL
 
 # =============================================================================
 # ORFEO LLM JWT AUTHENTICATION (if configured)

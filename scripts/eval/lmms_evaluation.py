@@ -1,4 +1,3 @@
-# Standard library
 import argparse
 import gc
 import json
@@ -7,14 +6,20 @@ import sys
 import time
 from typing import Optional
 
-# Third-party
 import torch
 from rich import print
-
-# Local
 from lmms_eval.evaluator import simple_evaluate
-from utils import SYSTEM_INSTRUCTION
 
+
+# Add project root to sys.path to allow importing local modules
+project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from utils import SYSTEM_INSTRUCTION
+from utils.patch_skipping import patch
 
 # =============================================================================
 # CONSTANTS
@@ -31,15 +36,19 @@ LONG_ANSWER_MAX_NEW_TOKENS = 1024
 TASK_LIMITS = {
     # "scienceqa_img": 25,  # 2018 samples
     # "mme": 25,  # 2374 samples
-    "textvqa_val": 2000,  # 5000 samples
-    "pope": 2000,  # 9000 samples
-    "gqa": 2000,  # 12578 samples
-    "seedbench": 2000,  # 17990 samples
-    "mmbench_en_dev": 2000,  # 4330 samples
-    "mmbench_cn_dev": 2000,  # 4330 samples
-    "mmvet": 20,  # 218 samples (API judge required)
-    "vizwiz_vqa_val": 2000,  # 4320 samples
-    "vqav2_val": 2000,  # 214000 samples
+    # "textvqa_val": 5000,  # 5000 samples
+    "pope": 5000,  # 9000 samples
+    "gqa": 5000,  # 12578 samples
+    "seedbench": 5000,  # 17990 samples
+    "mmbench_en_dev": 5000,  # 4330 samples
+    "mmbench_cn_dev": 5000,  # 4330 samples
+    # "mmvet": 20,  # 218 samples (Strong API judge required or evals are incorrect!)
+    "vizwiz_vqa_val": 5000,  # 4320 samples
+    "vqav2_val": 5000,  # 214000 samples
+    "ai2d": 5000,  # 500 samples
+    # "cv_bench": 5000,  # 1000 samples
+    "flickr30k": 5000,  # 1000 samples (test)
+    "coco2017_cap_val": 5000,  # 5000 samples
     # "llava_in_the_wild": 15,  # 60 samples, heavy post processing
 }
 
@@ -48,9 +57,7 @@ LONG_ANSWER_TASKS = {
     "llava_in_the_wild",
     "mmvet",
     "mmbench_en_dev",
-    "mmbench_en_test",
     "mmbench_cn_dev",
-    "mmbench_cn_test",
     "scienceqa_img",
 }
 
@@ -58,38 +65,12 @@ LONG_ANSWER_TASKS = {
 # Tasks requiring LLM judge (need API key)
 LLM_JUDGE_TASKS = {"mmvet", "mmbench_en_dev", "mmbench_cn_dev", "llava_in_the_wild"}
 
-# Tasks with standard evaluation (no external API needed)
-SAFE_TASKS = {
-    "scienceqa_img",
-    "mme",
-    "pope",
-    "gqa",
-    "textvqa_val",
-    "vizwiz_vqa_test",
-    "vqav2_test",
-    "seedbench",
-    "mmbench_en_test",
-    "mmbench_cn_test",  # Test variants: submission only
-}
-
-# Tasks that generate submission files for offline evaluation
-SUBMISSION_ONLY_TASKS = {
-    "mmbench_en_test",
-    "mmbench_cn_test",
-    "vqav2_test",
-    "vizwiz_vqa_test",
-    "textvqa_val",
-}
-
+# Traiing checkpoints
 MODELS_COLLECTION = {
-    "Llava1.5-7B": "l11p/llava-v1.5-7b-lbasile-full-step-",
-    "Llava1.5-7B-frozen": "l11p/llava-v1.5-7b-lbasile-frozen-llm-step-",
-    "Llava1.5-7B-0-16": "l11p/llava-v1.5-7b-lbasile-layers-0-16-step-",
-    "Llava1.5-7B-16-32": "l11p/llava-v1.5-7b-lbasile-layers-16-32-step-",
-    "Llava1.5-7B-0-8": "l11p/llava-v1.5-7b-lbasile-layers-0-8-step-",
-    "Llava1.5-7B-8-16": "l11p/llava-v1.5-7b-lbasile-layers-8-16-step-",
+    "Llava1.5-7B-0-16": "lbasile/llava_0_16-",
+    "Llava1.5-7B-16-32": "lbasile/llava_16_32-",
+    # ...
 }
-
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -129,18 +110,8 @@ def validate_task_requirements(task_name: str) -> None:
         if not api_key:
             print("[bold red]✗ ERROR: LLM judge API key missing![/bold red]")
             print(f"  Task '{task_name}' requires OPENAI_API_KEY\n")
-            print("[bold cyan]Supported APIs:[/bold cyan]")
-            print("  • Groq (FREE):      OPENAI_API_URL=https://api.groq.com/openai/v1")
-            print("  • Together.ai:      OPENAI_API_URL=https://api.together.xyz/v1")
-            print("  • Local vLLM:       OPENAI_API_URL=http://localhost:8000/v1")
-            print("  • OpenAI (paid):    OPENAI_API_URL=https://api.openai.com/v1\n")
-            print(f"[yellow]Safe tasks (no judge):[/yellow] {', '.join(sorted(SAFE_TASKS))}")
             sys.exit(1)
         print(f"[green]✓ LLM Judge: {model_version} @ {api_url}[/green]")
-
-    if task_name == "seedbench":
-        print("[yellow]⚠ Note: seedbench writes to ./seed_submission.json (hardcoded)[/yellow]")
-
 
 def format_elapsed_time(seconds: float) -> str:
     """Format elapsed time as Xh Ym Zs."""
@@ -247,6 +218,9 @@ def run_evaluation(
         # Single GPU: use HF auto device mapping
         model_args = f"pretrained={model_name},device_map=auto"
 
+    if args.no_image:
+        patch(layers_to_skip=range(32))
+
     results = simple_evaluate(
         model=args.lmms_eval_model,
         model_args=model_args,
@@ -256,7 +230,6 @@ def run_evaluation(
         log_samples=True,
         limit=limit,
         system_instruction=SYSTEM_INSTRUCTION,
-        apply_chat_template="chat" in args.lmms_eval_model,  # Auto-enable for chat models
         cli_args=create_cli_args(output_dir),
         gen_kwargs=gen_kwargs,
         random_seed=RANDOM_SEED,
@@ -273,31 +246,70 @@ def run_evaluation(
     if num_gpus > 1:
         try:
             import torch.distributed as dist
+
             if dist.is_initialized():
                 is_main_process = dist.get_rank() == 0
                 if not is_main_process:
-                    print("[dim]  (Rank {}: skipping save - main process handles it)[/dim]".format(dist.get_rank()))
+                    print(
+                        "[dim]  (Rank {}: skipping save - main process handles it)[/dim]".format(
+                            dist.get_rank()
+                        )
+                    )
         except Exception:
             pass  # Not in distributed mode
 
     # Only main process saves results
     if is_main_process:
         # Save metrics (with defensive checks for NoneType)
-        if results and "results" in results and args.task_name in results["results"]:
-            save_and_update_models_metrics(
-                dataset_dir=args.output_dir,
-                model_identifier=model_identifier,
-                prefix=prefix,
-                suffix=suffix,
-                raw_results=results["results"][args.task_name],
-                num_fewshot=args.num_fewshot,
-                elapsed_time_sec=elapsed_sec,
-            )
+        if results and "results" in results:
+            found_results = False
+            for res_key, res_metrics in results["results"].items():
+                # Skip empty/dummy results often found in groups without aggregation
+                # e.g., {' ': ' '} or just key='alias' or keys like 'alias' and nothing else useful
+                if not res_metrics:
+                    continue
+                if len(res_metrics) == 1 and " " in res_metrics:
+                    continue
+
+                # Filter out entries that only contain metadata (like "alias") but no metrics
+                metric_keys = [
+                    k
+                    for k in res_metrics.keys()
+                    if k != "alias" and k != " " and not k.endswith("_stderr,none")
+                ]
+                if not metric_keys:
+                    continue
+
+                found_results = True
+                # Construct suffix for valid tasks found (e.g., subtasks)
+                current_suffix = suffix
+                if res_key != args.task_name:
+                    current_suffix = f"{suffix}_{res_key}" if suffix else res_key
+
+                save_and_update_models_metrics(
+                    dataset_dir=args.output_dir,
+                    model_identifier=model_identifier,
+                    prefix=prefix,
+                    suffix=current_suffix,
+                    raw_results=res_metrics,
+                    num_fewshot=args.num_fewshot,
+                    elapsed_time_sec=elapsed_sec,
+                )
+
+            if not found_results:
+                print(
+                    f"[yellow]⚠ Warning: No valid metrics found for {args.task_name}[/yellow]"
+                )
+
         else:
-            print(f"[yellow]⚠ Warning: Incomplete results for {args.task_name}, skipping metrics save[/yellow]")
+            print(
+                f"[yellow]⚠ Warning: Incomplete results for {args.task_name}, skipping metrics save[/yellow]"
+            )
 
         # Save responses (with defensive check)
-        response_identifier = f"{model_identifier}_{suffix}" if suffix else model_identifier
+        response_identifier = (
+            f"{model_identifier}_{suffix}" if suffix else model_identifier
+        )
         if results and "samples" in results:
             save_model_responses(
                 model_identifier=response_identifier,
@@ -307,7 +319,9 @@ def run_evaluation(
                 num_fewshot=args.num_fewshot,
             )
         else:
-            print("[yellow]⚠ Warning: No samples found, skipping responses save[/yellow]")
+            print(
+                "[yellow]⚠ Warning: No samples found, skipping responses save[/yellow]"
+            )
 
     # Memory cleanup WITHOUT barriers (barriers cause deadlock if one process errors)
     del results
@@ -366,7 +380,9 @@ def eval_finetuned_pretrained(args) -> None:
     )
 
     print()
-    print(f"[green]✓ Complete in {format_elapsed_time(time.time() - eval_start_time)}[/green]")
+    print(
+        f"[green]✓ Complete in {format_elapsed_time(time.time() - eval_start_time)}[/green]"
+    )
     print(f"[cyan]  Saved to: {effective_output_dir}[/cyan]")
 
 
@@ -407,7 +423,7 @@ def eval_collection(args) -> None:
         return
 
     model_prefix = MODELS_COLLECTION[args.collection_name]
-    checkpoints = list(range(4000, 10001, 1000))
+    checkpoints = list(range(1000, 10001, 1000))
 
     os.makedirs(args.output_dir, exist_ok=True)
     effective_output_dir = os.path.join(args.output_dir, args.collection_name)
@@ -420,7 +436,7 @@ def eval_collection(args) -> None:
     collection_start_time = time.time()
     for i, checkpoint in enumerate(checkpoints):
         model_name = f"{model_prefix}{checkpoint}"
-        print(f"[cyan]Checkpoint {checkpoint} ({i+1}/{len(checkpoints)})[/cyan]")
+        print(f"[cyan]Checkpoint {checkpoint} ({i + 1}/{len(checkpoints)})[/cyan]")
 
         try:
             run_evaluation(
@@ -457,7 +473,9 @@ def eval_collection(args) -> None:
             continue
         print()
 
-    print(f"[green]✓ Complete in {format_elapsed_time(time.time() - collection_start_time)}[/green]")
+    print(
+        f"[green]✓ Complete in {format_elapsed_time(time.time() - collection_start_time)}[/green]"
+    )
     print(f"[cyan]  Saved to: {effective_output_dir}[/cyan]")
 
 
@@ -471,7 +489,7 @@ def main() -> None:
         description="Evaluate LLaVA models using lmms-eval"
     )
 
-    parser.add_argument("--lmms-eval-model", type=str, default="llava_hf_chat")
+    parser.add_argument("--lmms-eval-model", type=str, default="llava_hf")
     parser.add_argument("--model-name-or-path", type=str, default=None)
     parser.add_argument("--model-cache-dir", type=str, required=True)
     parser.add_argument("--collection-name", type=str, default=None)
@@ -483,6 +501,7 @@ def main() -> None:
     parser.add_argument("--num-fewshot", type=int, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument("--no-image", action="store_true")
 
     args = parser.parse_args()
 

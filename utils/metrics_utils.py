@@ -55,16 +55,16 @@ def _preprocess_data(
             f"Data1 has {data1.shape[0]} samples, Data2 has {data2.shape[0]} samples"
         )
 
-    # Convert to numpy arrays for duplicate removal if needed
+    # Convert to float32 and move to CPU if it's a tensor, or ensure float32 for numpy
     if isinstance(data1, torch.Tensor):
-        np_data1 = data1.cpu().numpy()
+        np_data1 = data1.detach().cpu().to(torch.float32).numpy()
     else:
-        np_data1 = data1
+        np_data1 = np.asarray(data1, dtype=np.float32)
 
     if isinstance(data2, torch.Tensor):
-        np_data2 = data2.cpu().numpy()
+        np_data2 = data2.detach().cpu().to(torch.float32).numpy()
     else:
-        np_data2 = data2
+        np_data2 = np.asarray(data2, dtype=np.float32)
 
     # Remove duplicates and match indices if requested
     if remove_duplicates:
@@ -617,7 +617,7 @@ def compute_similarity(
         raise ValueError(
             f"Unknown measure '{measure}'. Available measures: {available_measures}"
         )
-
+        
     if measure == "neighborhood_overlap":
         maxk = kwargs.get("maxk", 30)
         use_dadapy = kwargs.get("use_dadapy", False)
@@ -1066,6 +1066,7 @@ def compute_cross_layers_residual_stream_similarities(
     residual_stream_network1: torch.Tensor,
     residual_stream_network2: torch.Tensor,
     similarity_measures: List[str],
+    lower_triangular_only: bool = False,
     **kwargs,
 ) -> Dict[str, torch.Tensor]:
     """
@@ -1079,6 +1080,8 @@ def compute_cross_layers_residual_stream_similarities(
             - neighborhood_overlap
             - linear_cka
             - svcca
+        lower_triangular_only: If True, compute only when row_idx > col_idx (i > j).
+                               Useful for intra-model symmetric validation.
         **kwargs:
             - maxk: int = 30 for neighborhood_overlap
             - accept_rate: float = 0.95 for svcca
@@ -1086,6 +1089,7 @@ def compute_cross_layers_residual_stream_similarities(
     Returns:
         Dict of tensors of measures of the residual stream of shape (num_layers_1, num_layers_2)
     """
+    # print(f"    ℹ️  Computing similarity for pooling method: {tokens_pooling_method}") # Removed
     num_layers_1, num_samples, _ = residual_stream_network1.shape
     num_layers_2, num_samples_2, _ = residual_stream_network2.shape
 
@@ -1095,8 +1099,18 @@ def compute_cross_layers_residual_stream_similarities(
     residual_stream_measures = {}
 
     # Pre-calculate update interval for progress bar
-    total_comparisons = num_layers_1 * num_layers_2
-    update_every = max(1, int(0.1 * total_comparisons))
+    if lower_triangular_only:
+        # If strict lower triangular (i >= j), valid pairs are i * (i+1) / 2 for symmetric NxN
+        # Assumes num_layers_1 == num_layers_2 typically, but logic holds (pairs where i>=j)
+        total_comparisons = 0
+        for i in range(num_layers_1):
+            for j in range(num_layers_2):
+                if i >= j:
+                     total_comparisons += 1
+    else:
+        total_comparisons = num_layers_1 * num_layers_2
+    
+    update_every = max(1, int(0.1 * total_comparisons)) if total_comparisons > 0 else 1
 
     for measure in similarity_measures:
         print(f"    - Computing {measure} matrix ({num_layers_1}x{num_layers_2})...")
@@ -1131,9 +1145,16 @@ def compute_cross_layers_residual_stream_similarities(
             total=total_comparisons, desc=f"Computing {measure}", unit="pair"
         )
         last_update = 0
+        current_comparison = 0
 
         for i in range(num_layers_1):
             for j in range(num_layers_2):
+                # Optimization for Lower Triangular (Strict: i >= j)
+                if lower_triangular_only and j > i:
+                    continue
+                
+                current_comparison += 1
+
                 # Inject precomputed IDs into kwargs if available
                 current_kwargs = kwargs.copy()
                 if precomputed_ids1 is not None:
@@ -1148,10 +1169,9 @@ def compute_cross_layers_residual_stream_similarities(
                 )
 
                 # Update progress bar
-                current_idx = i * num_layers_2 + j + 1
-                if current_idx % update_every == 0 or current_idx == total_comparisons:
-                    progress_bar.update(current_idx - last_update)
-                    last_update = current_idx
+                if current_comparison % update_every == 0 or current_comparison == total_comparisons:
+                    progress_bar.update(current_comparison - last_update)
+                    last_update = current_comparison
 
         progress_bar.close()
 
@@ -1217,31 +1237,65 @@ def compute_heads_projection_residual_stream_similarities(
 
     update_every = max(1, int(0.1 * num_heads))  # Update every 10%
     progress_bar = tqdm(
-        total=num_heads, desc="Processing heads similarities", unit="head"
+        total=num_heads, desc="Computing heads projection similarities", unit="head"
     )
     last_update = 0
 
-    for head_idx in range(num_heads):
-        X = residual_stream_network1[
-            :, :, head_idx, :
-        ]  # (num_layers, num_samples, hidden_size)
-        Y = residual_stream_network2[
-            :, :, head_idx, :
-        ]  # (num_layers, num_samples, hidden_size)
-        residual_stream_measures_layers = compute_layers_residual_stream_similarities(
-            X,
-            Y,
-            similarity_measures=similarity_measures,
-            **kwargs,
-        )
+    for h in range(num_heads):
+        # Shape: (num_layers, num_samples, hidden_size)
+        res_h1 = residual_stream_network1[:, :, h, :]
+        res_h2 = residual_stream_network2[:, :, h, :]
+
         for measure in similarity_measures:
-            residual_stream_measures[measure][:, head_idx] = (
-                residual_stream_measures_layers[measure]
-            )
-        if (head_idx + 1) % update_every == 0 or (head_idx + 1) == num_heads:
-            progress_bar.update((head_idx + 1) - last_update)
-            last_update = head_idx + 1
+            for layer in range(num_layers):
+                residual_stream_measures[measure][layer, h] = compute_similarity(
+                    res_h1[layer],
+                    res_h2[layer],
+                    measure,
+                    **kwargs,
+                )
+
+        if (h + 1) % update_every == 0 or (h + 1) == num_heads:
+            progress_bar.update((h + 1) - last_update)
+            last_update = h + 1
+
     progress_bar.close()
+    return residual_stream_measures
+
+
+def compute_consecutive_layers_similarities(
+    residual_stream: torch.Tensor,
+    similarity_measures: List[str],
+    **kwargs,
+) -> Dict[str, torch.Tensor]:
+    """
+    Compute similarity measures between consecutive layers of a single network.
+
+    Args:
+        residual_stream: Tensor of shape (num_layers, num_samples, hidden_size)
+        similarity_measures: List of similarity measures to compute
+        **kwargs: Additional arguments for similarity computation
+
+    Returns:
+        Dict of tensors of shape (num_layers - 1,) containing similarities
+        between layer i and layer i+1.
+    """
+    num_layers, num_samples, _ = residual_stream.shape
+    if num_layers < 2:
+        raise ValueError("Network must have at least 2 layers for consecutive comparison")
+
+    residual_stream_measures = {}
+    for measure in similarity_measures:
+        residual_stream_measures[measure] = torch.zeros(
+            num_layers - 1, dtype=torch.float64
+        )
+        for layer in range(num_layers - 1):
+            residual_stream_measures[measure][layer] = compute_similarity(
+                residual_stream[layer],
+                residual_stream[layer + 1],
+                measure,
+                **kwargs,
+            )
     return residual_stream_measures
 
 

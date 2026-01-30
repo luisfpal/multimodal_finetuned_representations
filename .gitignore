@@ -67,3 +67,6 @@ internal_docs/
 
 # Tests
 tests/
+
+# Representation results
+results/representations/

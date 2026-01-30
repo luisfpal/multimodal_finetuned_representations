@@ -1,11 +1,10 @@
 import argparse
 import gc
 import os
-from typing import List
 
 import torch
 from dotenv import load_dotenv
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 
 from src.residual_stream_tracer import residual_stream_tracer
 from utils import (
@@ -19,11 +18,11 @@ from utils import (
 load_dotenv()
 
 # Configuration
-MODEL_DTYPE = torch.float16
+MODEL_DTYPE = torch.bfloat16
 ATTN_IMPLEMENTATION = "flash_attention_2"
 RESIDUAL_STREAM_TYPE = "output_layer"
-TOKENS_POOLING_METHOD = "last"
-SIMILARITY_MEASURES = [
+TOKENS_POOLING_METHODS_DEFAULT = ["last"]
+SIMILARITY_MEASURES_DEFAULT = [
     "neighborhood_overlap",
     "linear_cka",
     "distance_correlation",
@@ -33,37 +32,51 @@ SIMILARITY_MEASURES = [
     "information_imbalance_mean",
 ]
 
-COCOQA_DATASET_ARGS = {
-    "guide_text": "Answer the question using a single word or phrase.\n",
-    "downsample_size": 10000,
-}
-
-DATASETS_CONFIG = {
-    "cocoqa_txt": {
-        "texts_qa": True,
-        **COCOQA_DATASET_ARGS,
-    },
-    "cocoqa_img": {
-        "images_qa": True,
-        **COCOQA_DATASET_ARGS,
-    },
-}
-
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Extract and analyze residual streams for multimodality similarity (Text vs Image)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = argparse.ArgumentParser()
 
     # Required arguments
     parser.add_argument("--results-dir", type=str, required=True)
+    parser.add_argument(
+        "--representations-dir",
+        type=str,
+        required=True,
+        help="Base directory for storing representations (e.g., $HOME/scratch)",
+    )
     parser.add_argument("--dataset-path-or-name", type=str, required=True)
     parser.add_argument("--model-name-or-path", type=str, required=True)
 
     # Optional arguments
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--guide-text",
+        type=str,
+        default="Answer the question using a single word or phrase.\n",
+        help="Guide text for the QA task",
+    )
+    parser.add_argument(
+        "--downsample-size",
+        type=int,
+        default=100
+    )
+    parser.add_argument(
+        "--pooling-methods",
+        nargs="+",
+        default=TOKENS_POOLING_METHODS_DEFAULT,
+        help="List of pooling methods to use (e.g., last mean_image)",
+    )
+    parser.add_argument(
+        "--similarity-measures",
+        nargs="+",
+        default=SIMILARITY_MEASURES_DEFAULT,
+        help="List of similarity measures to use.",
+    )
+    parser.add_argument(
+        "--save-representations",
+        action="store_true",
+    )
 
     args = parser.parse_args()
 
@@ -72,7 +85,11 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
 
     # Define sub-directory for this specific analysis
-    analysis_dir = os.path.join(results_dir, "cocoqa_img_vs_txt")
+    # Dataset Setup - automatically detect prefix from dataset name
+    dataset_slug = args.dataset_path_or_name.split("/")[-1].replace("-", "_").lower()
+    dataset_prefix = dataset_slug
+
+    analysis_dir = os.path.join(results_dir, "multimodality_comparison", f"{dataset_prefix}_img_vs_txt")
     similarities_dir = os.path.join(analysis_dir, "similarities")
     os.makedirs(similarities_dir, exist_ok=True)
 
@@ -100,22 +117,6 @@ def main():
     # Identify model name for filename
     model_name = args.model_name_or_path.split("/")[-1]
 
-    # Check for existing results first to avoid unnecessary loading
-    missing_measures = []
-    for measure_name in SIMILARITY_MEASURES:
-        filename = f"{model_name}_{measure_name}.safetensors"
-        save_path = os.path.join(similarities_dir, filename)
-        if not os.path.exists(save_path):
-            missing_measures.append(measure_name)
-        else:
-            print(f"    ✅ Found existing: {filename}")
-
-    if not missing_measures:
-        print("    ⏩ All measures computed. Skipping...")
-        return
-
-    print(f"    ⚠️  Missing measures: {missing_measures}")
-
     # Prepare Dataloaders
     print("\n📚 Preparing dataloaders...")
 
@@ -129,72 +130,189 @@ def main():
         "processor": processor,
         "batch_size": args.batch_size,
         "cache_dir": datasets_cache_dir,
+        "guide_text": args.guide_text,
+        "downsample_size": args.downsample_size,
+        "split": "train",
     }
+    
+    if "intern" in model.__class__.__name__.lower():
+        dl_args['model'] = model
 
     # Text Dataloader
-    print("  - Loading cocoqa_txt...")
-    dl_txt = get_dataloader(**DATASETS_CONFIG["cocoqa_txt"], **dl_args)
+    print(f"  - Loading {dataset_prefix}_txt...")
+    dl_txt = get_dataloader(texts_qa=True, **dl_args)
 
     # Image Dataloader
-    print("  - Loading cocoqa_img...")
-    dl_img = get_dataloader(**DATASETS_CONFIG["cocoqa_img"], **dl_args)
+    print(f"  - Loading {dataset_prefix}_img...")
+    dl_img = get_dataloader(images_qa=True, **dl_args)
 
-    print(f"\n{'-' * 80}")
-    print(f"🔍 Analysis: {RESIDUAL_STREAM_TYPE} | {TOKENS_POOLING_METHOD}")
-    print(f"{'-' * 80}")
+    for pooling_method in args.pooling_methods:
+        print(f"\n{'-' * 80}")
+        print(f"🔍 Analysis: {RESIDUAL_STREAM_TYPE} | {pooling_method}")
+        print(f"{'-' * 80}")
 
-    # 1. Extract Text Representations
-    print("  👉 Extracting Text Representations...")
-    res_txt = residual_stream_tracer(
-        model=model,
-        processed_dataloader=dl_txt,
-        residual_stream_type=RESIDUAL_STREAM_TYPE,
-        tokens_pooling_method=TOKENS_POOLING_METHOD,
-        return_deepcopy=True,
-    )
+        # Check for existing results first to avoid unnecessary loading
+        missing_measures = []
+        for measure_name in args.similarity_measures:
+            filename = f"{model_name}_{pooling_method}_{measure_name}.safetensors"
+            save_path = os.path.join(similarities_dir, filename)
+            if not os.path.exists(save_path):
+                missing_measures.append(measure_name)
+            else:
+                print(f"    ✅ Found existing: {filename}")
 
-    # 2. Extract Image Representations
-    print("  👉 Extracting Image Representations...")
-    res_img = residual_stream_tracer(
-        model=model,
-        processed_dataloader=dl_img,
-        residual_stream_type=RESIDUAL_STREAM_TYPE,
-        tokens_pooling_method=TOKENS_POOLING_METHOD,
-        return_deepcopy=True,
-    )
+        if not missing_measures:
+            print(f"    ⏩ All measures computed for {pooling_method}. Skipping...")
+            continue
 
-    # 3. Compute Similarities
-    print("  👉 Computing Similarities...")
-    print(f"    - Measures: {SIMILARITY_MEASURES}")
+        print(f"    ⚠️  Missing measures: {missing_measures}")
 
-    sim_results = compute_cross_layers_residual_stream_similarities(
-        res_txt,
-        res_img,
-        similarity_measures=missing_measures,
-        maxk=30,  # Default
-    )
+        # helper for path construction
+        def get_repr_path(dataset_n):
+            # Use configurable representations directory
+            repr_base_dir = os.path.expanduser(args.representations_dir)
 
-    # Save each measure
-    metadata = {
-        "row_modality": "text",
-        "col_modality": "image",
-        "description": "Rows represent text layers, Columns represent image layers",
-    }
-    print("    ℹ️  Matrix orientation: Rows=Text, Columns=Image")
+            repr_dir = os.path.join(
+                repr_base_dir,
+                "representations",
+                model_name,
+                dataset_n,
+                RESIDUAL_STREAM_TYPE,
+                pooling_method,
+            )
+            os.makedirs(repr_dir, exist_ok=True)
+            return os.path.join(repr_dir, "representations.safetensors")
 
-    for measure_name, measure_val in sim_results.items():
-        # Simplified filename: {model_name}_{measure_name}.safetensors
-        save_path = os.path.join(
-            similarities_dir,
-            f"{model_name}_{measure_name}.safetensors",
-        )
-        save_file({f"{measure_name}": measure_val}, save_path, metadata=metadata)
-        print(f"    💾 Saved: {save_path}")
+        # 1. Extract Text Representations
+        print("  👉 Extracting Text Representations...")
+        txt_metadata = {
+            "model": model_name,
+            "dataset": f"{dataset_prefix}_txt",
+            "pooling_method": pooling_method,
+            "type": RESIDUAL_STREAM_TYPE,
+        }
+        repr_path_txt = get_repr_path(f"{dataset_prefix}_txt")
 
-    # Cleanup
-    del res_txt, res_img
-    gc.collect()
-    torch.cuda.empty_cache()
+        # Try loading cached representation first
+        res_txt = None
+        if os.path.exists(repr_path_txt):
+            print(f"  💾 Found cached text representation at: {repr_path_txt}")
+            try:
+                loaded = load_file(repr_path_txt)
+                if "residual_stream" in loaded:
+                    tensor = loaded["residual_stream"]
+                    if tensor.ndim >= 2 and tensor.shape[0] > 0 and tensor.shape[1] > 0:
+                        print(f"  ✅ Loaded successfully. Shape: {tensor.shape}")
+                        res_txt = tensor[:]
+                    else:
+                        print(
+                            f"  ⚠️ Invalid tensor shape: {tensor.shape}. Re-extracting..."
+                        )
+                else:
+                    print("  ⚠️ Key 'residual_stream' not found. Re-extracting...")
+            except Exception as e:
+                print(
+                    f"  ⚠️ Error loading cache: {type(e).__name__}: {e}. Re-extracting..."
+                )
+
+        if res_txt is None:
+            res_txt = residual_stream_tracer(
+                model=model,
+                processed_dataloader=dl_txt,
+                residual_stream_type=RESIDUAL_STREAM_TYPE,
+                tokens_pooling_method=pooling_method,
+                return_deepcopy=True,
+                save_path=repr_path_txt,
+                save_representations=args.save_representations,
+                save_metadata=txt_metadata,
+            )
+
+        # 2. Extract Image Representations
+        print("  👉 Extracting Image Representations...")
+        img_metadata = {
+            "model": model_name,
+            "dataset": f"{dataset_prefix}_img",
+            "pooling_method": pooling_method,
+            "type": RESIDUAL_STREAM_TYPE,
+        }
+        repr_path_img = get_repr_path(f"{dataset_prefix}_img")
+
+        # Try loading cached representation first
+        res_img = None
+        if os.path.exists(repr_path_img):
+            print(f"  💾 Found cached image representation at: {repr_path_img}")
+            try:
+                loaded = load_file(repr_path_img)
+                if "residual_stream" in loaded:
+                    tensor = loaded["residual_stream"]
+                    if tensor.ndim >= 2 and tensor.shape[0] > 0 and tensor.shape[1] > 0:
+                        print(f"  ✅ Loaded successfully. Shape: {tensor.shape}")
+                        res_img = tensor[:]
+                    else:
+                        print(
+                            f"  ⚠️ Invalid tensor shape: {tensor.shape}. Re-extracting..."
+                        )
+                else:
+                    print("  ⚠️ Key 'residual_stream' not found. Re-extracting...")
+            except Exception as e:
+                print(
+                    f"  ⚠️ Error loading cache: {type(e).__name__}: {e}. Re-extracting..."
+                )
+
+        if res_img is None:
+            res_img = residual_stream_tracer(
+                model=model,
+                processed_dataloader=dl_img,
+                residual_stream_type=RESIDUAL_STREAM_TYPE,
+                tokens_pooling_method=pooling_method,
+                return_deepcopy=True,
+                save_path=repr_path_img,
+                save_representations=args.save_representations,
+                save_metadata=img_metadata,
+            )
+
+        # 3. Compute Similarities
+        print("  👉 Computing Similarities...")
+
+        # Save each measure
+        metadata = {
+            "row_modality": "text",
+            "col_modality": "image",
+            "description": "Rows represent text layers, Columns represent image layers",
+            "pooling_method": pooling_method,
+        }
+        print("    ℹ️  Matrix orientation: Rows=Text, Columns=Image")
+
+        for measure_name in missing_measures:
+            print(f"    👉  Computing: {measure_name}")
+            try:
+                sim_results = compute_cross_layers_residual_stream_similarities(
+                    res_txt,
+                    res_img,
+                    similarity_measures=[measure_name],
+                    maxk=30,  # Default
+                )
+                measure_val = sim_results[measure_name]
+
+                # Filename: {model_name}_{pooling_method}_{measure_name}.safetensors
+                save_path = os.path.join(
+                    similarities_dir,
+                    f"{model_name}_{pooling_method}_{measure_name}.safetensors",
+                )
+                save_file(
+                    {f"{measure_name}": measure_val}, save_path, metadata=metadata
+                )
+                print(f"    💾 Saved: {save_path}")
+            except Exception as e:
+                print(f"    ❌ Error computing {measure_name}: {type(e).__name__}: {e}")
+                print(
+                    f"    ⚠️  Skipping {measure_name} and continuing with next measure..."
+                )
+
+        # Cleanup
+        del res_txt, res_img
+        gc.collect()
+        torch.cuda.empty_cache()
 
     print(f"\n✅ All analyses complete. Results saved to {similarities_dir}")
 
