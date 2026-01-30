@@ -12,6 +12,7 @@ from safetensors.torch import save_file, load_file
 from transformers.feature_extraction_utils import BatchFeature
 from torch.utils.data import DataLoader
 from utils import ModelType, sample_image_and_text_positions
+from utils.internvl_utils import get_combined_embeddings
 
 IMAGE_TOKEN_INDEX = 32000
 
@@ -1013,9 +1014,37 @@ def residual_stream_tracer(
 
     # Process batches
     for batch in processed_dataloader:
-        if isinstance(batch, (list, tuple)):
-            # If batch is a tuple (e.g., contains labels), take the first element (inputs)
+        # Handle list wrapping from DataLoader
+        if isinstance(batch, list):
             batch = batch[0]
+
+        if isinstance(batch, tuple):
+            if "llava" in model.__class__.__name__.lower():
+                # If batch is a tuple (e.g., contains labels), take the first element (inputs)
+                batch = batch[0]
+
+            elif "intern" in model.__class__.__name__.lower():
+                if len(batch) > 1 and isinstance(batch[1], torch.Tensor):
+                    # Image mode: combine text + vision embeddings
+                    pixel_values = batch[1]
+                    batch = batch[0]
+                    input_ids = batch["input_ids"]
+                    attention_mask = batch["attention_mask"]
+                    combined_embeds = get_combined_embeddings(
+                        model,
+                        input_ids=input_ids,
+                        pixel_values=pixel_values,
+                    )
+                    batch = BatchFeature(
+                        {
+                            "inputs_embeds": combined_embeds,
+                            "attention_mask": attention_mask,
+                        }
+                    )
+                else:
+                    # Text-only mode: use input_ids directly
+                    batch = batch[0] if isinstance(batch, tuple) else batch
+
         batch = batch.to(model.device)
         current_batch_size = batch.attention_mask.shape[0]
         tracer.trace_batch(batch)
