@@ -25,7 +25,11 @@ set -e # Exit immediately if a command exits with a non-zero status.
 
 # 1. Default model to evaluate if no command-line argument is provided.
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
-DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+# DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+# DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B-Pretrained"
+# DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B-Instruct"
+# DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B-MPO"
+DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
 # DEFAULT_MODEL_NAME="lbasile/llava_13b"
 
 # 2. Model class in the lmms-eval library

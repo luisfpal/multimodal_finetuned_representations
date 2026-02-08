@@ -228,7 +228,6 @@ def load_hf_model_and_processor_or_tokenizer(
         use_fast (bool): Use the fast version of the processor if available.
         skip_model (bool): Whether to not load the model.
         skip_processor (bool): Whether to not load the processor.
-        trust_remote_code (bool): Whether to trust remote code (required for some models like InternVL 3.5).
 
     Returns:
         The loaded model and processor/tokenizer or just the model or the processor.

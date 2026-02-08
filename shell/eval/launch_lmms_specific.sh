@@ -47,8 +47,12 @@ SCRIPT_NAME="lmms_evaluation.sh"
 
 # Uncomment the model you want to evaluate:
 # MODEL_TO_EVAL="lbasile/llava_13b"
-MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
+# MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
 # MODEL_TO_EVAL="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+# MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-Pretrained"
+# MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-Instruct"
+# MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-MPO"
+MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B"
 
 # Automatically extract the last part of the model path (equivalent to model.split('/')[-1] in Python)
 OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
