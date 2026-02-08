@@ -77,9 +77,9 @@ NUM_GPUS="${NUM_GPUS:-1}"
 # =============================================================================
 # PATHS & MODEL CONFIGURATION
 # =============================================================================
-MODEL="llava-1.5-7b"  # ⚠️Used for output directory naming⚠️
+OUTPUT_MODEL_DIR="${OUTPUT_MODEL_DIR:-llava-1.5-7b}" # ⚠️ADJUST: Used for output directory naming⚠️
 PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
-OUTPUT_DIR="$PROJECT_ROOT/evals/$MODEL/lmms_eval/$TASK_NAME"
+OUTPUT_DIR="$PROJECT_ROOT/evals/$OUTPUT_MODEL_DIR/lmms_eval/$TASK_NAME"
 
 # Model names
 FINE_TUNED_MODEL_NAME="lbasile/llava_7b"

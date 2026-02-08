@@ -21,6 +21,10 @@
         "/^/u/dssc/lpalaciosflores/multimodal_finetuned_representations/\\.venv/bin/python /u/dssc/lpalaciosflores/multimodal_finetuned_representations/scripts/basic_benchmarking/create_vqav2_coco_icq\\.py$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^git add \\.$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

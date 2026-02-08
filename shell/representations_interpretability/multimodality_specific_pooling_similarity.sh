@@ -47,6 +47,9 @@ FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
 # --- Environment Setup ---
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Run Analysis
 echo "====== Multimodality Specific Pooling Similarity Analysis ======"
 echo "Results directory: $RESULTS_DIR"

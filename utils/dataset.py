@@ -852,7 +852,7 @@ def collate_vqa_batch(
             if any(image is not None for image in images):
                 processor_kwargs["images"] = images
 
-        elif "intern" in processor.__class__.__name__.lower() and model is not None:
+        elif model and "intern" in model.__class__.__name__.lower():
             has_images = any(image is not None for image in images)
             if has_images:
                 pixel_values, num_patches_list = get_pixel_values(images)
@@ -865,14 +865,20 @@ def collate_vqa_batch(
             else:
                 # Text-only mode: format with chat template but no image tokens
                 pixel_values = None
-                queries = apply_internvl_chat_template(model=model, text=questions, guide_text=guide_text)
+                num_patches_list = None
+                queries = apply_internvl_chat_template(
+                    model=model, text=questions, guide_text=guide_text
+                )
             processor_kwargs["text"] = queries
 
         tokenized = processor(**processor_kwargs)
 
         outputs = (tokenized,)
-        if model and "intern" in processor.__class__.__name__.lower() and pixel_values is not None:
-            outputs += (pixel_values,)
+        if model and "intern" in model.__class__.__name__.lower():
+            if pixel_values is not None:
+                outputs += (pixel_values, processor_kwargs["text"])
+            else:
+                outputs += (processor_kwargs["text"],)
         if answer_letters_with_processed_batch:
             # !not so neat but it's a backward compatibility feature
             return outputs + (answer_letters,)
@@ -940,7 +946,7 @@ def collate_captioning_batch(
             processor_kwargs["text"] = prompts
             processor_kwargs["images"] = images
 
-        elif "intern" in processor.__class__.__name__.lower() and model is not None:
+        elif model and "intern" in model.__class__.__name__.lower():
             pixel_values, num_patches_list = get_pixel_values(images)
             queries = apply_internvl_chat_template(
                 model=model,
@@ -952,7 +958,7 @@ def collate_captioning_batch(
         tokenized = processor(**processor_kwargs)
         # Build return tuple based on requested data
         result = [tokenized]
-        if model and "intern" in processor.__class__.__name__.lower():
+        if model and "intern" in model.__class__.__name__.lower():
             result.append(pixel_values)
         if return_captions:
             result.append(captions)

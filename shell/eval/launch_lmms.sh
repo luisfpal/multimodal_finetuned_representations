@@ -69,6 +69,9 @@ COLLECTIONS=(
     "Llava1.5-7B-16-32"
 )
 
+# Resolve model-specific venv
+VENV="$PROJECT_ROOT/.venv"
+
 # =============================================================================
 # Job Execution Script
 # =============================================================================
@@ -130,7 +133,7 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 # Activate virtual environment
-source "$PROJECT_ROOT/.venv/bin/activate"
+source "$VENV/bin/activate"
 
 # Change to working directory
 cd "$SCRIPTS_DIR"

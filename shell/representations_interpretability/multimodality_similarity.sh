@@ -5,7 +5,7 @@
 # Datasets to process
 DATASETS=(
     "l11p/COCOQA-restval-ICQA"
-    # "l11p/VQAv2-COCO-restval-ICQ"
+    "l11p/VQAv2-COCO-restval-ICQ"
     # "l11p/MME-test-captioned"
     # "l11p/GQA-val-balanced-noyesno-captioned"
     # "l11p/MMBench_EN-dev-captioned"
@@ -14,10 +14,10 @@ DATASETS=(
 # Analysis configuration
 # Uses defaults from python script:
 TOKENS_POOLING_METHODS="last"
-# SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
+SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
 # SIMILARITY_MEASURES="information_imbalance_mean"
 # SIMILARITY_MEASURES="information_imbalance information_imbalance_reversed information_imbalance_mean"
-SIMILARITY_MEASURES="linear_cka neighborhood_overlap"
+# SIMILARITY_MEASURES="linear_cka neighborhood_overlap"
 # SIMILARITY_MEASURES="linear_cka"
 # SIMILARITY_MEASURES="neighborhood_overlap"
 
@@ -48,7 +48,13 @@ MODELS=(
     # "lbasile/llava_13b"
     # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "OpenGVLab/InternVL2-8B"  # Finetuned
-    "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
+    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
+    # "lbasile/llava_7b_6_17"
+    # "lbasile/llava_7b_6_17_complementary"
+    # "OpenGVLab/InternVL3_5-8B-Pretrained"
+    # "OpenGVLab/InternVL3_5-8B-Instruct"
+    # "OpenGVLab/InternVL3_5-8B-MPO"
+    "OpenGVLab/InternVL3_5-8B"
 )
 
 # --- Environment Setup ---
@@ -67,6 +73,10 @@ for DATASET_PATH_OR_NAME in "${DATASETS[@]}"; do
         echo -e "\n----------------------------------------------------------------"
         echo "🤖 Processing Model: $MODEL_NAME"
         echo "----------------------------------------------------------------"
+
+        # Activate model-specific venv
+        VENV="$PROJECT_DIR/.venv"
+        source "$VENV/bin/activate"
 
         # Build command with conditional flags
         CMD_ARGS=(

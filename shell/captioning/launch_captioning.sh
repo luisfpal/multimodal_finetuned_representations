@@ -99,7 +99,7 @@ $SBATCH_DIRECTIVES
 
 # Activate environment
 cd $PROJECT_ROOT
-source .venv/bin/activate
+source $PROJECT_ROOT/.venv/bin/activate
 
 echo "🚀 Starting Captioning Job"
 echo "   Mode: \$( [[ -n "$PYTHON_ARGS" ]] && echo "RETRY" || echo "STANDARD" )"

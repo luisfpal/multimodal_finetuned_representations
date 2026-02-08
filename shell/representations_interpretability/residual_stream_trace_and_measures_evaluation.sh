@@ -30,6 +30,9 @@ RESULTS_DIR="$PROJECT_DIR/results"
 FILENAME="residual_stream_trace_and_measures_evaluation.py"
 FILEPATH="$PROJECT_DIR/scripts/$FILENAME"
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Argument Construction ---
 SCRIPT_ARGS=()
 SCRIPT_ARGS+=(--results-dir "$RESULTS_DIR")

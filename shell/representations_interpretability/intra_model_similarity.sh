@@ -60,6 +60,9 @@ export HF_HOME
 export HF_HUB_CACHE="$MODEL_CACHE_DIR"
 export HF_DATASETS_CACHE="$DATASETS_CACHE_DIR"
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Execution ---
 echo "🚀 Starting Intra-Model Similarity Analysis..."
 echo "  Results Dir: $RESULTS_DIR"

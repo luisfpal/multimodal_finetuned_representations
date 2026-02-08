@@ -48,6 +48,9 @@ RESULTS_DIR="$PROJECT_DIR/results"
 FILENAME="intrinsic_dimension.py"
 FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Execution ---
 echo "🚀 Starting Intrinsic Dimension Analysis..."
 echo "  Results Dir: $RESULTS_DIR"

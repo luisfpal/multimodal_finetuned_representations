@@ -16,7 +16,6 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 IMG_START_TOKEN = "<img>"
 IMG_END_TOKEN = "</img>"
 IMG_CONTEXT_TOKEN = "<IMG_CONTEXT>"
-IMG_CONTEXT_TOKEN_ID = 92546
 
 
 def build_transform(input_size: int) -> T.Compose:
@@ -141,7 +140,7 @@ def apply_chat_template(
     for idx, txt in enumerate(text):
         if guide_text and guide_text != "":
             txt = txt + "\n " + guide_text + "\n"
-        
+
         # Add <image> placeholder only if we have images
         has_image = num_patches_list is not None and idx < len(num_patches_list)
         if has_image and "<image>" not in txt:
@@ -166,7 +165,7 @@ def apply_chat_template(
             query = query.replace("<image>", image_tokens, 1)
 
         queries.append(query)
-        
+
     return queries
 
 
@@ -174,9 +173,23 @@ def get_combined_embeddings(
     model: PreTrainedModel,
     input_ids: torch.Tensor,
     pixel_values: torch.Tensor,
+    img_context_token_id: Optional[int] = None,
 ) -> torch.Tensor:
     """Replace IMG_CONTEXT token embeddings with vision features."""
     model.eval()
+
+    # Resolve img_context_token_id
+    if img_context_token_id is None:
+        if (
+            hasattr(model, "img_context_token_id")
+            and model.img_context_token_id is not None
+        ):
+            img_context_token_id = model.img_context_token_id
+        else:
+            raise ValueError(
+                "img_context_token_id must be provided explicitly or available in model.img_context_token_id"
+            )
+
     device = model.device
     input_ids = input_ids.to(device)
 
@@ -193,8 +206,20 @@ def get_combined_embeddings(
     input_ids_flat = input_ids.reshape(B * N)
 
     # Find and replace IMG_CONTEXT positions
-    selected = input_ids_flat == IMG_CONTEXT_TOKEN_ID
-    input_embeds_flat[selected] = vit_embeds.reshape(-1, C).to(input_embeds_flat.device)
+    selected = input_ids_flat == img_context_token_id
+    try:
+        input_embeds_flat[selected] = input_embeds_flat[
+            selected
+        ] * 0.0 + vit_embeds.reshape(-1, C).to(input_embeds_flat.device)
+    except Exception as e:
+        vit_embeds = vit_embeds.reshape(-1, C).to(input_embeds_flat.device)
+        print(
+            f"warning: {e}, input_embeds[selected].shape={input_embeds_flat[selected].shape}, vit_embeds.shape={vit_embeds.shape}"
+        )
+        n_token = min(selected.sum(), vit_embeds.size(0))
+        input_embeds_flat[selected][:n_token] = (
+            input_embeds_flat[selected][:n_token] * 0.0 + vit_embeds[:n_token]
+        )
 
     return input_embeds_flat.reshape(B, N, C)
 
@@ -202,23 +227,35 @@ def get_combined_embeddings(
 def generate_responses(
     model: PreTrainedModel,
     tokenizer,
-    inputs_embeds: torch.Tensor,
-    attention_mask: torch.Tensor,
+    inputs_embeds: Optional[torch.Tensor] = None,
+    input_ids: Optional[torch.LongTensor] = None,
+    attention_mask: Optional[torch.Tensor] = None,
     max_new_tokens: int = 50,
 ) -> List[str]:
     """Generate text responses from combined embeddings."""
     template = copy.deepcopy(model.conv_template)
     eos_token_id = tokenizer.convert_tokens_to_ids(template.sep.strip())
 
+    # Build kwargs dynamically: transformers checks key existence (not value),
+    # so passing inputs_embeds=None explicitly breaks _get_initial_cache_position.
+    generate_kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+        "eos_token_id": eos_token_id,
+    }
+    if inputs_embeds is not None:
+        generate_kwargs["inputs_embeds"] = inputs_embeds.to(model.device)
+    if input_ids is not None:
+        generate_kwargs["input_ids"] = input_ids.to(model.device)
+    if attention_mask is not None:
+        generate_kwargs["attention_mask"] = attention_mask.to(model.device)
+
     with torch.no_grad():
-        output = model.language_model.generate(
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask.to(model.device),
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            eos_token_id=eos_token_id,
-        )
+        output = model.language_model.generate(**generate_kwargs)
+
+    # generate() prepends input_ids to output; strip the input prefix before decoding
+    if input_ids is not None:
+        output = output[:, input_ids.shape[1] :]
 
     responses = tokenizer.batch_decode(output, skip_special_tokens=True)
     return [r.split(template.sep.strip())[0].strip() for r in responses]
-

@@ -7,6 +7,7 @@ SYSTEM_INSTRUCTION = (
     "A chat between a curious human and an artificial intelligence assistant. "
     "The assistant gives helpful, detailed, and polite answers to the human's questions."
 )
+INTERNVL_SYSTEM_INSTRUCTION = "你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, 是一个有用无害的人工智能助手。"
 SYSTEM_ROLE = {
     "role": "system",
     "content": [

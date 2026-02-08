@@ -29,6 +29,9 @@ MODEL_CACHE_DIR="$HOME/scratch/huggingface/hub"
 FILENAME="modalities_similarities.py"
 FILEPATH="$PROJECT_DIR/scripts/$FILENAME"
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Argument Construction ---
 SCRIPT_ARGS=()
 SCRIPT_ARGS+=(--results-dir "$RESULTS_DIR")

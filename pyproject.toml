@@ -9,9 +9,9 @@ dependencies = [
     # ============================================================================
     "torch==2.4.1",           
     "torchvision==0.19.1",    
-    "tokenizers>=0.19,<0.22",  # Compatible with transformers<4.50     
+    "tokenizers==0.22.2",
     "safetensors==0.5.3",     
-    "transformers>=4.37.2,<4.50",  # InternVL2 requires <4.50 (GenerationMixin change)   
+    "transformers==4.57.6",
     "accelerate>=0.36.0",     
     "datasets>=2.21.0",       
 

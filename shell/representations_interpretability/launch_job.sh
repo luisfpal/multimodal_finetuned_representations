@@ -5,14 +5,14 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="lade"
+ACCOUNT="dssc"
 JOB_NAME="experiment"
-PARTITION="H100"
-GPU_TYPE="H100"
+PARTITION="DGX"
+GPU_TYPE="A100"
 NUM_GPUS=1              # Number of GPUs
 CPUS=16
-MEM="128GB"
-TIME="05:00:00"
+MEM="32GB"
+TIME="08:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -60,9 +60,6 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     source "$PROJECT_ROOT/.env"
     set +a
 fi
-
-# Activate virtual environment
-source "$PROJECT_ROOT/.venv/bin/activate"
 
 # Change to working directory
 cd "$SCRIPTS_DIR"

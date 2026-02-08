@@ -503,15 +503,14 @@ def main():
             dataloader = get_dataloader(**dl_args)
 
             # Extract labels
-            # Dataloader yields (inputs, labels) because of answer_letters_with_processed_batch=True
-            all_labels = [
-                label for _, answer_letters in dataloader for label in answer_letters
-            ]
+            # Dataloader yields tuples where labels are always at the end
+            all_labels = [label for batch in dataloader for label in batch[-1]]
 
             # Extract Representations
             print("  🕵️ Extracting representations...")
             residual_stream = residual_stream_tracer(
                 model=model,
+                processor=processor,
                 processed_dataloader=dataloader,
                 residual_stream_type=RESIDUAL_STREAM_TYPE,
                 tokens_pooling_method=TOKENS_POOLING_METHOD,

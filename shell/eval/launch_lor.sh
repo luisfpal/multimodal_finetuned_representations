@@ -1,6 +1,7 @@
 #!/bin/bash
 
-source .venv/bin/activate
+PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+source "$PROJECT_ROOT/.venv/bin/activate"
 
 EXTRA_ARGS=""
 # EXTRA_ARGS="--no-image"

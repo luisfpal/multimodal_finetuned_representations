@@ -105,9 +105,6 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     set +a
 fi
 
-# Activate virtual environment
-source "$PROJECT_ROOT/.venv/bin/activate"
-
 # Set PYTHONPATH to project root
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
@@ -154,6 +151,10 @@ for model in "${MODELS[@]}"; do
     echo "Model: $model"
     echo "#################################################################"
 
+    # Activate model-specific venv
+    VENV="$PROJECT_ROOT/.venv"
+    source "$VENV/bin/activate"
+
     for task in "${TASKS[@]}"; do
         echo "------------------------------------------------"
         echo "Task: $task"
@@ -162,8 +163,15 @@ for model in "${MODELS[@]}"; do
         for layer in "${LAYERS[@]}"; do
             echo ">> Running ablation: Skip $layer layers"
 
+            # Determine model type
+            MODEL_TYPE="llava_hf"
+            if [[ "$model" == *"internvl"* ]] || [[ "$model" == *"InternVL"* ]]; then
+                MODEL_TYPE="internvl2"
+            fi
+
             python "$FILEPATH" \
                 --model-name-or-path "$model" \
+                --model-type "$MODEL_TYPE" \
                 --task "$task" \
                 --layers-to-skip "$layer" \
                 --output-dir "$OUTPUT_DIR"

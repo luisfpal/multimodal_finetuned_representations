@@ -18,8 +18,18 @@ project_root = os.path.dirname(
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from utils import SYSTEM_INSTRUCTION
+from utils import SYSTEM_INSTRUCTION, INTERNVL_SYSTEM_INSTRUCTION
 from utils.patch_skipping import patch
+
+try:
+    from lmms_eval.models.chat.llava_hf import LlavaHf
+except ImportError:
+    LlavaHf = None
+
+try:
+    from scripts.models_utils.internvl2 import InternVL2Custom
+except ImportError:
+    InternVL2Custom = None
 
 # =============================================================================
 # CONSTANTS
@@ -35,7 +45,7 @@ LONG_ANSWER_MAX_NEW_TOKENS = 1024
 # Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
 TASK_LIMITS = {
     # "scienceqa_img": 25,  # 2018 samples
-    # "mme": 25,  # 2374 samples
+    "mme": 26,  # 2374 samples
     # "textvqa_val": 5000,  # 5000 samples
     "pope": 5000,  # 9000 samples
     "gqa": 5000,  # 12578 samples
@@ -112,6 +122,7 @@ def validate_task_requirements(task_name: str) -> None:
             print(f"  Task '{task_name}' requires OPENAI_API_KEY\n")
             sys.exit(1)
         print(f"[green]✓ LLM Judge: {model_version} @ {api_url}[/green]")
+
 
 def format_elapsed_time(seconds: float) -> str:
     """Format elapsed time as Xh Ym Zs."""
@@ -221,15 +232,61 @@ def run_evaluation(
     if args.no_image:
         patch(layers_to_skip=range(32))
 
+    # Instantiate model instance if needed
+    model_instance = args.lmms_eval_model  # Default to string for registry lookup
+
+    if args.lmms_eval_model == "llava_hf":
+        if LlavaHf is None:
+            print(
+                "[yellow]⚠ LlavaHf class not importable, falling back to registry[/yellow]"
+            )
+        else:
+            print(f"[cyan]Instantiating LlavaHf directly for {model_name}...[/cyan]")
+            model_instance = LlavaHf(
+                pretrained=model_name,
+                device_map=model_args.split("device_map=")[1]
+                if "device_map=" in model_args
+                else "auto",
+                batch_size=args.batch_size if args.batch_size else 1,
+            )
+
+    elif args.lmms_eval_model == "internvl2":
+        if InternVL2Custom is None:
+            print(
+                "[yellow]⚠ InternVL2Custom class not importable, falling back to registry[/yellow]"
+            )
+        else:
+            print(
+                f"[cyan]Instantiating InternVL2Custom directly for {model_name}...[/cyan]"
+            )
+            model_instance = InternVL2Custom(
+                pretrained=model_name,
+                device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
+                if torch.cuda.is_available()
+                else "cpu",
+                device_map=model_args.split("device_map=")[1]
+                if "device_map=" in model_args
+                else "auto",
+                batch_size=str(args.batch_size) if args.batch_size else "1",
+                cache_dir=args.model_cache_dir,
+            )
+
+    # Select system instruction
+    system_instruction = (
+        INTERNVL_SYSTEM_INSTRUCTION
+        if args.lmms_eval_model == "internvl2"
+        else SYSTEM_INSTRUCTION
+    )
+
     results = simple_evaluate(
-        model=args.lmms_eval_model,
-        model_args=model_args,
+        model=model_instance,
+        model_args=model_args if isinstance(model_instance, str) else None,
         tasks=[args.task_name],
         num_fewshot=args.num_fewshot,
         batch_size=args.batch_size,
         log_samples=True,
         limit=limit,
-        system_instruction=SYSTEM_INSTRUCTION,
+        system_instruction=system_instruction,
         cli_args=create_cli_args(output_dir),
         gen_kwargs=gen_kwargs,
         random_seed=RANDOM_SEED,

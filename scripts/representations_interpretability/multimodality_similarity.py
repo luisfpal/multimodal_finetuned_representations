@@ -1,6 +1,7 @@
 import argparse
 import gc
 import os
+import sys
 
 import torch
 from dotenv import load_dotenv
@@ -56,11 +57,7 @@ def main():
         default="Answer the question using a single word or phrase.\n",
         help="Guide text for the QA task",
     )
-    parser.add_argument(
-        "--downsample-size",
-        type=int,
-        default=100
-    )
+    parser.add_argument("--downsample-size", type=int, default=100)
     parser.add_argument(
         "--pooling-methods",
         nargs="+",
@@ -89,7 +86,9 @@ def main():
     dataset_slug = args.dataset_path_or_name.split("/")[-1].replace("-", "_").lower()
     dataset_prefix = dataset_slug
 
-    analysis_dir = os.path.join(results_dir, "multimodality_comparison", f"{dataset_prefix}_img_vs_txt")
+    analysis_dir = os.path.join(
+        results_dir, "multimodality_comparison", f"{dataset_prefix}_img_vs_txt"
+    )
     similarities_dir = os.path.join(analysis_dir, "similarities")
     os.makedirs(similarities_dir, exist_ok=True)
 
@@ -134,9 +133,9 @@ def main():
         "downsample_size": args.downsample_size,
         "split": "train",
     }
-    
+
     if "intern" in model.__class__.__name__.lower():
-        dl_args['model'] = model
+        dl_args["model"] = model
 
     # Text Dataloader
     print(f"  - Loading {dataset_prefix}_txt...")
@@ -225,6 +224,8 @@ def main():
                 save_path=repr_path_txt,
                 save_representations=args.save_representations,
                 save_metadata=txt_metadata,
+                processor=processor,
+                # debug=True,
             )
 
         # 2. Extract Image Representations
@@ -269,7 +270,11 @@ def main():
                 save_path=repr_path_img,
                 save_representations=args.save_representations,
                 save_metadata=img_metadata,
+                processor=processor,
+                # debug=True,
             )
+
+        # sys.exit(0)  # Temporary exit to skip similarity computation during testing
 
         # 3. Compute Similarities
         print("  👉 Computing Similarities...")

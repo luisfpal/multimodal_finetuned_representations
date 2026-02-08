@@ -29,6 +29,7 @@ logs/
 
 # Experimental files
 tinkering/
+results_test/
 
 # Backup files and directories
 *.bak
@@ -52,6 +53,7 @@ plots/
 *.bin
 *.tar.gz
 *.zip
+*.pdf
 
 # Exclude all in evals/ except .ipynb and *_results.jsonl
 evals/**/*
@@ -60,7 +62,11 @@ evals/**/*
 *.7z
 *.rar
 
-# Claude files
+# Agents
+.github/
+.claude/
+GEMINI.md
+CLAUDE.md
 
 # Internal docs
 internal_docs/

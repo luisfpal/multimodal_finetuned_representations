@@ -44,6 +44,9 @@ MODEL_B="l11p/llava-v1.5-7b-pretrained-lbasile"
 # --- Environment Setup ---
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Run Analysis ---
 echo "====== Models Similarity Analysis ======"
 echo "Results directory: $RESULTS_DIR"

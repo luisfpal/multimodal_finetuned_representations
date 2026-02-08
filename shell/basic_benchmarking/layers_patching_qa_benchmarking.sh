@@ -34,6 +34,9 @@ MODEL_CACHE_DIR="$HOME/scratch/huggingface/hub"
 SCRIPT_FILENAME="layers_patching_qa_benchmarking.py"
 SCRIPT_FILEPATH="$PROJECT_DIR/scripts/basic_benchmarking/$SCRIPT_FILENAME"
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Argument Construction ---
 SCRIPT_ARGS=()
 SCRIPT_ARGS+=(--multimodal_model_name_or_path "$MULTIMODAL_MODEL_NAME_OR_PATH")

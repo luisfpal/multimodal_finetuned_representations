@@ -12,6 +12,7 @@ from .constants import (
     MMLU_ANSWER_CHOICES,
     SQA_ANSWER_CHOICES,
     SYSTEM_INSTRUCTION,
+    INTERNVL_SYSTEM_INSTRUCTION,
     SYSTEM_ROLE,
 )
 from .dataset import (

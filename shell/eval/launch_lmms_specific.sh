@@ -22,14 +22,14 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="lade"
+ACCOUNT="dssc"
 JOB_NAME="experiment"
-PARTITION="H100"
-GPU_TYPE="H100"
+PARTITION="DGX"
+GPU_TYPE="A100"
 NUM_GPUS=1
 CPUS=16
-MEM="48GB"
-TIME="01:00:00"
+MEM="64GB"
+TIME="24:00:00"
 NODELIST=""
 EXCLUDE=""
 
@@ -46,11 +46,20 @@ SCRIPT_NAME="lmms_evaluation.sh"
 # =============================================================================
 
 # Uncomment the model you want to evaluate:
-MODEL_TO_EVAL="lbasile/llava_7b"
+# MODEL_TO_EVAL="lbasile/llava_13b"
+MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
+# MODEL_TO_EVAL="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+
+# Automatically extract the last part of the model path (equivalent to model.split('/')[-1] in Python)
+OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
 
 NO_IMAGE="false"
 #⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
-LMMS_EVAL_MODEL="llava_hf" 
+# LMMS_EVAL_MODEL="llava_hf" 
+LMMS_EVAL_MODEL="internvl2"
+
+# Resolve model-specific venv
+VENV="$PROJECT_ROOT/.venv"
 
 # =============================================================================
 # Job Execution Script
@@ -62,17 +71,17 @@ read -r -d '' JOB_COMMANDS << JOB_EOF || true
 # =============================================================================
 
 TASKS=(
-    # "scienceqa_img"
+    "scienceqa_img"
     "mme"
-    # "mmbench_en_dev"
-    # "textvqa_val"
-    # "llava_in_the_wild"
-    # "gqa"
-    # "vizwiz_vqa_val"
-    # "vqav2_val"
-    # "mmbench_cn_dev"
-    # "pope"
-    # "seedbench"
+    "mmbench_en_dev"
+    "textvqa_val"
+    "llava_in_the_wild"
+    "gqa"
+    "vizwiz_vqa_val"
+    "vqav2_val"
+    "mmbench_cn_dev"
+    "pope"
+    "seedbench"
 )
 
 # =============================================================================
@@ -129,7 +138,7 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 # Activate virtual environment
-source "$PROJECT_ROOT/.venv/bin/activate"
+source "$VENV/bin/activate"
 cd "$SCRIPTS_DIR"
 chmod +x "$SCRIPT_NAME"
 
@@ -137,6 +146,7 @@ export TOKENIZERS_PARALLELISM=false
 export NUM_GPUS=$NUM_GPUS
 export NO_IMAGE=$NO_IMAGE
 export LMMS_EVAL_MODEL=$LMMS_EVAL_MODEL
+export OUTPUT_MODEL_DIR=$OUTPUT_MODEL_DIR
 
 # =============================================================================
 # ORFEO LLM JWT AUTHENTICATION
@@ -219,6 +229,7 @@ export SCRIPT_NAME="$SCRIPT_NAME"
 export MODEL_TO_EVAL="$MODEL_TO_EVAL"
 export NO_IMAGE="$NO_IMAGE"
 export LMMS_EVAL_MODEL="$LMMS_EVAL_MODEL"
+export OUTPUT_MODEL_DIR="$OUTPUT_MODEL_DIR"
 
 $JOB_COMMANDS
 EOT

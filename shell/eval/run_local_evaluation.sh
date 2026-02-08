@@ -24,11 +24,14 @@ set -e # Exit immediately if a command exits with a non-zero status.
 # =============================================================================
 
 # 1. Default model to evaluate if no command-line argument is provided.
-DEFAULT_MODEL_NAME="lbasile/llava_13b"
+# DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
+DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+# DEFAULT_MODEL_NAME="lbasile/llava_13b"
 
 # 2. Model class in the lmms-eval library
 #⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
-LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
+LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl2}"
+# LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
 
 # =============================================================================
 # SCRIPT SETUP & ARGUMENT PARSING
@@ -65,13 +68,13 @@ fi
 # List of benchmarks to evaluate against.
 TASKS=(
     # "scienceqa_img"
-    # "mme"
+    "mme"
     # "textvqa_val"
     # "pope"
     # "gqa"
     # "seedbench"
     # "mmbench_en_dev"
-    "llava_in_the_wild"
+    # "llava_in_the_wild"
     # "vizwiz_vqa_val"
     # "vqav2_val"
     # "mmbench_cn_dev"
@@ -84,13 +87,13 @@ TASKS=(
 echo "🔧 Setting up environment..."
 
 # --- Python Virtual Environment ---
-# Activate the virtual environment to ensure the correct Python interpreter and
-# dependencies are used. This is crucial as `bash` starts a new shell.
-if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
-    source "$PROJECT_ROOT/.venv/bin/activate"
-    echo "✓ Virtual environment activated."
+# Activate the model-specific virtual environment.
+VENV="$PROJECT_ROOT/.venv"
+if [ -f "$VENV/bin/activate" ]; then
+    source "$VENV/bin/activate"
+    echo "✓ Virtual environment activated ($VENV)."
 else
-    echo "⚠️ Warning: Virtual environment not found at $PROJECT_ROOT/.venv/"
+    echo "⚠️ Warning: Virtual environment not found at $VENV"
 fi
 
 # --- Hugging Face Cache ---

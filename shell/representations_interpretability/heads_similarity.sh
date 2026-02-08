@@ -36,6 +36,9 @@ MODEL_B="l11p/llava-v1.5-7b-pretrained-liuhaotian"
 # --- Environment Setup ---
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
 # --- Run Analysis ---
 echo "====== Heads Projection Similarity Analysis ======"
 echo "Dataset: $DATASET_PATH_OR_NAME"

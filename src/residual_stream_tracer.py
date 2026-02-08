@@ -3,7 +3,7 @@ import copy
 import gc
 import os
 import time
-from typing import Dict, Optional, Union, Literal, List
+from typing import Callable, Dict, Optional, Union, Literal, List
 import torch
 from einops import einsum
 from tqdm import tqdm
@@ -11,8 +11,12 @@ from rich import print
 from safetensors.torch import save_file, load_file
 from transformers.feature_extraction_utils import BatchFeature
 from torch.utils.data import DataLoader
-from utils import ModelType, sample_image_and_text_positions
-from utils.internvl_utils import get_combined_embeddings
+from utils import ModelType, ProcessorType, sample_image_and_text_positions
+from utils.internvl_utils import (
+    IMG_CONTEXT_TOKEN,
+    generate_responses,
+    get_combined_embeddings,
+)
 
 IMAGE_TOKEN_INDEX = 32000
 
@@ -113,15 +117,13 @@ class ResidualStreamTracer(abc.ABC):
                 raise ValueError(
                     f"embeddings_sampling_args missing required keys: {missing_keys}"
                 )
-            if (
-                self.embeddings_sampling_args.get("skip_image_pos")
-                and self.embeddings_sampling_args.get("skip_text_pos")
-            ):
+            if self.embeddings_sampling_args.get(
+                "skip_image_pos"
+            ) and self.embeddings_sampling_args.get("skip_text_pos"):
                 raise ValueError("Cannot skip both image and text positions")
-            elif (
-                not self.embeddings_sampling_args.get("skip_image_pos")
-                and not self.embeddings_sampling_args.get("skip_text_pos")
-            ):
+            elif not self.embeddings_sampling_args.get(
+                "skip_image_pos"
+            ) and not self.embeddings_sampling_args.get("skip_text_pos"):
                 raise ValueError("Must skip either image or text positions")
 
     def _calculate_memory_usage(self):
@@ -182,7 +184,10 @@ class ResidualStreamTracer(abc.ABC):
         Returns:
             Pooled tensor or original tensor if no pooling
         """
-        if self.tokens_pooling_method in ["sample", "mean_image"] and pooling_indices is None:
+        if (
+            self.tokens_pooling_method in ["sample", "mean_image"]
+            and pooling_indices is None
+        ):
             raise ValueError(
                 f"pooling_indices must be provided when tokens_pooling_method is '{self.tokens_pooling_method}'"
             )
@@ -201,7 +206,9 @@ class ResidualStreamTracer(abc.ABC):
             # Handle different tensor shapes for last token pooling
             if ndims == 2:  # hidden_states shape -> (max_seq_len, hidden_size)
                 return hidden_states[-1, :]
-            elif ndims == 3:  # hidden_states shape -> (layers, max_seq_len, hidden_size)
+            elif (
+                ndims == 3
+            ):  # hidden_states shape -> (layers, max_seq_len, hidden_size)
                 return hidden_states[:, -1, :]
             else:
                 raise ValueError(
@@ -353,12 +360,19 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
                 for i in range(batch_length):
                     seq_len = self.sequence_lengths[i]
                     current_input_ids = batch_inputs.input_ids[i, -seq_len:]
-                    indices = torch.nonzero(current_input_ids == IMAGE_TOKEN_INDEX, as_tuple=True)[0]
+                    indices = torch.nonzero(
+                        current_input_ids == IMAGE_TOKEN_INDEX, as_tuple=True
+                    )[0]
                     self.current_batch_pooling_indices.append(indices)
 
             # Increment counter for next batch
             self.counter += batch_length
-            _ = self.model(**batch_inputs)
+            if "intern" in self.model.__class__.__name__.lower():
+                _ = self.model.language_model(
+                    **batch_inputs
+                )  # Forward pass to trigger hooks
+            else:
+                _ = self.model(**batch_inputs)
 
     def clear(self):
         """Clean up hooks and cached data."""
@@ -457,7 +471,12 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
 
         # Run forward pass with gradient tracking disabled
         with torch.no_grad():
-            outputs = self.model(**batch_inputs, output_hidden_states=True)
+            if "intern" in self.model.__class__.__name__.lower():
+                outputs = self.model.language_model(
+                    **batch_inputs, output_hidden_states=True
+                )
+            else:
+                outputs = self.model(**batch_inputs, output_hidden_states=True)
             hidden_states = outputs.hidden_states[1:]
             # remove the first layer (the embedding layer)
             hidden_states = [
@@ -867,6 +886,7 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
 def residual_stream_tracer(
     model: ModelType,
     processed_dataloader: DataLoader,
+    processor: Optional[ProcessorType] = None,
     return_dtype: torch.dtype = torch.bfloat16,
     tokens_pooling_method: Optional[
         Literal["mean", "last", "none", "sample", "mean_image"]
@@ -879,6 +899,7 @@ def residual_stream_tracer(
     save_path: Optional[str] = None,
     save_representations: bool = False,
     save_metadata: Optional[Dict] = None,
+    debug: bool = False,
 ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
     """
     Extract the residual stream of a huggingface multimodal decoder-based,
@@ -1002,6 +1023,14 @@ def residual_stream_tracer(
     update_count = 0
     update_every = max(1, int(0.1 * dataset_size))
 
+    # InternVL-specific: get image context token id for combined embeddings
+    if "intern" in model.__class__.__name__.lower():
+        if processor is None:
+            raise ValueError(
+                "Processor is required for InternVL models to get image context token ID."
+            )
+        img_context_token_id = processor.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+
     print(f"📊 Processing {dataset_size} samples...")
     progress_bar = tqdm(
         total=dataset_size,
@@ -1014,28 +1043,25 @@ def residual_stream_tracer(
 
     # Process batches
     for batch in processed_dataloader:
-        # Handle list wrapping from DataLoader
-        if isinstance(batch, list):
-            batch = batch[0]
-
-        if isinstance(batch, tuple):
+        # Prepare batch_inputs for tracing (batch stays untouched)
+        if isinstance(batch, (list, tuple)):
             if "llava" in model.__class__.__name__.lower():
-                # If batch is a tuple (e.g., contains labels), take the first element (inputs)
-                batch = batch[0]
+                batch_inputs = batch[0]
 
             elif "intern" in model.__class__.__name__.lower():
                 if len(batch) > 1 and isinstance(batch[1], torch.Tensor):
                     # Image mode: combine text + vision embeddings
                     pixel_values = batch[1]
-                    batch = batch[0]
-                    input_ids = batch["input_ids"]
-                    attention_mask = batch["attention_mask"]
+                    tokenized = batch[0]
+                    input_ids = tokenized["input_ids"]
+                    attention_mask = tokenized["attention_mask"]
                     combined_embeds = get_combined_embeddings(
                         model,
                         input_ids=input_ids,
                         pixel_values=pixel_values,
+                        img_context_token_id=img_context_token_id,
                     )
-                    batch = BatchFeature(
+                    batch_inputs = BatchFeature(
                         {
                             "inputs_embeds": combined_embeds,
                             "attention_mask": attention_mask,
@@ -1043,12 +1069,58 @@ def residual_stream_tracer(
                     )
                 else:
                     # Text-only mode: use input_ids directly
-                    batch = batch[0] if isinstance(batch, tuple) else batch
+                    batch_inputs = batch[0]
+            else:
+                batch_inputs = batch[0]
+        else:
+            batch_inputs = batch
 
-        batch = batch.to(model.device)
-        current_batch_size = batch.attention_mask.shape[0]
-        tracer.trace_batch(batch)
-        del batch
+        batch_inputs = batch_inputs.to(model.device)
+
+        # ------------------------------------------------------------------
+        # Debug: generate and print model responses
+        # ------------------------------------------------------------------
+        if debug and "intern" in model.__class__.__name__.lower():
+            # Extract queries for debugging (always last element for InternVL)
+            # !provided that the dataloader doesn't explicitly return the answers
+            # !which are also a list at the end of the batch
+            # !the use of this debugging feature is limited the use with the
+            # !multimodality_similarity.py script
+            queries = None
+            if isinstance(batch, (list, tuple)):
+                if len(batch) > 1 and isinstance(batch[-1], list):
+                    queries = batch[-1]
+
+            print(f"batch type: {type(batch)} with length {len(batch)}")
+            if "input_ids" in batch_inputs:
+                responses = generate_responses(
+                    model,
+                    processor,
+                    input_ids=batch_inputs["input_ids"],
+                    attention_mask=batch_inputs["attention_mask"],
+                )
+            else:
+                responses = generate_responses(
+                    model,
+                    processor,
+                    inputs_embeds=batch_inputs["inputs_embeds"],
+                    attention_mask=batch_inputs["attention_mask"],
+                )
+
+            for idx, response in enumerate(responses):
+                if queries is not None:
+                    query = queries[idx]
+                    query = query.replace("<IMG_CONTEXT>", "")
+                    query = query.replace("</img>", "").replace("<img>", "<image>")
+                    print(f"Query: {query}\n   Response: {response}\n")
+                else:
+                    print(f"Response: {response}\n")
+                print("-" * 40)
+        # ------------------------------------------------------------------
+
+        current_batch_size = batch_inputs.attention_mask.shape[0]
+        tracer.trace_batch(batch_inputs)
+        del batch, batch_inputs
 
         # Update progress tracking
         samples_processed += current_batch_size
