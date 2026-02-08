@@ -23,7 +23,7 @@ try:
 except ImportError:
     InternVL2Custom = None
 
-from utils import SYSTEM_INSTRUCTION, INTERNVL_SYSTEM_INSTRUCTION
+from utils import LLaVA1_5_SYSTEM_INSTRUCTION, INTERNVL2_SYSTEM_INSTRUCTION
 
 # =============================================================================
 # CONSTANTS
@@ -193,9 +193,9 @@ def main():
 
         # Select system instruction
         system_instruction = (
-            INTERNVL_SYSTEM_INSTRUCTION
+            INTERNVL2_SYSTEM_INSTRUCTION
             if args.model_type == "internvl2"
-            else SYSTEM_INSTRUCTION
+            else LLaVA1_5_SYSTEM_INSTRUCTION
         )
 
         # Evaluate

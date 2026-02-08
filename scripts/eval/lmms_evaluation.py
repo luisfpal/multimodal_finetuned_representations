@@ -10,15 +10,11 @@ import torch
 from rich import print
 from lmms_eval.evaluator import simple_evaluate
 
-
-# Add project root to sys.path to allow importing local modules
-project_root = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from utils import (
+    LLaVA1_5_SYSTEM_INSTRUCTION,
+    INTERNVL2_SYSTEM_INSTRUCTION,
+    INTERNVL3_5_SYSTEM_INSTRUCTION,
 )
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-from utils import SYSTEM_INSTRUCTION, INTERNVL_SYSTEM_INSTRUCTION
 from utils.patch_skipping import patch
 
 try:
@@ -272,11 +268,12 @@ def run_evaluation(
             )
 
     # Select system instruction
-    system_instruction = (
-        INTERNVL_SYSTEM_INSTRUCTION
-        if args.lmms_eval_model == "internvl2"
-        else SYSTEM_INSTRUCTION
-    )
+    if args.lmms_eval_model == "internvl2":
+        system_instruction = INTERNVL2_SYSTEM_INSTRUCTION
+    elif args.lmms_eval_model == "internvl3.5":
+        system_instruction = INTERNVL3_5_SYSTEM_INSTRUCTION
+    else:
+        system_instruction = LLaVA1_5_SYSTEM_INSTRUCTION
 
     results = simple_evaluate(
         model=model_instance,

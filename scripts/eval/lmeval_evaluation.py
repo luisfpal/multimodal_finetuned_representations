@@ -15,7 +15,7 @@ from lm_eval.models.huggingface import HFLM
 # Local
 from utils import (
     load_hf_model_and_processor_or_tokenizer,
-    SYSTEM_INSTRUCTION,
+    LLaVA1_5_SYSTEM_INSTRUCTION,
 )
 
 # =============================================================================
@@ -157,7 +157,7 @@ def run_evaluation(
         log_samples=True,
         limit=args.limit,
         device=str(model.language_model.device),
-        system_instruction=SYSTEM_INSTRUCTION,
+        system_instruction=LLaVA1_5_SYSTEM_INSTRUCTION,
     )
     
     elapsed_sec = time.time() - start_time
