@@ -24,7 +24,7 @@ from datasets import load_dataset
 # Default configuration
 DEFAULT_SEED = 42
 # Project root is 3 levels up from this script (scripts/captioning/caption_dataset.py)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "captions"
 DEFAULT_NUM_WORKERS = 16
 DEFAULT_CACHE_DIR = os.path.expanduser("~/scratch/cache/huggingface/datasets")
@@ -46,7 +46,7 @@ thread_local_storage = threading.local()
 
 
 # ============================================================================
-# DATASET LOADERS - Write your own for each dataset
+# DATASET LOADERS
 # ============================================================================
 
 
@@ -119,12 +119,54 @@ def load_mmbench_en_images(
     images = {str(sample["index"]): sample["image"] for sample in dataset}
     dataset_name = f"lmms-lab_MMBench_EN_{split}"
 
-    console.print(f"[green]Loaded {len(images)} unique images from MMBench_EN ({split})[/green]")
+    console.print(
+        f"[green]Loaded {len(images)} unique images from MMBench_EN ({split})[/green]"
+    )
 
     return images, dataset_name
 
 
-def load_custom_images() -> Tuple[Dict[str, Image.Image], str]:
+def load_vqav2_coco_restval_icq_images(
+    cache_dir: str = DEFAULT_CACHE_DIR,
+) -> Tuple[Dict[str, Image.Image], str]:
+    """
+    Loader for VQAv2-COCO-restval-ICQ dataset.
+    
+    Dataset has 'image_id' as identifier.
+    Only 'train' split available.
+    """
+    dataset = load_dataset("l11p/VQAv2-COCO-restval-ICQ", split="train", cache_dir=cache_dir)
+    
+    # Use image_id as key.
+    images = {str(sample["image_id"]): sample["image"] for sample in dataset}
+    dataset_name = "l11p_VQAv2-COCO-restval-ICQ"
+    
+    console.print(f"[green]Loaded {len(images)} unique images from VQAv2-COCO-restval-ICQ[/green]")
+    return images, dataset_name
+
+
+def load_cocoqa_restval_icqa_images(
+    cache_dir: str = DEFAULT_CACHE_DIR,
+) -> Tuple[Dict[str, Image.Image], str]:
+    """
+    Loader for COCOQA-restval-ICQA dataset.
+    
+    Dataset has 'image_id' as identifier.
+    Only 'train' split available.
+    """
+    dataset = load_dataset("l11p/COCOQA-restval-ICQA", split="train", cache_dir=cache_dir)
+    
+    # Use image_id as key.
+    images = {str(sample["image_id"]): sample["image"] for sample in dataset}
+    dataset_name = "l11p_COCOQA-restval-ICQA"
+    
+    console.print(f"[green]Loaded {len(images)} unique images from COCOQA-restval-ICQA[/green]")
+    return images, dataset_name
+
+
+def load_custom_images(
+    cache_dir: str = DEFAULT_CACHE_DIR,
+) -> Tuple[Dict[str, Image.Image], str]:
     """
     Template for custom dataset loader.
 
@@ -379,6 +421,15 @@ def caption_pipeline(
 # MAIN EXECUTION
 # ============================================================================
 
+DATASET_LOADERS = {
+    "mme": load_mme_images,
+    "gqa": load_gqa_images,
+    "mmbench_en_dev": lambda cache_dir: load_mmbench_en_images(cache_dir, split="dev"),
+    "mmbench_en_test": lambda cache_dir: load_mmbench_en_images(cache_dir, split="test"),
+    "vqav2_coco": load_vqav2_coco_restval_icq_images,
+    "cocoqa": load_cocoqa_restval_icqa_images,
+    "custom": load_custom_images,
+}
 
 def parse_args():
     """Parse command line arguments."""
@@ -388,6 +439,13 @@ def parse_args():
     parser.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--cache-dir", type=str, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument(
+        "--dataset", 
+        type=str, 
+        default="gqa", 
+        choices=list(DATASET_LOADERS.keys()),
+        help="Dataset to caption (default: gqa)"
+    )
     return parser.parse_args()
 
 
@@ -398,17 +456,9 @@ def main():
     args = parse_args()
 
     # STEP 1: Load images using your chosen loader
-    # Option 1: MME dataset (1,187 images)
-    # images, dataset_name = load_mme_images(cache_dir=args.cache_dir)
-
-    # Option 2: GQA dataset (10,234 images)
-    images, dataset_name = load_gqa_images(cache_dir=args.cache_dir)
-
-    # Option 3: MMBench_EN dataset (4,377 dev / 6,718 test images)
-    # images, dataset_name = load_mmbench_en_images(cache_dir=args.cache_dir, split="dev")
-
-    # Option 4: Your custom dataset
-    # images, dataset_name = load_custom_images()
+    console.print(f"[bold]Loading dataset:[/bold] {args.dataset}")
+    loader_func = DATASET_LOADERS[args.dataset]
+    images, dataset_name = loader_func(cache_dir=args.cache_dir)
 
     # STEP 2: Run the generic pipeline
     caption_pipeline(

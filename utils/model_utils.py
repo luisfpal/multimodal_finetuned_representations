@@ -237,7 +237,7 @@ def load_hf_model_and_processor_or_tokenizer(
         RuntimeError: If loading the model or processor fails.
     """
     if cache_dir is None:
-        cache_dir = os.environ.get("HF_HUB_CACHE")
+        cache_dir = os.path.expanduser(os.environ.get("HF_HUB_CACHE"))
 
     if cache_dir:
         cache_dir = os.path.expanduser(cache_dir)

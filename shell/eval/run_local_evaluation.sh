@@ -34,7 +34,8 @@ DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
 
 # 2. Model class in the lmms-eval library
 #⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
-LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl2}"
+# LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl2}"
+LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl3.5}"
 # LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
 
 # =============================================================================

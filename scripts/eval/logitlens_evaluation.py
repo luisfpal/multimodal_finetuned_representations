@@ -238,7 +238,8 @@ def evaluate_logit_lens(
         if dataloader:
             global_idx = 0
             for batch in tqdm(dataloader, desc="Evaluating Samples"):
-                inputs, batch_labels = batch
+                inputs = batch[0]
+                batch_labels = batch[-1]
                 if isinstance(inputs, list) or isinstance(inputs, tuple):
                     inputs = inputs[0]
                 if hasattr(inputs, "to"):
@@ -421,17 +422,17 @@ def main():
 
     # Load Model
     print(f"\n🤖 Loading model: {args.model_name_or_path}")
-    model_cache_dir = os.getenv("HF_HUB_CACHE")
+    model_cache_dir = os.path.expanduser(os.getenv("HF_HUB_CACHE"))
     model, processor = load_hf_model_and_processor_or_tokenizer(
         model_name_or_path=args.model_name_or_path,
         cache_dir=model_cache_dir,
         dtype=MODEL_DTYPE,
         attn_implementation=ATTN_IMPLEMENTATION,
-        device_map="cuda:0",
+        device_map="auto",
     )
 
     model_name_slug = args.model_name_or_path.split("/")[-1]
-    datasets_cache_dir = os.getenv("HF_DATASETS_CACHE")
+    datasets_cache_dir = os.path.expanduser(os.getenv("HF_DATASETS_CACHE"))
 
     # Iterate over Datasets
     for dataset_name, config in DATASETS.items():
@@ -499,6 +500,8 @@ def main():
             elif subset == "images_qa":
                 dl_args["texts_qa"] = False
                 dl_args["images_qa"] = True
+            if "intern" in model.__class__.__name__.lower():
+                dl_args["model"] = model
 
             dataloader = get_dataloader(**dl_args)
 
@@ -523,10 +526,15 @@ def main():
                 result_path = os.path.join(logitlens_dir, result_filename)
 
                 # Evaluate
+                tokenizer = (
+                    processor.tokenizer
+                    if hasattr(processor, "tokenizer")
+                    else processor
+                )
                 if eval_method == "logit_lens":
                     accuracies = evaluate_logit_lens(
                         model=model,
-                        tokenizer=processor.tokenizer,
+                        tokenizer=tokenizer,
                         residual_stream=residual_stream,
                         labels=all_labels,
                         dataset_config=config,

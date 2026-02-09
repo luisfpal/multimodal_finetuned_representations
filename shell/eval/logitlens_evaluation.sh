@@ -17,8 +17,9 @@ SEED="42"
 
 # Models to evaluate
 MODELS=(
-    "lbasile/llava_7b"
-    "l11p/llava-v1.5-7b-pretrained-lbasile"
+    # "lbasile/llava_7b"
+    # "l11p/llava-v1.5-7b-pretrained-lbasile"
+    "OpenGVLab/InternVL2-8B"  # Finetuned
 )
 
 # =============================================================================

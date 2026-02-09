@@ -1,35 +1,71 @@
 #!/bin/bash
 
 # =============================================================================
-# Configuration
+# Usage Instructions
+# =============================================================================
+# This script submits a SLURM job to caption images from a specified dataset using
+# a VLM. It handles environment setup, configuration, and job submission.
+#
+# Usage:
+#   ./launch_captioning.sh [options]
+#
+# Options:
+#   --dataset <name>   : Dataset to process (default: gqa).
+#                        Choices: mme, gqa, mmbench_en_dev, mmbench_en_test,
+#                                 vqav2_coco, cocoqa, custom
+#   --seed <int>       : Random seed for reproducibility (default: 42).
+#   --retry            : Retry mode - only processes images that previously failed.
+#                        (Auto-configures for CPU partition and short duration).
+#
+# Examples:
+#   # Standard run for GQA (default)
+#   ./launch_captioning.sh
+#
+#   # Run for VQAv2 COCO dataset
+#   ./launch_captioning.sh --dataset vqav2_coco
+#
+#   # Retry failed captions for COCOQA with a specific seed
+#   ./launch_captioning.sh --dataset cocoqa --retry --seed 123
 # =============================================================================
 
-# Default Settings (Standard Run)
+# =============================================================================
+# 🟢 USER CONFIGURATION - EDIT THESE SETTINGS
+# =============================================================================
+
+# --- Compute Resources ---
 ACCOUNT="dssc"
-JOB_NAME="captioning"
 PARTITION="DGX"
 GPU_TYPE="A100"
-NUM_GPUS=0
+NUM_GPUS=0          # Set to 1 if GPU needed, else 0
 CPUS=16
 MEM="64GB"
 TIME="06:00:00"
-NODELIST=""             # Empty = any available node
-EXCLUDE=""              # Empty = no exclusions
+NODELIST=""         # Optional: specific node (e.g., "node01")
+EXCLUDE=""          # Optional: exclude nodes (e.g., "node02")
 
-# Project paths
+# --- Project Paths ---
 PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 LOG_DIR="$PROJECT_ROOT/logs"
 OUTPUT_DIR="$PROJECT_ROOT/results/captions"
 
-# Script Settings
-NUM_WORKERS=32
-SEED=42
-PYTHON_ARGS=""
+# --- Default Job Parameters ---
+DEFAULT_NUM_WORKERS=32
+DEFAULT_SEED=42
+DEFAULT_DATASET="gqa"
 
-# Argument Parsing
-IS_RETRY=false
+# =============================================================================
+# 🔴 END OF USER CONFIGURATION - INTERNAL LOGIC BELOW
+# =============================================================================
+
+# Initialize variables with defaults
+NUM_WORKERS=$DEFAULT_NUM_WORKERS
+SEED=$DEFAULT_SEED
+DATASET=$DEFAULT_DATASET
+PYTHON_ARGS=""
+IS_RETRY=falsecd 
 SEED_SET=false
 
+# Argument Parsing
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --retry)
@@ -41,25 +77,32 @@ while [[ $# -gt 0 ]]; do
             SEED_SET=true
             shift 2
             ;;
+        --dataset)
+            DATASET="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--retry] [--seed <int>]"
+            echo "Usage: $0 [--retry] [--seed <int>] [--dataset <name>]"
             exit 1
             ;;
     esac
 done
 
-# Configure Mode
+# Configure Mode (Retry vs Standard)
+JOB_NAME="experiment"
+
 if [ "$IS_RETRY" = true ]; then
     echo "🟠 CONFIGURING FOR RETRY MODE"
-    JOB_NAME="captioning_retry"
+    JOB_NAME="experiment"
+    # Override compute settings for retry (lighter weight)
     PARTITION="EPYC"
-    CPUS=32
+    CPUS=16
     MEM="48GB"
     TIME="02:00:00"
     PYTHON_ARGS="--retry-failed"
     
-    # Default retry seed to 999 if not explicitly set
+    # Default retry seed to 999 if not explicitly set to avoid deterministic repeat of failure
     if [ "$SEED_SET" = false ]; then
         SEED=999
     fi
@@ -81,8 +124,8 @@ SBATCH_DIRECTIVES="#SBATCH --account=$ACCOUNT
 #SBATCH --cpus-per-task=$CPUS
 #SBATCH --mem=$MEM
 #SBATCH --time=$TIME
-#SBATCH --output=$LOG_DIR/slurm-%j.out
-#SBATCH --error=$LOG_DIR/slurm-%j.out"
+#SBATCH --output=$LOG_DIR/slurm-%x-%j.out
+#SBATCH --error=$LOG_DIR/slurm-%x-%j.out"
 
 # Add optional directives
 [[ -n "$NODELIST" ]] && SBATCH_DIRECTIVES+="
@@ -102,6 +145,7 @@ cd $PROJECT_ROOT
 source $PROJECT_ROOT/.venv/bin/activate
 
 echo "🚀 Starting Captioning Job"
+echo "   Dataset: $DATASET"
 echo "   Mode: \$( [[ -n "$PYTHON_ARGS" ]] && echo "RETRY" || echo "STANDARD" )"
 echo "   Seed: $SEED"
 echo "   Output: $OUTPUT_DIR"
@@ -109,6 +153,7 @@ echo "   Output: $OUTPUT_DIR"
 # Run captioning
 python scripts/captioning/caption_dataset.py \
     $PYTHON_ARGS \
+    --dataset $DATASET \
     --num-workers $NUM_WORKERS \
     --seed $SEED \
     --output-dir $OUTPUT_DIR
@@ -122,9 +167,9 @@ JOB_OUTPUT=$(sbatch "$SBATCH_SCRIPT" 2>&1)
 if [ $? -eq 0 ]; then
     JOB_ID=$(echo "$JOB_OUTPUT" | awk '{print $4}')
     echo "✅ Job ID: $JOB_ID"
-    echo "📁 Output: $LOG_DIR/slurm-$JOB_ID.out"
+    echo "📁 Output: $LOG_DIR/slurm-${JOB_NAME}-${JOB_ID}.out"
     echo ""
-    echo "To monitor: tail -f $LOG_DIR/slurm-$JOB_ID.out"
+    echo "To monitor: tail -f $LOG_DIR/slurm-${JOB_NAME}-${JOB_ID}.out"
 else
     echo "❌ Failed: $JOB_OUTPUT"
     exit 1

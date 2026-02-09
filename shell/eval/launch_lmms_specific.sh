@@ -60,7 +60,8 @@ OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
 NO_IMAGE="false"
 #⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
 # LMMS_EVAL_MODEL="llava_hf" 
-LMMS_EVAL_MODEL="internvl2"
+# LMMS_EVAL_MODEL="internvl2"
+LMMS_EVAL_MODEL="internvl3.5"
 
 # Resolve model-specific venv
 VENV="$PROJECT_ROOT/.venv"

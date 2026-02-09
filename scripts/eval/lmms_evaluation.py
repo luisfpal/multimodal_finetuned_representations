@@ -27,6 +27,11 @@ try:
 except ImportError:
     InternVL2Custom = None
 
+try:
+    from scripts.models_utils.internvl3_5 import InternVL3_5Custom
+except ImportError:
+    InternVL3_5Custom = None
+
 # =============================================================================
 # CONSTANTS
 # =============================================================================
@@ -267,6 +272,27 @@ def run_evaluation(
                 cache_dir=args.model_cache_dir,
             )
 
+    elif args.lmms_eval_model == "internvl3.5":
+        if InternVL3_5Custom is None:
+            print(
+                "[yellow]⚠ InternVL3_5Custom class not importable, falling back to registry[/yellow]"
+            )
+        else:
+            print(
+                f"[cyan]Instantiating InternVL3_5Custom directly for {model_name}...[/cyan]"
+            )
+            model_instance = InternVL3_5Custom(
+                pretrained=model_name,
+                device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
+                if torch.cuda.is_available()
+                else "cpu",
+                device_map=model_args.split("device_map=")[1]
+                if "device_map=" in model_args
+                else "auto",
+                batch_size=str(args.batch_size) if args.batch_size else "1",
+                cache_dir=args.model_cache_dir,
+            )
+
     # Select system instruction
     if args.lmms_eval_model == "internvl2":
         system_instruction = INTERNVL2_SYSTEM_INSTRUCTION
@@ -479,8 +505,10 @@ def eval_collection(args) -> None:
     model_prefix = MODELS_COLLECTION[args.collection_name]
     checkpoints = list(range(1000, 10001, 1000))
 
-    os.makedirs(args.output_dir, exist_ok=True)
-    effective_output_dir = os.path.join(args.output_dir, args.collection_name)
+    os.makedirs(os.path.expanduser(args.output_dir), exist_ok=True)
+    effective_output_dir = os.path.join(
+        os.path.expanduser(args.output_dir), args.collection_name
+    )
     os.makedirs(effective_output_dir, exist_ok=True)
 
     gen_kwargs = build_gen_kwargs(args.task_name, args.max_new_tokens)

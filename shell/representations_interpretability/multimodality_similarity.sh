@@ -51,10 +51,10 @@ MODELS=(
     # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
-    # "OpenGVLab/InternVL3_5-8B-Pretrained"
+    "OpenGVLab/InternVL3_5-8B-Pretrained"
     # "OpenGVLab/InternVL3_5-8B-Instruct"
     # "OpenGVLab/InternVL3_5-8B-MPO"
-    "OpenGVLab/InternVL3_5-8B"
+    # "OpenGVLab/InternVL3_5-8B"
 )
 
 # --- Environment Setup ---
