@@ -1,14 +1,18 @@
 import argparse
 import gc
 import os
+import sys
+import traceback
 
 import numpy as np
 import torch
 from dotenv import load_dotenv
 from safetensors.numpy import save_file
 from sklearn.metrics import accuracy_score
-from src.residual_stream_tracer import residual_stream_tracer
 from tqdm import tqdm
+from transformers.feature_extraction_utils import BatchFeature
+
+from src.residual_stream_tracer import residual_stream_tracer
 from utils.constants import (
     AI2D_ANSWER_CHOICES,
     MMBENCH_ANSWER_CHOICES,
@@ -20,6 +24,11 @@ from utils import (
     get_dataloader,
     load_hf_model_and_processor_or_tokenizer,
     seed_all,
+)
+from utils.internvl_utils import (
+    IMG_CONTEXT_TOKEN,
+    generate_responses,
+    get_combined_embeddings,
 )
 
 # Load environment variables
@@ -37,85 +46,76 @@ DEFAULT_TOP_K_LOGITS = 10
 DATASETS = {
     "l11p/COCOQA-restval-ICQA": {
         "guide_text": "Answer the question using a single word or phrase.",
-        "downsample_size": 2000,
-        "subsets": [
-            # "texts_qa",
-            "images_qa",
-        ],
+        "downsample_size": 20,
+        "subsets": ["images_qa"],
         "split": "train",
         "type": "open_ended",
         "remove_yes_no": True,
         "eval_methods": ["logit_lens"],
     },
-    "l11p/VQAv2-COCO-restval-ICQ": {
-        "guide_text": "Answer the question using a single word or phrase.",
-        "downsample_size": 2000,
-        "subsets": [
-            # "texts_qa",
-            "images_qa",
-        ],
-        "split": "train",
-        "type": "open_ended",
-        "remove_yes_no": True,
-        "eval_methods": ["logit_lens"],
-    },
-    "l11p/MME-test-captioned": {
-        "guide_text": "Answer the question using a single word or phrase.",
-        "downsample_size": 2000,
-        "subsets": ["images_qa"],
-        "split": "train",
-        "type": "multiple_choice",
-        "choices": MME_ANSWER_CHOICES,  # Yes, No
-        "eval_methods": ["linear_probe", "logit_lens"],
-    },
-    "l11p/MMBench_EN-dev-captioned": {
-        "guide_text": "Answer with the option's letter from the given choices directly",
-        "downsample_size": 2000,
-        "filter_mmbench_4_choices": True,
-        "subsets": ["images_qa"],
-        "split": "train",
-        "type": "multiple_choice",
-        "choices": MMBENCH_ANSWER_CHOICES,  # A, B, C, D
-        "eval_methods": ["linear_probe", "logit_lens"],
-    },
-    "lmms-lab/ai2d": {
-        "guide_text": "Answer with the option's letter from the given choices directly",
-        "downsample_size": 2000,
-        "subsets": ["images_qa"],
-        "split": "test",
-        "type": "multiple_choice",
-        "choices": AI2D_ANSWER_CHOICES,  # A, B, C, D
-        "eval_methods": ["linear_probe", "logit_lens"],
-    },
-    "lmms-lab/POPE": {
-        "guide_text": "Answer the question using a single word or phrase.",
-        "downsample_size": 2000,
-        "subsets": ["images_qa"],
-        "split": "test",
-        "type": "multiple_choice",
-        "choices": POPE_ANSWER_CHOICES,  # Yes, No
-        "eval_methods": ["linear_probe", "logit_lens"],
-    },
-    "l11p/GQA-val-balanced-noyesno-captioned": {
-        "guide_text": "Answer the question using a single word or phrase.",
-        "downsample_size": 2000,
-        "subsets": [
-            # "texts_qa",
-            "images_qa",
-        ],
-        "split": "train",  # It was created from 'val' but usually loaded as 'train' if from Hub unless specified
-        "type": "open_ended",
-        "eval_methods": ["logit_lens"],
-        # No exclude_yes_no needed as dataset is already filtered
-    },
-    "lmms-lab/textvqa": {
-        "guide_text": "Answer the question using a single word or phrase.",
-        "downsample_size": 2000,
-        "subsets": ["images_qa"],
-        "split": "validation",
-        "type": "open_ended",
-        "eval_methods": ["logit_lens"],
-    },
+    # "l11p/VQAv2-COCO-restval-ICQ": {
+    #     "guide_text": "Answer the question using a single word or phrase.",
+    #     "downsample_size": 2000,
+    #     "subsets": ["images_qa"],
+    #     "split": "train",
+    #     "type": "open_ended",
+    #     "remove_yes_no": True,
+    #     "eval_methods": ["logit_lens"],
+    # },
+    # "l11p/MME-test-captioned": {
+    #     "guide_text": "Answer the question using a single word or phrase.",
+    #     "downsample_size": 2000,
+    #     "subsets": ["images_qa"],
+    #     "split": "train",
+    #     "type": "multiple_choice",
+    #     "choices": MME_ANSWER_CHOICES,  # Yes, No
+    #     "eval_methods": ["linear_probe", "logit_lens"],
+    # },
+    # "l11p/MMBench_EN-dev-captioned": {
+    #     "guide_text": "Answer with the option's letter from the given choices directly",
+    #     "downsample_size": 2000,
+    #     "filter_mmbench_4_choices": True,
+    #     "subsets": ["images_qa"],
+    #     "split": "train",
+    #     "type": "multiple_choice",
+    #     "choices": MMBENCH_ANSWER_CHOICES,  # A, B, C, D
+    #     "eval_methods": ["linear_probe", "logit_lens"],
+    # },
+    # "lmms-lab/ai2d": {
+    #     "guide_text": "Answer with the option's letter from the given choices directly",
+    #     "downsample_size": 2000,
+    #     "subsets": ["images_qa"],
+    #     "split": "test",
+    #     "type": "multiple_choice",
+    #     "choices": AI2D_ANSWER_CHOICES,  # A, B, C, D
+    #     "eval_methods": ["linear_probe", "logit_lens"],
+    # },
+    # "lmms-lab/POPE": {
+    #     "guide_text": "Answer the question using a single word or phrase.",
+    #     "downsample_size": 2000,
+    #     "subsets": ["images_qa"],
+    #     "split": "test",
+    #     "type": "multiple_choice",
+    #     "choices": POPE_ANSWER_CHOICES,  # Yes, No
+    #     "eval_methods": ["linear_probe", "logit_lens"],
+    # },
+    # "l11p/GQA-val-balanced-noyesno-captioned": {
+    #     "guide_text": "Answer the question using a single word or phrase.",
+    #     "downsample_size": 2000,
+    #     "subsets": ["images_qa"],
+    #     "split": "train",  # It was created from 'val' but usually loaded as 'train' if from Hub unless specified
+    #     "type": "open_ended",
+    #     "eval_methods": ["logit_lens"],
+    #     # No exclude_yes_no needed as dataset is already filtered
+    # },
+    # "lmms-lab/textvqa": {
+    #     "guide_text": "Answer the question using a single word or phrase.",
+    #     "downsample_size": 2000,
+    #     "subsets": ["images_qa"],
+    #     "split": "validation",
+    #     "type": "open_ended",
+    #     "eval_methods": ["logit_lens"],
+    # },
 }
 
 
@@ -240,6 +240,9 @@ def evaluate_logit_lens(
             for batch in tqdm(dataloader, desc="Evaluating Samples"):
                 inputs = batch[0]
                 batch_labels = batch[-1]
+                pixel_values = None
+                if "intern" in model.__class__.__name__.lower():
+                    pixel_values = batch[1]
                 if isinstance(inputs, list) or isinstance(inputs, tuple):
                     inputs = inputs[0]
                 if hasattr(inputs, "to"):
@@ -247,13 +250,22 @@ def evaluate_logit_lens(
 
                 curr_bs = len(batch_labels)
                 for b in range(curr_bs):
-                    yield global_idx + b, inputs, b, batch_labels[b]
+                    yield global_idx + b, inputs, b, batch_labels[b], pixel_values
                 global_idx += curr_bs
         else:
             for i in tqdm(range(num_samples), desc="Evaluating Samples"):
-                yield i, None, 0, labels[i]
+                yield i, None, 0, labels[i], None
 
-    for i, inputs_batch, b_idx, label_text in sample_iterator():
+    # InternVL-specific: get image context token id for combined embeddings
+    img_context_token_id = None
+    if "intern" in model.__class__.__name__.lower():
+        if tokenizer is None:
+            raise ValueError(
+                "tokenizer is required for InternVL models to get image context token ID."
+            )
+        img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+
+    for i, inputs_batch, b_idx, label_text, pixel_values_batch in sample_iterator():
         ground_truth = label_text.strip()
 
         # sample_res: (num_layers, hidden_size)
@@ -266,19 +278,35 @@ def evaluate_logit_lens(
                 sample_res[:, -1].to(torch.float32).pow(2).mean(dim=-1).unsqueeze(1)
             )
 
-            normalized_res = (
-                apply_rmsnorm_residual(
-                    sample_res.to(torch.float32),
-                    second_moment,
-                    model.model.language_model.norm.weight,
-                    model.model.language_model.norm.variance_epsilon,
+            if "llava" in model.__class__.__name__.lower():
+                normalized_res = (
+                    apply_rmsnorm_residual(
+                        sample_res.to(torch.float32),
+                        second_moment,
+                        model.model.language_model.norm.weight,
+                        model.model.language_model.norm.variance_epsilon,
+                    )
+                    .squeeze()
+                    .to(MODEL_DTYPE)
                 )
-                .squeeze()
-                .to(MODEL_DTYPE)
-            )
 
-            # logits: (num_layers, vocab_size)
-            logits = model.lm_head(normalized_res)
+                # logits: (num_layers, vocab_size)
+                logits = model.lm_head(normalized_res)
+
+            elif "intern" in model.__class__.__name__.lower():
+                normalized_res = (
+                    apply_rmsnorm_residual(
+                        sample_res.to(torch.float32),
+                        second_moment,
+                        model.language_model.model.norm.weight,
+                        model.language_model.model.norm.variance_epsilon,
+                    )
+                    .squeeze()
+                    .to(MODEL_DTYPE)
+                )
+
+                # logits: (num_layers, vocab_size)
+                logits = model.language_model.output(normalized_res)
 
             # --- Added Logic: Print Top 10 tokens and Generate ---
             try:
@@ -300,21 +328,58 @@ def evaluate_logit_lens(
                     if inputs_batch is not None:
                         # Slice for this sample
                         sample_input = {}
+                        # print("DEBUG")
+                        # print(inputs_batch)
+                        # print(f"Batch index: {b_idx}")
+                        # print(f"Batch size: {len(inputs_batch)}")
                         for k, v in inputs_batch.items():
                             if isinstance(v, torch.Tensor):
                                 sample_input[k] = v[b_idx : b_idx + 1]
                             else:
                                 sample_input[k] = v[b_idx : b_idx + 1]
+                        # print("Sample input for generation:")
+                        # print(sample_input)
+
+                        if (
+                            pixel_values_batch[b_idx : b_idx + 1] is not None
+                            and "intern" in model.__class__.__name__.lower()
+                        ):
+                            # print("  🖼️ Processing image context for generation...")
+                            combined_embeds = get_combined_embeddings(
+                                model,
+                                input_ids=sample_input["input_ids"],
+                                pixel_values=pixel_values_batch[b_idx : b_idx + 1],
+                                img_context_token_id=img_context_token_id,
+                            )
+                            sample_input = BatchFeature(
+                                {
+                                    "inputs_embeds": combined_embeds,
+                                    "attention_mask": sample_input["attention_mask"],
+                                }
+                            )
 
                         # Generate
-                        gen_out = model.generate(**sample_input, max_new_tokens=20)
-                        gen_text = tokenizer.decode(
-                            gen_out[0], skip_special_tokens=True
-                        )
+                        if "llava" in model.__class__.__name__.lower():
+                            gen_out = model.generate(**sample_input, max_new_tokens=20)
+                            gen_out = gen_out[:, sample_input["input_ids"].shape[1] :]
+                            gen_text = tokenizer.decode(
+                                gen_out[0], skip_special_tokens=True
+                            )
+                        elif "intern" in model.__class__.__name__.lower():
+                            gen_text = generate_responses(
+                                model=model,
+                                tokenizer=tokenizer,
+                                inputs_embeds=sample_input["inputs_embeds"],
+                                attention_mask=sample_input["attention_mask"],
+                                max_new_tokens=20,
+                            )[0]
                         print(f"  🤖 Model Generation: {gen_text}")
             except Exception as e:
                 print(f"  ⚠️ Debug Print Failed: {e}")
+                traceback.print_exc()
             # ----------------------------------------------------
+
+            # sys.exit(0)
 
             if dataset_type == "multiple_choice":
                 # Restrict logits to target tokens
