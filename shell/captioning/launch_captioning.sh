@@ -39,7 +39,7 @@ GPU_TYPE="A100"
 NUM_GPUS=0          # Set to 1 if GPU needed, else 0
 CPUS=16
 MEM="64GB"
-TIME="06:00:00"
+TIME="12:00:00"
 NODELIST=""         # Optional: specific node (e.g., "node01")
 EXCLUDE=""          # Optional: exclude nodes (e.g., "node02")
 
