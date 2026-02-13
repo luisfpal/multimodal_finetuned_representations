@@ -76,3 +76,4 @@ tests/
 
 # Representation results
 results/representations/
+.env

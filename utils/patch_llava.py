@@ -56,16 +56,31 @@ def llava_forward(
         inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
 
     # Check if the image token exists in the current input_ids
-    if (input_ids == 32000).any():
+    if (input_ids == self.config.image_token_id).any():
         image_limits = []
         for i in range(input_ids.shape[0]):
-            indices = torch.where(input_ids[i] == 32000)[0]
+            indices = torch.where(input_ids[i] == self.config.image_token_id)[0]
             if indices.numel() > 0:
                 image_limits.append((indices[0].item(), indices[-1].item()))
             else:
                 image_limits.append(None)
+            self.image_attention_mask = (input_ids != self.config.image_token_id).to(
+                torch.int
+            )
     else:
         image_limits = None
+        if self.image_attention_mask is not None:
+            self.image_attention_mask = torch.cat(
+                (
+                    self.image_attention_mask,
+                    torch.ones(self.image_attention_mask.shape[:-1] + (1,)).to(
+                        self.image_attention_mask.device
+                    ),
+                ),
+                dim=-1,
+            )
+        else:
+            self.image_attention_mask = None
 
     outputs = self.language_model(
         attention_mask=attention_mask,
@@ -74,6 +89,7 @@ def llava_forward(
         inputs_embeds=inputs_embeds,
         cache_position=cache_position,
         image_limits=image_limits,
+        image_attention_mask=self.image_attention_mask,
         **kwargs,
     )
 
@@ -98,6 +114,7 @@ def llama_forward(
     **kwargs: Unpack[TransformersKwargs],
 ) -> BaseModelOutputWithPast:
     image_limits = kwargs.get("image_limits", None)
+    image_attention_mask = kwargs.get("image_attention_mask", None)
     if (input_ids is None) ^ (inputs_embeds is not None):
         raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
     if inputs_embeds is None:
@@ -117,7 +134,6 @@ def llama_forward(
 
     if position_ids is None:
         position_ids = cache_position.unsqueeze(0)
-
     causal_mask = create_causal_mask(
         config=self.config,
         input_embeds=inputs_embeds,
@@ -126,27 +142,16 @@ def llama_forward(
         past_key_values=past_key_values,
         position_ids=position_ids,
     )
-    if causal_mask is None:
-        if position_ids.shape[1] > 1:
-            causal_mask = torch.gt(
-                torch.tril(
-                    torch.ones(
-                        (1, 1, inputs_embeds.shape[1], inputs_embeds.shape[1]),
-                        device=inputs_embeds.device,
-                        dtype=inputs_embeds.dtype,
-                    )
-                ),
-                0,
-            )
-        else:
-            causal_mask = torch.gt(
-                torch.ones(
-                    (1, 1, 1, position_ids[0][0] + 1),
-                    device=inputs_embeds.device,
-                    dtype=inputs_embeds.dtype,
-                ),
-                0,
-            )
+    image_mask = create_causal_mask(
+        config=self.config,
+        input_embeds=inputs_embeds,
+        attention_mask=image_attention_mask,
+        cache_position=cache_position,
+        past_key_values=past_key_values,
+        position_ids=position_ids,
+    )
+    if causal_mask is not None and image_mask is not None:
+        image_mask = torch.logical_and(image_mask, causal_mask)
     hidden_states = inputs_embeds
     position_embeddings = self.rotary_emb(hidden_states, position_ids=position_ids)
     layers_to_skip = kwargs.get("layers_to_skip", [])
@@ -154,11 +159,11 @@ def llama_forward(
         self.image_limits = image_limits
     for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
         layer_mask = causal_mask
-        if i in layers_to_skip:
+        if i in layers_to_skip and self.image_limits is not None:
             print("skipping layer", i)
             if i == layers_to_skip[0]:
                 stored_embeds = hidden_states
-            layer_mask = causal_mask.clone()
+            layer_mask = image_mask.clone()
             min_dtype = False
             for b, limit in enumerate(self.image_limits):
                 if limit is not None:
@@ -168,7 +173,11 @@ def llama_forward(
                     else:
                         layer_mask[b, :, :, start : end + 1] = min_dtype
 
-        elif len(layers_to_skip) > 0 and i == (layers_to_skip[-1] + 1):
+        elif (
+            len(layers_to_skip) > 0
+            and i == (layers_to_skip[-1] + 1)
+            and self.image_limits is not None
+        ):
             for b, limit in enumerate(self.image_limits):
                 if limit is not None:
                     start, end = limit
