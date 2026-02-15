@@ -74,6 +74,13 @@ def main():
         "--save-representations",
         action="store_true",
     )
+    parser.add_argument(
+        "--caption-source",
+        type=str,
+        default=None,
+        choices=["human", "synthetic"],
+        help="Caption source for datasets with both human and synthetic captions (COCOQA, VQAv2-ICQ).",
+    )
 
     args = parser.parse_args()
 
@@ -85,6 +92,8 @@ def main():
     # Dataset Setup - automatically detect prefix from dataset name
     dataset_slug = args.dataset_path_or_name.split("/")[-1].replace("-", "_").lower()
     dataset_prefix = dataset_slug
+    if args.caption_source:
+        dataset_prefix = f"{dataset_slug}_{args.caption_source}"
 
     analysis_dir = os.path.join(
         results_dir, "multimodality_comparison", f"{dataset_prefix}_img_vs_txt"
@@ -132,6 +141,7 @@ def main():
         "guide_text": args.guide_text,
         "downsample_size": args.downsample_size,
         "split": "train",
+        "caption_source": args.caption_source,
     }
 
     if "intern" in model.__class__.__name__.lower():
@@ -232,11 +242,13 @@ def main():
         print("  👉 Extracting Image Representations...")
         img_metadata = {
             "model": model_name,
-            "dataset": f"{dataset_prefix}_img",
+            "dataset": f"{dataset_slug}_img",
             "pooling_method": pooling_method,
             "type": RESIDUAL_STREAM_TYPE,
         }
-        repr_path_img = get_repr_path(f"{dataset_prefix}_img")
+        # Image representations are the same regardless of caption source,
+        # so always use the base dataset_slug for deduplication.
+        repr_path_img = get_repr_path(f"{dataset_slug}_img")
 
         # Try loading cached representation first
         res_img = None

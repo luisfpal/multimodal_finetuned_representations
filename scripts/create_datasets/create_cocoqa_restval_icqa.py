@@ -92,7 +92,7 @@ def main():
     # Filter for shared IDs and non-empty captions (as per original script)
     karpathy_filtered = karpathy_dataset.filter(
         lambda x: x['filename'] in common_ids and len(x['sentences']) > 0,
-        num_proc=os.cpu_count()
+        num_proc=max(1, os.cpu_count() // 4)
     )
     
     print(f"Karpathy filtered dataset size: {len(karpathy_filtered)}")
@@ -143,13 +143,13 @@ def main():
         merge_data,
         features=features,
         remove_columns=karpathy_filtered.column_names, # Remove original columns
-        num_proc=os.cpu_count()
+        num_proc=max(1, os.cpu_count() // 4)
     )
     
     # Filter out any entries that might have ended up with empty Q&A (though intersection check should prevent this)
     new_dataset = new_dataset.filter(
         lambda x: len(x['questions_and_answers']) > 0,
-        num_proc=os.cpu_count()
+        num_proc=max(1, os.cpu_count() // 4)
     )
     
     print(f"New dataset created with {len(new_dataset)} samples.")

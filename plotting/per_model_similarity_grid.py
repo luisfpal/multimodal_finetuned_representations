@@ -76,6 +76,9 @@ DATASETS = OrderedDict(
         ("mme_test_captioned_img_vs_txt", "MME"),
         ("mmbench_en_dev_captioned_img_vs_txt", "MMBench_EN"),
         ("gqa_val_balanced_noyesno_captioned_img_vs_txt", "GQA"),
+        # Synthetic captions (uncomment to include)
+        # ("cocoqa_restval_icqa_synthetic_img_vs_txt", "COCOQA (Synthetic)"),
+        # ("vqav2_coco_restval_icq_synthetic_img_vs_txt", "VQAv2 (Synthetic)"),
     ]
 )
 

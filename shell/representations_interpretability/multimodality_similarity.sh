@@ -32,6 +32,7 @@ DOWNSAMPLE_SIZE="${DOWNSAMPLE_SIZE:-100}"
 # Representations storage configuration (loaded from environment if available)
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 SAVE_REPRESENTATIONS="${SAVE_REPRESENTATIONS:-true}"
+CAPTION_SOURCE="${CAPTION_SOURCE:-synthetic}"  # "human" or "synthetic" for COCOQA/VQAv2-ICQ datasets
 
 # Directory configuration
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
@@ -44,14 +45,14 @@ FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
 # Models to evaluate
 MODELS=(
     # "lbasile/llava_7b"
-    # "l11p/llava-v1.5-7b-pretrained-lbasile"
+    "l11p/llava-v1.5-7b-pretrained-lbasile"
     # "lbasile/llava_13b"
     # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "OpenGVLab/InternVL2-8B"  # Finetuned
     # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
-    "OpenGVLab/InternVL3_5-8B-Pretrained"
+    # "OpenGVLab/InternVL3_5-8B-Pretrained"
     # "OpenGVLab/InternVL3_5-8B-Instruct"
     # "OpenGVLab/InternVL3_5-8B-MPO"
     # "OpenGVLab/InternVL3_5-8B"
@@ -94,6 +95,10 @@ for DATASET_PATH_OR_NAME in "${DATASETS[@]}"; do
 
         if [ "$SAVE_REPRESENTATIONS" = "true" ]; then
             CMD_ARGS+=(--save-representations)
+        fi
+
+        if [ -n "$CAPTION_SOURCE" ]; then
+            CMD_ARGS+=(--caption-source "$CAPTION_SOURCE")
         fi
 
         python3 "$FILEPATH" "${CMD_ARGS[@]}"

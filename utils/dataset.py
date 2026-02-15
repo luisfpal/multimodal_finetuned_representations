@@ -372,6 +372,10 @@ class OpenVQADataset(Dataset):
         images_qa: Whether to remove images from the dataset
         texts_qa: Whether to remove captions from the dataset
         remove_yes_no: Whether to remove Yes/No questions/answers from the dataset
+        caption_source: For datasets with both human captions and synthetic caption
+            (COCOQA-restval-ICQA, VQAv2-COCO-restval-ICQ). Use 'human' for the
+            concatenated captions list, 'synthetic' for the single synthetic-caption.
+            None (default) uses the existing behavior.
     """
 
     def __init__(
@@ -384,12 +388,14 @@ class OpenVQADataset(Dataset):
         images_qa: bool = False,
         texts_qa: bool = False,
         remove_yes_no: bool = False,
+        caption_source: Optional[str] = None,
     ):
         if images_qa and texts_qa:
             raise ValueError("images_qa and texts_qa cannot be both True.")
 
         self.images_qa = images_qa
         self.texts_qa = texts_qa
+        self.caption_source = caption_source
         self.dataset_path_or_name = dataset_path_or_name
         # Random number generator for reproducibility and stable one-to-one
         # question-answer pair selection between images_qa and texts_qa datasets
@@ -479,12 +485,19 @@ class OpenVQADataset(Dataset):
             # COCOQA uses 'captions'
             # Safe remove if present
             cols_to_remove = [
-                c for c in ["captions", "caption"] if c in dataset.column_names
+                c for c in ["captions", "caption", "synthetic-caption"] if c in dataset.column_names
             ]
             if cols_to_remove:
                 dataset = dataset.remove_columns(cols_to_remove)
         elif texts_qa:
             dataset = dataset.remove_columns("image")
+            # Remove unused caption columns based on caption_source selection
+            if caption_source == "synthetic":
+                cols_to_remove = [c for c in ["captions"] if c in dataset.column_names]
+            else:
+                cols_to_remove = [c for c in ["synthetic-caption"] if c in dataset.column_names]
+            if cols_to_remove:
+                dataset = dataset.remove_columns(cols_to_remove)
 
         # Sort the dataset by idx to guarantee images_qa and texts_qa are in the same order
         dataset = dataset.sort("idx")
@@ -580,8 +593,11 @@ class OpenVQADataset(Dataset):
 
         # Handle Captions
         if self.texts_qa:
-            # Check for 'caption' (singular string) or 'captions' (list)
-            if "captions" in question_data:
+            if self.caption_source == "synthetic":
+                # Use synthetic-caption (single string)
+                caption = question_data["synthetic-caption"]
+                full_question_prompt += f"Below is a description of the image. Use it to answer the question.\n\n{caption}\n"
+            elif "captions" in question_data:
                 captions = question_data["captions"]
                 if isinstance(captions, list):
                     full_question_prompt += f"Below are {len(captions)} descriptions of an image. Use them to answer the question.\n\n"
@@ -993,6 +1009,7 @@ def get_dataloader(
     guide_text: str = "Answer the question using a single word or phrase.\n",
     answer_letters_with_processed_batch: bool = False,
     chat_template_exists: bool = True,
+    caption_source: Optional[str] = None,
     remove_yes_no: bool = False,
     filter_mmbench_4_choices: bool = False,
     model: Optional[PreTrainedModel] = None,
@@ -1064,6 +1081,7 @@ def get_dataloader(
             images_qa=images_qa,
             texts_qa=texts_qa,
             remove_yes_no=remove_yes_no,
+            caption_source=caption_source,
         )
     else:
         raise ValueError(

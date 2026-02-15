@@ -80,7 +80,7 @@ def main():
     # Optimization 2: Filter COCO first using multiprocessing
     coco_filtered = coco_dataset.filter(
         lambda x: x['cocoid'] in coco_vqa_common_ids,
-        num_proc=os.cpu_count()
+        num_proc=max(1, os.cpu_count() // 4)
     )
     
     # Define features for the new dataset
@@ -122,7 +122,7 @@ def main():
         merge_data,
         features=features,
         remove_columns=coco_filtered.column_names, # Remove original COCO columns
-        num_proc=os.cpu_count()
+        num_proc=max(1, os.cpu_count() // 4)
     )
     
     print(f"New dataset created with {len(new_dataset)} samples.")

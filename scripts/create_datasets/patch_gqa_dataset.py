@@ -22,11 +22,11 @@ from tqdm import tqdm
 load_dotenv()
 
 def get_num_proc():
-    # Use half of available CPUs
+    # Use 1/4 of available CPUs
     try:
         count = os.cpu_count()
         if count:
-            return max(1, count // 2)
+            return max(1, count // 4)
     except:
         pass
     return 1
