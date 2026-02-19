@@ -259,3 +259,52 @@ def generate_responses(
 
     responses = tokenizer.batch_decode(output, skip_special_tokens=True)
     return [r.split(template.sep.strip())[0].strip() for r in responses]
+
+
+def batch_generate(
+    model: PreTrainedModel,
+    tokenizer,
+    questions: List[str],
+    images: Optional[List[Image.Image]] = None,
+    max_new_tokens: int = 50,
+) -> List[str]:
+    """Unified batched generation for InternVL2 — handles both visual and text-only.
+
+    Uses model.batch_chat() which natively supports batched inference with
+    left-padding and vision token injection.
+
+    Args:
+        model: InternVL2 model instance.
+        tokenizer: InternLM2Tokenizer.
+        questions: List of question strings (one per sample).
+        images: List of PIL Images (one per sample), or None for text-only.
+        max_new_tokens: Maximum tokens to generate per response.
+
+    Returns:
+        List of response strings, one per question.
+    """
+    generation_config = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+        "num_beams": 1,
+    }
+
+    if images is not None:
+        pixel_values, num_patches_list = get_pixel_values(images)
+        pixel_values = pixel_values.to(model.device)
+        return model.batch_chat(
+            tokenizer,
+            pixel_values,
+            questions,
+            generation_config,
+            num_patches_list=num_patches_list,
+        )
+    else:
+        # Text-only: no pixel_values, zero patches per question
+        return model.batch_chat(
+            tokenizer,
+            None,
+            questions,
+            generation_config,
+            num_patches_list=[0] * len(questions),
+        )

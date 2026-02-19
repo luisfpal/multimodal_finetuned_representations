@@ -1,8 +1,10 @@
+import argparse
 import base64
 import json
 import os
 import sys
-import argparse
+import warnings
+from base64 import b64decode
 from io import BytesIO
 from pathlib import Path
 from typing import List, Union
@@ -72,30 +74,45 @@ MODELS_CONFIG = {
         "id": "jinaai/jina-clip-v2",
         "max_tokens": 8192,
         "needs_chunking": False,
-        "trust_remote_code": True
+        "trust_remote_code": True,
+        # Pin revision to avoid arbitrary code execution from upstream changes.
+        # Update this hash deliberately after reviewing new releases.
+        "revision": "344d954da76eb8ad47a7aaff42d012e30c15b8fe",
     }
 }
 
 # Dataset registry
+# Entries with "hf_name" load from that HF repo but save results under the dict key.
+# This lets us evaluate different caption fields from the same dataset separately.
 DATASETS = {
-    "l11p/COCOQA-restval-ICQA": {
-        "features": ["image", "captions", "image_id"],
+    # "l11p/COCOQA-restval-ICQA": {
+    #     "features": ["image", "captions", "image_id"],
+    #     "load_config": {"remove_yes_no": True},
+    # },
+    # "l11p/VQAv2-COCO-restval-ICQ": {
+    #     "features": ["image", "captions", "image_id"],
+    #     "load_config": {"remove_yes_no": True},
+    # },
+    "l11p/COCOQA-restval-ICQA__synthetic": {
+        "hf_name": "l11p/COCOQA-restval-ICQA",
+        "features": ["image", "synthetic-caption", "image_id"],
         "load_config": {"remove_yes_no": True},
     },
-    "l11p/VQAv2-COCO-restval-ICQ": {
-        "features": ["image", "captions", "image_id"],
+    "l11p/VQAv2-COCO-restval-ICQ__synthetic": {
+        "hf_name": "l11p/VQAv2-COCO-restval-ICQ",
+        "features": ["image", "synthetic-caption", "image_id"],
         "load_config": {"remove_yes_no": True},
     },
-    "l11p/MMBench_EN-dev-captioned": {
-        "features": ["image", "caption", "index"],
-        "load_config": {"filter_mmbench_4_choices": True},
-    },
-    "l11p/MME-test-captioned": {
-        "features": ["image", "caption", "question_id"],
-    },
-    "l11p/GQA-val-balanced-noyesno-captioned": {
-        "features": ["image", "caption", "imageId"],
-    },
+    # "l11p/MMBench_EN-dev-captioned": {
+    #     "features": ["image", "caption", "index"],
+    #     "load_config": {"filter_mmbench_4_choices": True},
+    # },
+    # "l11p/MME-test-captioned": {
+    #     "features": ["image", "caption", "question_id"],
+    # },
+    # "l11p/GQA-val-balanced-noyesno-captioned": {
+    #     "features": ["image", "caption", "imageId"],
+    # },
 }
 
 _MMBENCH_CHOICE_COLS = ["A", "B", "C", "D"]
@@ -195,30 +212,30 @@ def get_text_embedding_chunked(text, model, processor, max_tokens, device, verbo
         with torch.no_grad():
             text_embeds = model.get_text_features(**inputs)
         return text_embeds
-    
+
     # 3. Chunking logic
     if verbose:
         print(f"    [dim info] Chunking applied (length {seq_len} > {max_tokens}).[/dim info]")
-    
-    special_tokens_count = 2 
+
+    special_tokens_count = 2
     chunk_size = max_tokens - special_tokens_count
     stride = 20
-    
+
     inner_ids = input_ids[1:-1]
-    
+
     chunks = []
     start = 0
     while start < len(inner_ids):
         end = min(start + chunk_size, len(inner_ids))
         chunk_ids = inner_ids[start:end]
-        
+
         full_chunk = torch.cat([
             input_ids[0].unsqueeze(0), # BOS
             chunk_ids,
             input_ids[-1].unsqueeze(0) # EOS
         ])
         chunks.append(full_chunk)
-        
+
         if end == len(inner_ids):
             break
         start += (chunk_size - stride)
@@ -235,18 +252,18 @@ def get_text_embedding_chunked(text, model, processor, max_tokens, device, verbo
             padding = torch.tensor([pad_token_id] * (max_len_in_batch - len(ch)))
             ch = torch.cat([ch, padding])
         padded_chunks.append(ch)
-        
+
     batch_input_ids = torch.stack(padded_chunks).to(device)
     batch_attention_mask = (batch_input_ids != pad_token_id).long().to(device)
-    
+
     with torch.no_grad():
         if hasattr(model, "get_text_features"):
             chunk_embeds = model.get_text_features(input_ids=batch_input_ids, attention_mask=batch_attention_mask)
         else:
             raise ValueError(f"Model {type(model)} does not have get_text_features")
-            
+
         avg_embed = chunk_embeds.mean(dim=0, keepdim=True)
-    
+
     return avg_embed
 
 
@@ -259,35 +276,46 @@ class CaptionEvaluator:
     def __init__(self, model_key: str, verbose: bool = False):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.verbose = verbose
-        
+
         # Load Config
         self.model_config = MODELS_CONFIG[model_key]
         model_id = self.model_config["id"]
-        
+
         print(f"  [dim]Initializing {model_id} on {self.device}...[/dim]")
 
         # Setup kwargs
         kwargs = {"use_safetensors": True}
         if self.model_config["trust_remote_code"]:
             kwargs["trust_remote_code"] = True
-            
+
         # Jina-specific fix
         if model_key == "jina":
             sys.modules["flash_attn"] = None
             kwargs["attn_implementation"] = "eager"
+            # Suppress Jina-internal deprecation (uses torch_dtype instead of dtype)
+            warnings.filterwarnings("ignore", message=".*torch_dtype.*is deprecated.*")
+
+        # Pin revision for trust_remote_code models to avoid executing
+        # arbitrary upstream code changes without review.
+        revision = self.model_config.get("revision")
+        if revision:
+            kwargs["revision"] = revision
 
         try:
             # Load Processor
-            self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=self.model_config["trust_remote_code"])
-            
+            proc_kwargs = {"trust_remote_code": self.model_config["trust_remote_code"], "use_fast": True}
+            if revision:
+                proc_kwargs["revision"] = revision
+            self.processor = AutoProcessor.from_pretrained(model_id, **proc_kwargs)
+
             # Load Model
             if "clip-vit" in model_id:
                 self.model = CLIPModel.from_pretrained(model_id, **kwargs)
             else:
                 self.model = AutoModel.from_pretrained(model_id, **kwargs)
-                
+
             self.model.to(self.device).eval()
-            
+
         except Exception as e:
             print(f"[red]Error loading model {model_id}: {e}[/red]")
             sys.exit(1)
@@ -304,20 +332,20 @@ class CaptionEvaluator:
     def _text_emb(self, text: str) -> torch.Tensor:
         if self.model_config["needs_chunking"]:
             emb = get_text_embedding_chunked(
-                text, self.model, self.processor, 
+                text, self.model, self.processor,
                 self.model_config["max_tokens"], self.device, self.verbose
             )
         else:
             # For models like Jina that handle long context natively
             inputs = self.processor(
-                text=[text], 
-                return_tensors="pt", 
-                padding=True, 
-                truncation=True, 
+                text=[text],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
                 max_length=self.model_config["max_tokens"],
             ).to(self.device)
             emb = self.model.get_text_features(**inputs)
-            
+
         return emb / emb.norm(dim=-1, keepdim=True)
 
     def score(self, image: Image.Image, captions: Union[List[str], str]) -> float:
@@ -378,15 +406,15 @@ def save_results(results: dict, dataset_name: str, model_key: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate Image Captioning Semantically")
     parser.add_argument(
-        "--model", 
-        type=str, 
-        default="clip", 
+        "--model",
+        type=str,
+        default="clip",
         choices=MODELS_CONFIG.keys(),
         help="Select model for evaluation (clip, siglip, siglip2, siglip2-giant, jina)"
     )
     parser.add_argument(
-        "--verbose", 
-        action="store_true", 
+        "--verbose",
+        action="store_true",
         help="Enable verbose output (e.g., chunking reports)"
     )
     args = parser.parse_args()
@@ -403,7 +431,9 @@ if __name__ == "__main__":
             continue
 
         # ── load & preprocess ──
-        dataset = load_raw_dataset(dataset_name, **config.get("load_config", {}))
+        # Use hf_name when available (virtual entries that share a HF repo)
+        hf_name = config.get("hf_name", dataset_name)
+        dataset = load_raw_dataset(hf_name, **config.get("load_config", {}))
         print(f"  [dim]{len(dataset)} samples after preprocessing[/dim]")
 
         # ── score & save ──

@@ -62,11 +62,15 @@ evals/**/*
 *.7z
 *.rar
 
-# Agents
+# Agents and IDEs
 .github/
 .claude/
 GEMINI.md
 CLAUDE.md
+.cursor*
+.vscode/
+
+
 
 # Internal docs
 internal_docs/
@@ -76,3 +80,6 @@ tests/
 
 # Representation results
 results/representations/
+
+# git
+.git/

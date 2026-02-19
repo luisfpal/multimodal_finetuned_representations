@@ -1,0 +1,41 @@
+# GQA Val-Balanced — VISUAL variant (images as context)
+#
+# Dataset: l11p/GQA-val-balanced-noyesno-captioned
+#   Unified dataset with images + questions + captions already merged.
+#   Unlike the original GQA task which loads images from a separate subset,
+#   this dataset has the image column directly available.
+#   Yes/No questions have been filtered out.
+#
+# This variant uses images (same as standard evaluation, different data source).
+# Scoring: Identical to original GQA (exact_match)
+
+dataset_path: l11p/GQA-val-balanced-noyesno-captioned
+dataset_kwargs:
+  token: True
+task: "gqa_val_balanced"
+test_split: train
+output_type: generate_until
+doc_to_visual: !function utils.gqa_val_balanced_doc_to_visual
+doc_to_text: !function utils.gqa_val_balanced_doc_to_text
+doc_to_target: "answer"
+generation_kwargs:
+  max_new_tokens: 16
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: false
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: true
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "\nAnswer the question using a single word or phrase."
+  qwen_vl:
+    pre_prompt: ""
+    post_prompt: " Answer:"
+metadata:
+  - version: 0.0

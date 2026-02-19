@@ -15,10 +15,7 @@
 # 3. Run the script:
 #    bash shell/eval/launch_lmms_specific.sh
 
-# ⚠️⚠️⚠️ Adjust the following variables in `/shell/eval/lmms_evaluation.sh` ⚠️⚠️⚠️
-# for models other than LLaVA 1.5 7B:
-#  - MODEL
-#  - LMMS_EVAL_MODEL, according to the names in the lmms-eval documentation.
+# The model backend is now auto-inferred from the model name.
 # =============================================================================
 
 # SLURM settings
@@ -58,10 +55,6 @@ MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B"
 OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
 
 NO_IMAGE="false"
-#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
-# LMMS_EVAL_MODEL="llava_hf" 
-# LMMS_EVAL_MODEL="internvl2"
-LMMS_EVAL_MODEL="internvl3.5"
 
 # Resolve model-specific venv
 VENV="$PROJECT_ROOT/.venv"
@@ -150,7 +143,6 @@ chmod +x "$SCRIPT_NAME"
 export TOKENIZERS_PARALLELISM=false
 export NUM_GPUS=$NUM_GPUS
 export NO_IMAGE=$NO_IMAGE
-export LMMS_EVAL_MODEL=$LMMS_EVAL_MODEL
 export OUTPUT_MODEL_DIR=$OUTPUT_MODEL_DIR
 
 # =============================================================================
@@ -233,7 +225,6 @@ export SCRIPTS_DIR="$SCRIPTS_DIR"
 export SCRIPT_NAME="$SCRIPT_NAME"
 export MODEL_TO_EVAL="$MODEL_TO_EVAL"
 export NO_IMAGE="$NO_IMAGE"
-export LMMS_EVAL_MODEL="$LMMS_EVAL_MODEL"
 export OUTPUT_MODEL_DIR="$OUTPUT_MODEL_DIR"
 
 $JOB_COMMANDS

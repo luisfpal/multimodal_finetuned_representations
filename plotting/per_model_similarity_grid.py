@@ -51,18 +51,18 @@ PLOTS_DIR = Path(
 # Comment / uncomment to toggle models.
 MODELS = OrderedDict(
     [
-        # ("InternVL2-8B",                      "InternVL2-8B"),
-        # ("InternVL2-8B-Pretrain",             "InternVL2-8B (Pretrained)"),
-        # ("llava_7b",                          "LLaVA-7B (Finetuned)"),
+        ("InternVL2-8B",                      "InternVL2-8B"),
+        ("InternVL2-8B-Pretrain",             "InternVL2-8B (Pretrained)"),
+        # ("llava_7b", "LLaVA-7B (Finetuned)"),
+        # ("llava-v1.5-7b-pretrained-lbasile", "LLaVA-7B (Pretrained)"),
         # ("llava_13b",                         "LLaVA-13B (Finetuned)"),
-        # ("llava-v1.5-7b-pretrained-lbasile",  "LLaVA-7B (Pretrained)"),
         # ("llava-v1.5-13b-pretrained-lbasile", "LLaVA-13B (Pretrained)"),
         # ("llava_7b_6_17",                     "LLaVA-7B (6→17)"),
         # ("llava_7b_6_17_complementary",       "LLaVA-7B (6→17 Complementary)"),
-        ("InternVL3_5-8B-Pretrained", "InternVL3.5-8B (Pretrained)"),
-        ("InternVL3_5-8B-Instruct", "InternVL3.5-8B (Instruct)"),
-        ("InternVL3_5-8B-MPO", "InternVL3.5-8B (MPO)"),
-        ("InternVL3_5-8B", "InternVL3.5-8B"),
+        # ("InternVL3_5-8B-Pretrained", "InternVL3.5-8B (Pretrained)"),
+        # ("InternVL3_5-8B-Instruct", "InternVL3.5-8B (Instruct)"),
+        # ("InternVL3_5-8B-MPO", "InternVL3.5-8B (MPO)"),
+        # ("InternVL3_5-8B", "InternVL3.5-8B"),
     ]
 )
 
@@ -76,9 +76,9 @@ DATASETS = OrderedDict(
         ("mme_test_captioned_img_vs_txt", "MME"),
         ("mmbench_en_dev_captioned_img_vs_txt", "MMBench_EN"),
         ("gqa_val_balanced_noyesno_captioned_img_vs_txt", "GQA"),
-        # Synthetic captions (uncomment to include)
-        # ("cocoqa_restval_icqa_synthetic_img_vs_txt", "COCOQA (Synthetic)"),
-        # ("vqav2_coco_restval_icq_synthetic_img_vs_txt", "VQAv2 (Synthetic)"),
+        # Synthetic captions
+        ("cocoqa_restval_icqa_synthetic_img_vs_txt", "COCOQA (Synthetic)"),
+        ("vqav2_coco_restval_icq_synthetic_img_vs_txt", "VQAv2 (Synthetic)"),
     ]
 )
 

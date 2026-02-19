@@ -100,6 +100,38 @@ def _get_vl_model_classes(
     )
 
 
+def infer_lmms_eval_backend(model_name: str) -> str:
+    """Infer the lmms-eval model backend from the model name.
+
+    Mapping:
+        - Models containing 'InternVL3' → 'internvl3.5'
+        - Models containing 'InternVL2' → 'internvl2'
+        - Models containing 'llava' (case-insensitive) → 'llava_hf'
+
+    Args:
+        model_name: HuggingFace model identifier or local path.
+
+    Returns:
+        The lmms-eval backend string.
+
+    Raises:
+        ValueError: If the model name doesn't match any known backend.
+    """
+    name_lower = model_name.lower()
+    if "internvl3" in name_lower:
+        return "internvl3.5"
+    if "internvl2" in name_lower:
+        return "internvl2"
+    if "llava" in name_lower:
+        return "llava_hf"
+    raise ValueError(
+        f"Cannot infer lmms-eval backend for '{model_name}'. "
+        f"Known patterns: 'InternVL3' → 'internvl3.5', "
+        f"'InternVL2' → 'internvl2', 'llava' → 'llava_hf'. "
+        f"Use --lmms-eval-model to specify explicitly."
+    )
+
+
 def _load_internvl2_model_and_tokenizer(
     model_name_or_path: str,
     cache_dir: Optional[str] = None,

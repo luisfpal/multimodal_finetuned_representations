@@ -32,12 +32,6 @@ set -e # Exit immediately if a command exits with a non-zero status.
 DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
 # DEFAULT_MODEL_NAME="lbasile/llava_13b"
 
-# 2. Model class in the lmms-eval library
-#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
-# LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl2}"
-LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl3.5}"
-# LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
-
 # =============================================================================
 # SCRIPT SETUP & ARGUMENT PARSING
 # =============================================================================
@@ -215,7 +209,6 @@ for TASK_NAME in "${TASKS[@]}"; do
         --model-cache-dir "$HF_HUB_CACHE"
         --output-dir "$OUTPUT_DIR"
         --task-name "$TASK_NAME"
-        --lmms-eval-model "$LMMS_EVAL_MODEL"
         --batch-size 1 # LLaVA models in lmms-eval often require batch size 1
     )
 

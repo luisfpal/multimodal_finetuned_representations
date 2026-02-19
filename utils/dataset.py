@@ -485,7 +485,9 @@ class OpenVQADataset(Dataset):
             # COCOQA uses 'captions'
             # Safe remove if present
             cols_to_remove = [
-                c for c in ["captions", "caption", "synthetic-caption"] if c in dataset.column_names
+                c
+                for c in ["captions", "caption", "synthetic-caption"]
+                if c in dataset.column_names
             ]
             if cols_to_remove:
                 dataset = dataset.remove_columns(cols_to_remove)
@@ -495,7 +497,9 @@ class OpenVQADataset(Dataset):
             if caption_source == "synthetic":
                 cols_to_remove = [c for c in ["captions"] if c in dataset.column_names]
             else:
-                cols_to_remove = [c for c in ["synthetic-caption"] if c in dataset.column_names]
+                cols_to_remove = [
+                    c for c in ["synthetic-caption"] if c in dataset.column_names
+                ]
             if cols_to_remove:
                 dataset = dataset.remove_columns(cols_to_remove)
 
@@ -596,7 +600,7 @@ class OpenVQADataset(Dataset):
             if self.caption_source == "synthetic":
                 # Use synthetic-caption (single string)
                 caption = question_data["synthetic-caption"]
-                full_question_prompt += f"Below is a description of the image. Use it to answer the question.\n\n{caption}\n"
+                full_question_prompt += f"Below is a description of an image. Use it to answer the question.\n\n{caption}\n"
             elif "captions" in question_data:
                 captions = question_data["captions"]
                 if isinstance(captions, list):
@@ -605,10 +609,10 @@ class OpenVQADataset(Dataset):
                         full_question_prompt += f"{i + 1}: {caption}\n"
                 else:
                     # Fallback if it's somehow a string
-                    full_question_prompt += f"Below is a description of the image. Use it to answer the question.\n\n{captions}\n"
+                    full_question_prompt += f"Below is a description of an image. Use it to answer the question.\n\n{captions}\n"
             elif "caption" in question_data:
                 caption = question_data["caption"]
-                full_question_prompt += f"Below is a description of the image. Use it to answer the question.\n\n{caption}\n"
+                full_question_prompt += f"Below is a description of an image. Use it to answer the question.\n\n{caption}\n"
             else:
                 raise ValueError("No captions found in the dataset")
 

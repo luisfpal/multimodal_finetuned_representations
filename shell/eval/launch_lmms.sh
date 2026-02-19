@@ -8,7 +8,6 @@
 #
 # This launcher is for:
 # - Evaluating a whole collection of model checkpoints against one benchmark.
-# - Evaluating the main finetuned vs. pretrained models against one benchmark.
 # - Evaluating a single model against one benchmark.
 #
 # Usage:
@@ -20,10 +19,7 @@
 # 4. Run the script:
 #   👉 bash shell/eval/launch_lmms.sh
 
-# ⚠️⚠️⚠️ Adjust the following variables in `/shell/eval/lmms_evaluation.sh` ⚠️⚠️⚠️
-# for models other than LLaVA 1.5 7B:
-#  - MODEL
-#  - LMMS_EVAL_MODEL, according to the names in the lmms-eval documentation.
+# The model backend is now auto-inferred from the model name.
 # =============================================================================
 
 # SLURM settings
@@ -50,18 +46,14 @@ SCRIPT_NAME="lmms_evaluation.sh"
 
 # EVAL_MODE options:
 #   "COLLECTION_NAME=<name>" - Single collection
-#   "FINETUNED_PRETRAINED=true" - Finetuned preset
 #   "SINGLE_MODEL=<model_id>" - Specific model
 #   "COLLECTIONS" - Loop all collections below
-# EVAL_MODE="FINETUNED_PRETRAINED=true"
 # EVAL_MODE="COLLECTIONS"
 EVAL_MODE="SINGLE_MODEL=lbasile/llava_7b"
 # EVAL_MODE="COLLECTION_NAME=Llava1.5-7B-0-16"
 
 # Configuration
 NO_IMAGE="false"
-#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
-LMMS_EVAL_MODEL="llava_hf" 
 
 # Collections to evaluate (used when EVAL_MODE="COLLECTIONS")
 COLLECTIONS=(
@@ -146,7 +138,6 @@ export NUM_GPUS=$NUM_GPUS
 
 # Export Configuration
 export NO_IMAGE=$NO_IMAGE
-export LMMS_EVAL_MODEL=$LMMS_EVAL_MODEL
 
 # =============================================================================
 # ORFEO LLM JWT AUTHENTICATION (if configured)

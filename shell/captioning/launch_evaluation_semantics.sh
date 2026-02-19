@@ -12,7 +12,7 @@ GPU_TYPE="A100"
 NUM_GPUS=1
 CPUS=16
 MEM="64GB"
-TIME="04:00:00"         # Estimated time, adjusted from 6h
+TIME="01:00:00"         # Estimated time, adjusted from 6h
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -54,19 +54,12 @@ $SBATCH_DIRECTIVES
 # Activate environment
 cd $PROJECT_ROOT
 # Using the same environment as captioning, assuming it has the necessary libs
-source $PROJECT_ROOT/.venv/bin/activate 
+source $PROJECT_ROOT/.venv/bin/activate
 
 # Run evaluation
-python scripts/captioning/evaluate_captions_semantically.py --model jina
+python scripts/captioning/evaluate_captions_semantically.py --model clip
 
-# Run comparison and stats generation immediately after
-if [ \$? -eq 0 ]; then
-    echo "✅ Evaluation complete. Running statistical comparison..."
-    python scripts/captioning/compare_captions_scores.py
-else
-    echo "❌ Evaluation failed. Skipping comparison."
-    exit 1
-fi
+echo "✅ Evaluation complete."
 
 EOT
 

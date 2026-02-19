@@ -45,11 +45,11 @@ FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
 # Models to evaluate
 MODELS=(
     # "lbasile/llava_7b"
-    "l11p/llava-v1.5-7b-pretrained-lbasile"
+    # "l11p/llava-v1.5-7b-pretrained-lbasile"
     # "lbasile/llava_13b"
     # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "OpenGVLab/InternVL2-8B"  # Finetuned
-    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
+    "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
     # "OpenGVLab/InternVL3_5-8B-Pretrained"

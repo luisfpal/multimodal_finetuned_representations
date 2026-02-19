@@ -44,6 +44,8 @@ REAL_DATASETS = [
     "l11p/VQAv2-COCO-restval-ICQ",
 ]
 SYNTHETIC_DATASETS = [
+    "l11p/COCOQA-restval-ICQA__synthetic",
+    "l11p/VQAv2-COCO-restval-ICQ__synthetic",
     "l11p/MMBench_EN-dev-captioned",
     "l11p/MME-test-captioned",
     "l11p/GQA-val-balanced-noyesno-captioned",
@@ -135,7 +137,11 @@ _COLOURS = dict(
 def _short_label(dataset_name: str) -> str:
     """Human-readable short title with [Real] / [Syn] tag."""
     cat = "Real" if dataset_name in REAL_DATASETS else "Syn"
-    return f"[{cat}] {dataset_name.split('/')[-1]}"
+    short = dataset_name.split('/')[-1]
+    # Prettify __synthetic suffix
+    if "__synthetic" in short:
+        short = short.replace("__synthetic", " (Synthetic)")
+    return f"[{cat}] {short}"
 
 
 def plot_dataset_histogram(

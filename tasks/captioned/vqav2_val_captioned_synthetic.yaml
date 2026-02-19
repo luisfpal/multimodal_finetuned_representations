@@ -1,0 +1,30 @@
+# VQAv2 Val — Captioned variant with SYNTHETIC captions
+#
+# Dataset: l11p/VQAv2-COCO-restval-synthetic-caps
+#   Each image has one synthetic caption in the "caption" field.
+# Scoring: Identical to original VQAv2 val (exact_match / VQA soft accuracy)
+
+dataset_path: l11p/VQAv2-COCO-restval-synthetic-caps
+dataset_kwargs:
+  token: True
+task: "vqav2_val_captioned_synthetic"
+test_split: train
+output_type: generate_until
+doc_to_visual: !function utils.captioned_doc_to_visual
+doc_to_text: !function utils.vqav2_captioned_synthetic_doc_to_text
+doc_to_target: "multiple_choice_answer"
+generation_kwargs:
+  max_new_tokens: 16
+process_results: !function utils.vqav2_process_results_val
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: true
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: ""
+    post_prompt: "\nAnswer the question using a single word or phrase."
+metadata:
+  - version: 0.0

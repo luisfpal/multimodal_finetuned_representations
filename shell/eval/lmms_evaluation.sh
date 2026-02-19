@@ -81,12 +81,6 @@ OUTPUT_MODEL_DIR="${OUTPUT_MODEL_DIR:-llava-1.5-7b}" # ⚠️ADJUST: Used for ou
 PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 OUTPUT_DIR="$PROJECT_ROOT/evals/$OUTPUT_MODEL_DIR/lmms_eval/$TASK_NAME"
 
-# Model names
-FINE_TUNED_MODEL_NAME="lbasile/llava_7b"
-PRETRAINED_MODEL_NAME="l11p/llava-v1.5-7b-pretrained-lbasile"
-#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
-LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
-
 # Handle No Image flag
 NO_IMAGE="${NO_IMAGE:-false}"
 if [ "$NO_IMAGE" = "true" ]; then
@@ -149,7 +143,6 @@ base_args=(
     --output-dir "$OUTPUT_DIR"
     --batch-size "$BATCH_SIZE"
     --task-name "$TASK_NAME"
-    --lmms-eval-model "$LMMS_EVAL_MODEL"
 )
 
 # Add optional arguments
@@ -180,18 +173,13 @@ if [ -n "$SINGLE_MODEL" ]; then
     echo "[Single Model]"
     run_evaluation --model-name-or-path "$SINGLE_MODEL"
 
-elif [ "$FINETUNED_PRETRAINED" = "true" ]; then
-    echo "[Finetuned + Pretrained]"
-    run_evaluation \
-        --fine-tuned-model-name "$FINE_TUNED_MODEL_NAME" \
-        --pretrained-model-name "$PRETRAINED_MODEL_NAME"
-
 elif [ -n "$COLLECTION_NAME" ]; then
     echo "[Collection]"
     run_evaluation --collection-name "$COLLECTION_NAME"
 
 else
     echo "Error: No evaluation mode specified."
+    echo "Set SINGLE_MODEL=<model_id> or COLLECTION_NAME=<name>"
     exit 1
 fi
 

@@ -14,6 +14,8 @@ from utils import (
     LLaVA1_5_SYSTEM_INSTRUCTION,
     INTERNVL2_SYSTEM_INSTRUCTION,
     INTERNVL3_5_SYSTEM_INSTRUCTION,
+    ensure_llm_judge_env,
+    infer_lmms_eval_backend,
 )
 from utils.patch_skipping import patch
 
@@ -112,16 +114,20 @@ def create_cli_args(output_path: str) -> argparse.Namespace:
 
 
 def validate_task_requirements(task_name: str) -> None:
-    """Validate environment variables for tasks requiring LLM judge."""
+    """Validate environment variables for tasks requiring LLM judge.
+
+    Automatically loads .env and acquires an Orfeo JWT if OPENAI_API_KEY
+    is not already set in the environment.
+    """
     if task_name in LLM_JUDGE_TASKS:
-        api_key = os.environ.get("OPENAI_API_KEY")
+        if not ensure_llm_judge_env():
+            print("[bold red]✗ ERROR: LLM judge API key missing![/bold red]")
+            print(f"  Task '{task_name}' requires OPENAI_API_KEY")
+            print("  Set it directly, or configure Orfeo credentials in .env\n")
+            sys.exit(1)
+
         api_url = os.environ.get("OPENAI_API_URL", "https://api.openai.com/v1")
         model_version = os.environ.get("MODEL_VERSION", "gpt-4o-2024-11-20")
-
-        if not api_key:
-            print("[bold red]✗ ERROR: LLM judge API key missing![/bold red]")
-            print(f"  Task '{task_name}' requires OPENAI_API_KEY\n")
-            sys.exit(1)
         print(f"[green]✓ LLM Judge: {model_version} @ {api_url}[/green]")
 
 
@@ -233,10 +239,13 @@ def run_evaluation(
     if args.no_image:
         patch(layers_to_skip=range(32))
 
-    # Instantiate model instance if needed
-    model_instance = args.lmms_eval_model  # Default to string for registry lookup
+    # Resolve backend (auto-infer from model name if not explicitly provided)
+    backend = args.lmms_eval_model or infer_lmms_eval_backend(model_name)
 
-    if args.lmms_eval_model == "llava_hf":
+    # Instantiate model instance if needed
+    model_instance = backend  # Default to string for registry lookup
+
+    if backend == "llava_hf":
         if LlavaHf is None:
             print(
                 "[yellow]⚠ LlavaHf class not importable, falling back to registry[/yellow]"
@@ -251,7 +260,7 @@ def run_evaluation(
                 batch_size=args.batch_size if args.batch_size else 1,
             )
 
-    elif args.lmms_eval_model == "internvl2":
+    elif backend == "internvl2":
         if InternVL2Custom is None:
             print(
                 "[yellow]⚠ InternVL2Custom class not importable, falling back to registry[/yellow]"
@@ -272,7 +281,7 @@ def run_evaluation(
                 cache_dir=args.model_cache_dir,
             )
 
-    elif args.lmms_eval_model == "internvl3.5":
+    elif backend == "internvl3.5":
         if InternVL3_5Custom is None:
             print(
                 "[yellow]⚠ InternVL3_5Custom class not importable, falling back to registry[/yellow]"
@@ -294,9 +303,9 @@ def run_evaluation(
             )
 
     # Select system instruction
-    if args.lmms_eval_model == "internvl2":
+    if backend == "internvl2":
         system_instruction = INTERNVL2_SYSTEM_INSTRUCTION
-    elif args.lmms_eval_model == "internvl3.5":
+    elif backend == "internvl3.5":
         system_instruction = INTERNVL3_5_SYSTEM_INSTRUCTION
     else:
         system_instruction = LLaVA1_5_SYSTEM_INSTRUCTION
@@ -421,51 +430,6 @@ def run_evaluation(
     return elapsed_sec
 
 
-def eval_finetuned_pretrained(args) -> None:
-    """Evaluate both finetuned and pretrained models."""
-    print("[bold magenta]=== Finetuned + Pretrained ===[/bold magenta]")
-    validate_task_requirements(args.task_name)
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    effective_output_dir = os.path.join(args.output_dir, "finetuned_pretrained")
-    os.makedirs(effective_output_dir, exist_ok=True)
-
-    gen_kwargs = build_gen_kwargs(args.task_name, args.max_new_tokens)
-    print(f"[cyan]Generation: {gen_kwargs}[/cyan]   ")
-    print()
-
-    eval_start_time = time.time()
-
-    # Evaluate finetuned model
-    run_evaluation(
-        model_name=args.fine_tuned_model_name,
-        output_dir=effective_output_dir,
-        args=args,
-        gen_kwargs=gen_kwargs,
-        model_label="finetuned model",
-        prefix="finetuned_pretrained",
-        suffix="finetuned",
-    )
-
-    # Evaluate pretrained model
-    print()
-    run_evaluation(
-        model_name=args.pretrained_model_name,
-        output_dir=effective_output_dir,
-        args=args,
-        gen_kwargs=gen_kwargs,
-        model_label="pretrained model",
-        prefix="finetuned_pretrained",
-        suffix="pretrained",
-    )
-
-    print()
-    print(
-        f"[green]✓ Complete in {format_elapsed_time(time.time() - eval_start_time)}[/green]"
-    )
-    print(f"[cyan]  Saved to: {effective_output_dir}[/cyan]")
-
-
 def eval_single(args) -> None:
     """Evaluate a single model."""
     print("[bold magenta]=== Single Model ===[/bold magenta]")
@@ -571,12 +535,15 @@ def main() -> None:
         description="Evaluate LLaVA models using lmms-eval"
     )
 
-    parser.add_argument("--lmms-eval-model", type=str, default="llava_hf")
+    parser.add_argument(
+        "--lmms-eval-model",
+        type=str,
+        default=None,
+        help="Model backend (auto-inferred if not set): llava_hf, internvl2, internvl3.5",
+    )
     parser.add_argument("--model-name-or-path", type=str, default=None)
     parser.add_argument("--model-cache-dir", type=str, required=True)
     parser.add_argument("--collection-name", type=str, default=None)
-    parser.add_argument("--pretrained-model-name", type=str, default=None)
-    parser.add_argument("--fine-tuned-model-name", type=str, default=None)
     parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--task-name", type=str, default="vqav2_test")
@@ -590,14 +557,10 @@ def main() -> None:
     # Run appropriate evaluation mode
     if args.collection_name:
         eval_collection(args)
-    elif args.pretrained_model_name and args.fine_tuned_model_name:
-        eval_finetuned_pretrained(args)
     elif args.model_name_or_path:
         eval_single(args)
     else:
-        parser.error(
-            "Provide --collection-name, (--pretrained-model-name + --fine-tuned-model-name), or --model-name-or-path"
-        )
+        parser.error("Provide --collection-name or --model-name-or-path")
 
 
 if __name__ == "__main__":

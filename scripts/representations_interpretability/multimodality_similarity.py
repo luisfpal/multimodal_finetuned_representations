@@ -192,7 +192,7 @@ def main():
             os.makedirs(repr_dir, exist_ok=True)
             return os.path.join(repr_dir, "representations.safetensors")
 
-        # 1. Extract Text Representations
+        # 1.C
         print("  👉 Extracting Text Representations...")
         txt_metadata = {
             "model": model_name,

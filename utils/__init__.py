@@ -31,9 +31,11 @@ from .metrics_utils import (
     compute_layers_residual_stream_entropy,
     compute_layers_residual_stream_similarities,
 )
+from .llm_judge import ensure_llm_judge_env
 from .model_utils import (
     ModelType,
     ProcessorType,
+    infer_lmms_eval_backend,
     load_hf_model_and_processor_or_tokenizer,
     replace_multimodal_lm,
     replace_multimodal_projector,
@@ -78,4 +80,6 @@ __all__ = [
     "sample_image_and_text_positions",
     "benchmark_model_captioning_processed_dataloader",
     "plot_similarity_measure_matrix",
+    "infer_lmms_eval_backend",
+    "ensure_llm_judge_env",
 ]
