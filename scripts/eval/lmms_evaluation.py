@@ -15,7 +15,8 @@ from utils import (
     INTERNVL2_SYSTEM_INSTRUCTION,
     INTERNVL3_5_SYSTEM_INSTRUCTION,
 )
-from utils.patch_skipping import patch
+from utils.patch_llava import patch as patch_llava
+from utils.patch_internvl import patch as patch_internvl
 
 try:
     from lmms_eval.models.chat.llava_hf import LlavaHf
@@ -46,7 +47,7 @@ LONG_ANSWER_MAX_NEW_TOKENS = 1024
 # Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
 TASK_LIMITS = {
     # "scienceqa_img": 25,  # 2018 samples
-    "mme": 26,  # 2374 samples
+    "mme": 5000,  # 2374 samples
     # "textvqa_val": 5000,  # 5000 samples
     "pope": 5000,  # 9000 samples
     "gqa": 5000,  # 12578 samples
@@ -230,9 +231,6 @@ def run_evaluation(
         # Single GPU: use HF auto device mapping
         model_args = f"pretrained={model_name},device_map=auto"
 
-    if args.no_image:
-        patch(layers_to_skip=range(32))
-
     # Instantiate model instance if needed
     model_instance = args.lmms_eval_model  # Default to string for registry lookup
 
@@ -292,7 +290,11 @@ def run_evaluation(
                 batch_size=str(args.batch_size) if args.batch_size else "1",
                 cache_dir=args.model_cache_dir,
             )
-
+    if args.no_image:
+        if args.lmms_eval_model == "llava_hf":
+            patch_llava(layers_to_skip=range(32))
+        elif args.lmms_eval_model == "internvl2":
+            patch_internvl(model_instance._model, layers_to_skip=range(32))
     # Select system instruction
     if args.lmms_eval_model == "internvl2":
         system_instruction = INTERNVL2_SYSTEM_INSTRUCTION
