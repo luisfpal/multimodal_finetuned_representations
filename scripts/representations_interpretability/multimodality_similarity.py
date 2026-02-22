@@ -1,7 +1,7 @@
 import argparse
+from ast import arg
 import gc
 import os
-import sys
 
 import torch
 from dotenv import load_dotenv
@@ -14,6 +14,11 @@ from utils import (
     load_hf_model_and_processor_or_tokenizer,
     seed_all,
 )
+from utils.dataset import OpenVQADataset
+from utils.semantic_filter_utils import (
+    JinaCaptionSemanticScorer,
+    compute_semantic_keep_image_ids,
+)
 
 # Load environment variables
 load_dotenv()
@@ -22,7 +27,7 @@ load_dotenv()
 MODEL_DTYPE = torch.bfloat16
 ATTN_IMPLEMENTATION = "flash_attention_2"
 RESIDUAL_STREAM_TYPE = "output_layer"
-TOKENS_POOLING_METHODS_DEFAULT = ["last"]
+TOKENS_POOLING_METHODS_DEFAULT = ["last", "mean_context"]
 SIMILARITY_MEASURES_DEFAULT = [
     "neighborhood_overlap",
     "linear_cka",
@@ -38,11 +43,11 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Required arguments
-    parser.add_argument("--results-dir", type=str, required=True)
+    parser.add_argument("--results-dir", type=str, default=None)
     parser.add_argument(
         "--representations-dir",
         type=str,
-        required=True,
+        default=None,
         help="Base directory for storing representations (e.g., $HOME/scratch)",
     )
     parser.add_argument("--dataset-path-or-name", type=str, required=True)
@@ -54,7 +59,7 @@ def main():
     parser.add_argument(
         "--guide-text",
         type=str,
-        default="Answer the question using a single word or phrase.\n",
+        default="Answer the question using a single word or phrase.",
         help="Guide text for the QA task",
     )
     parser.add_argument("--downsample-size", type=int, default=100)
@@ -62,7 +67,7 @@ def main():
         "--pooling-methods",
         nargs="+",
         default=TOKENS_POOLING_METHODS_DEFAULT,
-        help="List of pooling methods to use (e.g., last mean_image)",
+        help="List of pooling methods to use (last or mean_context)",
     )
     parser.add_argument(
         "--similarity-measures",
@@ -77,29 +82,63 @@ def main():
     parser.add_argument(
         "--caption-source",
         type=str,
-        default=None,
+        default="synthetic",
         choices=["human", "synthetic"],
-        help="Caption source for datasets with both human and synthetic captions (COCOQA, VQAv2-ICQ).",
+        help=(
+            "Caption source: 'human' for datasets with human captions (COCOQA, VQAv2-ICQ), "
+            "'synthetic' for datasets with only synthetic captions (MME, MMBench, GQA, etc.)."
+        ),
+    )
+    parser.add_argument(
+        "--enable-semantic-filter",
+        action="store_true",
+        help=(
+            "Enable optional semantic filtering with Jina on CPU. "
+            "Keeps samples with similarity >= mean - std."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Force recomputation: skip all 'already exists' checks and overwrite "
+            "both cached representations and similarity results. Unlike --dry-run, "
+            "results ARE saved. Useful when you want to rerun with updated code."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Skip ALL caching: no load, no save, no skip existing. For debugging.",
     )
 
     args = parser.parse_args()
+
+    # Validate dirs: required unless --dry-run
+    if args.dry_run:
+        print("\n🧪 DRY-RUN MODE — no caching, no saving, fresh computation only")
+        if args.results_dir is None:
+            args.results_dir = "/tmp/debug_run"
+        if args.representations_dir is None:
+            args.representations_dir = "/tmp/debug_run"
+    else:
+        if args.results_dir is None or args.representations_dir is None:
+            parser.error(
+                "--results-dir and --representations-dir are required "
+                "(unless --dry-run is set)"
+            )
+
+    if args.force:
+        print("\n🔄 FORCE MODE — recomputing everything, existing files will be overwritten")
 
     # Create results directory
     results_dir = os.path.expanduser(args.results_dir)
     os.makedirs(results_dir, exist_ok=True)
 
-    # Define sub-directory for this specific analysis
-    # Dataset Setup - automatically detect prefix from dataset name
+    # Dataset slug: lowercase, dashes→underscores
     dataset_slug = args.dataset_path_or_name.split("/")[-1].replace("-", "_").lower()
-    dataset_prefix = dataset_slug
-    if args.caption_source:
-        dataset_prefix = f"{dataset_slug}_{args.caption_source}"
-
-    analysis_dir = os.path.join(
-        results_dir, "multimodality_comparison", f"{dataset_prefix}_img_vs_txt"
-    )
-    similarities_dir = os.path.join(analysis_dir, "similarities")
-    os.makedirs(similarities_dir, exist_ok=True)
+    # caption_source is always set (default="synthetic"), always part of dataset_prefix
+    dataset_prefix = f"{dataset_slug}_{args.caption_source}"
 
     # Set seed
     seed_all(args.seed)
@@ -144,6 +183,41 @@ def main():
         "caption_source": args.caption_source,
     }
 
+    # Optional one-time semantic filtering shared by both dataloaders.
+    # NOTE: semantic filter affects WHICH SAMPLES enter the model, so it must be
+    # reflected in both the representation paths and the results paths.
+    allowed_image_ids = None
+    sem_tag = ""
+    if args.enable_semantic_filter:
+        print("\n🧹 Computing semantic keep-set with Jina (CPU)...")
+        semantic_dataset = OpenVQADataset(
+            dataset_path_or_name=args.dataset_path_or_name,
+            cache_dir=datasets_cache_dir,
+            split="train",
+            downsample_size=args.downsample_size,
+            seed=args.seed,
+            images_qa=False,
+            texts_qa=False,
+            caption_source=args.caption_source,
+        )
+        scorer = JinaCaptionSemanticScorer(device="cpu")
+        allowed_image_ids, semantic_stats = compute_semantic_keep_image_ids(
+            dataset=semantic_dataset.dataset,
+            caption_source=args.caption_source,
+            scorer=scorer,
+            threshold_std_multiplier=1.0,
+        )
+        sem_tag = "sf-jina_cpu_m1sd"
+        print(
+            "  ✅ Semantic filter stats: "
+            f"kept={semantic_stats['num_kept']}/{semantic_stats['num_candidates']} | "
+            f"mean={semantic_stats['mean_score']:.4f} | "
+            f"std={semantic_stats['std_score']:.4f} | "
+            f"threshold={semantic_stats['threshold']:.4f}"
+        )
+
+        dl_args["allowed_image_ids"] = allowed_image_ids
+
     if "intern" in model.__class__.__name__.lower():
         dl_args["model"] = model
 
@@ -152,35 +226,61 @@ def main():
     dl_txt = get_dataloader(texts_qa=True, **dl_args)
 
     # Image Dataloader
-    print(f"  - Loading {dataset_prefix}_img...")
+    print(f"  - Loading {dataset_slug}_img...")
     dl_img = get_dataloader(images_qa=True, **dl_args)
 
     for pooling_method in args.pooling_methods:
+        # ── Results directory ──────────────────────────────────────────────────
+        # Structure: results/multimodality_comparison/{dataset}_{caption_source}/
+        #              {pooling_method}/[sf-{tag}/]similarities/
+        analysis_dir = os.path.join(
+            results_dir,
+            "multimodality_comparison",
+            dataset_prefix,        # e.g. cocoqa_restval_icqa_human
+            pooling_method,        # e.g. last | mean_context
+            sem_tag,               # "" (no subdir) or "sf-jina_cpu_m1sd"
+        )
+        # os.path.join ignores empty string components correctly
+        similarities_dir = os.path.join(analysis_dir, "similarities")
+        os.makedirs(similarities_dir, exist_ok=True)
+
+        pooling_method_txt = (
+            "mean_text_context" if pooling_method == "mean_context" else pooling_method
+        )
+        pooling_method_img = (
+            "mean_image" if pooling_method == "mean_context" else pooling_method
+        )
+
         print(f"\n{'-' * 80}")
         print(f"🔍 Analysis: {RESIDUAL_STREAM_TYPE} | {pooling_method}")
         print(f"{'-' * 80}")
 
         # Check for existing results first to avoid unnecessary loading
-        missing_measures = []
-        for measure_name in args.similarity_measures:
-            filename = f"{model_name}_{pooling_method}_{measure_name}.safetensors"
-            save_path = os.path.join(similarities_dir, filename)
-            if not os.path.exists(save_path):
-                missing_measures.append(measure_name)
-            else:
-                print(f"    ✅ Found existing: {filename}")
+        if args.dry_run or args.force:
+            missing_measures = list(args.similarity_measures)
+            if args.force:
+                print(f"    🔄 Force mode: recomputing all {len(missing_measures)} measures")
+        else:
+            missing_measures = []
+            for measure_name in args.similarity_measures:
+                filename = f"{model_name}_{measure_name}.safetensors"
+                save_path = os.path.join(similarities_dir, filename)
+                if not os.path.exists(save_path):
+                    missing_measures.append(measure_name)
+                else:
+                    print(f"    ✅ Found existing: {filename}")
 
-        if not missing_measures:
-            print(f"    ⏩ All measures computed for {pooling_method}. Skipping...")
-            continue
+            if not missing_measures:
+                print(f"    ⏩ All measures computed for {pooling_method}. Skipping...")
+                continue
 
-        print(f"    ⚠️  Missing measures: {missing_measures}")
+        print(f"    ⚠️  Missing/forced measures: {missing_measures}")
 
-        # helper for path construction
+        # helper for representation path construction
+        # Structure: repr_base/representations/{model}/{dataset_name}/output_layer/
+        #              {pooling_method}/[sf-{tag}/]representations.safetensors
         def get_repr_path(dataset_n):
-            # Use configurable representations directory
             repr_base_dir = os.path.expanduser(args.representations_dir)
-
             repr_dir = os.path.join(
                 repr_base_dir,
                 "representations",
@@ -188,23 +288,28 @@ def main():
                 dataset_n,
                 RESIDUAL_STREAM_TYPE,
                 pooling_method,
+                sem_tag,           # "" (no subdir) or "sf-jina_cpu_m1sd"
             )
             os.makedirs(repr_dir, exist_ok=True)
             return os.path.join(repr_dir, "representations.safetensors")
 
-        # 1.C
+        # ── Text Representations ───────────────────────────────────────────────
         print("  👉 Extracting Text Representations...")
         txt_metadata = {
             "model": model_name,
             "dataset": f"{dataset_prefix}_txt",
-            "pooling_method": pooling_method,
+            "pooling_method": pooling_method_txt,
+            "pooling_method_requested": pooling_method,
+            "caption_source": args.caption_source,
+            "semantic_filter": sem_tag,
             "type": RESIDUAL_STREAM_TYPE,
         }
+        # Text repr: uses dataset_prefix (includes caption_source)
         repr_path_txt = get_repr_path(f"{dataset_prefix}_txt")
 
-        # Try loading cached representation first
+        # Try loading cached representation first (unless force/dry-run)
         res_txt = None
-        if os.path.exists(repr_path_txt):
+        if not args.dry_run and not args.force and os.path.exists(repr_path_txt):
             print(f"  💾 Found cached text representation at: {repr_path_txt}")
             try:
                 loaded = load_file(repr_path_txt)
@@ -225,34 +330,36 @@ def main():
                 )
 
         if res_txt is None:
+            save_repr = args.save_representations and not args.dry_run
             res_txt = residual_stream_tracer(
                 model=model,
                 processed_dataloader=dl_txt,
                 residual_stream_type=RESIDUAL_STREAM_TYPE,
-                tokens_pooling_method=pooling_method,
+                tokens_pooling_method=pooling_method_txt,
                 return_deepcopy=True,
                 save_path=repr_path_txt,
-                save_representations=args.save_representations,
+                save_representations=save_repr,
                 save_metadata=txt_metadata,
                 processor=processor,
-                # debug=True,
             )
 
-        # 2. Extract Image Representations
+        # ── Image Representations ──────────────────────────────────────────────
         print("  👉 Extracting Image Representations...")
         img_metadata = {
             "model": model_name,
             "dataset": f"{dataset_slug}_img",
-            "pooling_method": pooling_method,
+            "pooling_method": pooling_method_img,
+            "pooling_method_requested": pooling_method,
+            "caption_source": "n/a",   # images are caption-source-agnostic
+            "semantic_filter": sem_tag,
             "type": RESIDUAL_STREAM_TYPE,
         }
-        # Image representations are the same regardless of caption source,
-        # so always use the base dataset_slug for deduplication.
+        # Image repr: uses raw dataset_slug (no caption_source — images are caption-agnostic)
         repr_path_img = get_repr_path(f"{dataset_slug}_img")
 
-        # Try loading cached representation first
+        # Try loading cached representation first (unless force/dry-run)
         res_img = None
-        if os.path.exists(repr_path_img):
+        if not args.dry_run and not args.force and os.path.exists(repr_path_img):
             print(f"  💾 Found cached image representation at: {repr_path_img}")
             try:
                 loaded = load_file(repr_path_img)
@@ -273,30 +380,31 @@ def main():
                 )
 
         if res_img is None:
+            save_repr = args.save_representations and not args.dry_run
             res_img = residual_stream_tracer(
                 model=model,
                 processed_dataloader=dl_img,
                 residual_stream_type=RESIDUAL_STREAM_TYPE,
-                tokens_pooling_method=pooling_method,
+                tokens_pooling_method=pooling_method_img,
                 return_deepcopy=True,
                 save_path=repr_path_img,
-                save_representations=args.save_representations,
+                save_representations=save_repr,
                 save_metadata=img_metadata,
                 processor=processor,
-                # debug=True,
             )
 
-        # sys.exit(0)  # Temporary exit to skip similarity computation during testing
-
-        # 3. Compute Similarities
+        # ── Compute Similarities ───────────────────────────────────────────────
         print("  👉 Computing Similarities...")
 
-        # Save each measure
         metadata = {
             "row_modality": "text",
             "col_modality": "image",
             "description": "Rows represent text layers, Columns represent image layers",
             "pooling_method": pooling_method,
+            "pooling_method_text": pooling_method_txt,
+            "pooling_method_image": pooling_method_img,
+            "caption_source": args.caption_source,
+            "semantic_filter": sem_tag,
         }
         print("    ℹ️  Matrix orientation: Rows=Text, Columns=Image")
 
@@ -310,16 +418,21 @@ def main():
                     maxk=30,  # Default
                 )
                 measure_val = sim_results[measure_name]
+                print(f"    ✅ Shape: {measure_val.shape}")
 
-                # Filename: {model_name}_{pooling_method}_{measure_name}.safetensors
-                save_path = os.path.join(
-                    similarities_dir,
-                    f"{model_name}_{pooling_method}_{measure_name}.safetensors",
-                )
-                save_file(
-                    {f"{measure_name}": measure_val}, save_path, metadata=metadata
-                )
-                print(f"    💾 Saved: {save_path}")
+                if not args.dry_run:
+                    # Filename: {model}_{metric}.safetensors
+                    # (pooling and semantic_filter captured by directory structure)
+                    save_path = os.path.join(
+                        similarities_dir,
+                        f"{model_name}_{measure_name}.safetensors",
+                    )
+                    save_file(
+                        {f"{measure_name}": measure_val},
+                        save_path,
+                        metadata=metadata,
+                    )
+                    print(f"    💾 Saved: {save_path}")
             except Exception as e:
                 print(f"    ❌ Error computing {measure_name}: {type(e).__name__}: {e}")
                 print(

@@ -10,12 +10,16 @@ Cells  – each heatmap owns its axis labels, ticks, and a compact colorbar
          (vmin/vmax from that cell's data).  A grey N/A placeholder replaces
          cells where a specific metric file is missing.
 
-Output – PNG (300 dpi) + PDF (vector, lossless zoom) saved to PLOTS_DIR.
+Output – PNG (300 dpi) + PDF (vector, lossless zoom) saved to:
+           PLOTS_DIR / POOLING_METHOD / [sf-{SEMANTIC_FILTER_TAG}/] {model}_similarity_grid.{ext}
 
 Quick-start
     python per_model_similarity_grid.py
 
-Customisation – edit the dicts / constants in SECTION 1.
+Customisation – edit the constants in SECTION 1 only.
+    • Switch pooling variant:  change POOLING_METHOD
+    • Add semantic filter run: set  SEMANTIC_FILTER_TAG = "jina_cpu_m1sd"
+    • Toggle datasets/models:  comment/uncomment rows in DATASETS / MODELS
 ────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -32,7 +36,7 @@ matplotlib.rcParams["font.family"] = "sans-serif"
 
 
 # ==============================================================================
-# SECTION 1  –  CONFIGURATION
+# SECTION 1  –  CONFIGURATION  (only section you need to edit)
 # ==============================================================================
 
 RESULTS_DIR = Path(
@@ -40,21 +44,25 @@ RESULTS_DIR = Path(
     "results/multimodality_comparison"
 )
 
-PLOTS_DIR = Path(
+PLOTS_DIR_BASE = Path(
     "/u/dssc/lpalaciosflores/multimodal_finetuned_representations/"
     "plots/similarity_grids"
 )
 
+# ── run variant ──────────────────────────────────────────────────────────────
+# Change POOLING_METHOD to switch between run variants.  That is all.
+POOLING_METHOD = "mean_context"   # "last" | "mean_context"
+SEMANTIC_FILTER_TAG = ""          # "" (no filter) | "jina_cpu_m1sd"
+
 # ── models ──────────────────────────────────────────────────────────────────
-# key   = exact prefix in the safetensors filename   (e.g. "InternVL2-8B")
+# key   = exact prefix used in the safetensors filename  (e.g. "InternVL2-8B")
 # value = display name used as the figure suptitle
-# Comment / uncomment to toggle models.
 MODELS = OrderedDict(
     [
-        ("InternVL2-8B",                      "InternVL2-8B"),
-        ("InternVL2-8B-Pretrain",             "InternVL2-8B (Pretrained)"),
-        # ("llava_7b", "LLaVA-7B (Finetuned)"),
-        # ("llava-v1.5-7b-pretrained-lbasile", "LLaVA-7B (Pretrained)"),
+        ("InternVL2-8B", "InternVL2-8B"),
+        ("InternVL2-8B-Pretrain", "InternVL2-8B (Pretrained)"),
+        ("llava_7b", "LLaVA-7B (Finetuned)"),
+        ("llava-v1.5-7b-pretrained-lbasile", "LLaVA-7B (Pretrained)"),
         # ("llava_13b",                         "LLaVA-13B (Finetuned)"),
         # ("llava-v1.5-13b-pretrained-lbasile", "LLaVA-13B (Pretrained)"),
         # ("llava_7b_6_17",                     "LLaVA-7B (6→17)"),
@@ -66,60 +74,67 @@ MODELS = OrderedDict(
     ]
 )
 
-# ── datasets ────────────────────────────────────────────────────────────────
-# key   = subdirectory name under results/multimodality_comparison/
+# ── datasets ─────────────────────────────────────────────────────────────────
+# key   = "{dataset}_{caption_source}" folder under results/multimodality_comparison/
+#         (no pooling suffix – that lives in POOLING_METHOD above)
 # value = short row label shown on the left of the grid
+#
+# Available dataset_caption_source combos:
+#   cocoqa_restval_icqa_human         – COCOQA, human captions
+#   cocoqa_restval_icqa_synthetic     – COCOQA, synthetic captions
+#   vqav2_coco_restval_icq_human      – VQAv2, human captions
+#   vqav2_coco_restval_icq_synthetic  – VQAv2, synthetic captions
+#   gqa_val_balanced_noyesno_captioned_synthetic
+#   mme_test_captioned_synthetic
+#   mmbench_en_dev_captioned_synthetic
 DATASETS = OrderedDict(
     [
-        ("cocoqa_restval_icqa_img_vs_txt", "COCOQA"),
-        ("vqav2_coco_restval_icq_img_vs_txt", "VQAv2"),
-        ("mme_test_captioned_img_vs_txt", "MME"),
-        ("mmbench_en_dev_captioned_img_vs_txt", "MMBench_EN"),
-        ("gqa_val_balanced_noyesno_captioned_img_vs_txt", "GQA"),
-        # Synthetic captions
-        ("cocoqa_restval_icqa_synthetic_img_vs_txt", "COCOQA (Synthetic)"),
-        ("vqav2_coco_restval_icq_synthetic_img_vs_txt", "VQAv2 (Synthetic)"),
+        ("cocoqa_restval_icqa_human",              "COCOQA (Human)"),
+        ("vqav2_coco_restval_icq_human",           "VQAv2 (Human)"),
+        ("mme_test_captioned_synthetic",           "MME"),
+        ("mmbench_en_dev_captioned_synthetic",     "MMBench"),
+        ("gqa_val_balanced_noyesno_captioned_synthetic", "GQA"),
+        # ("cocoqa_restval_icqa_synthetic",        "COCOQA (Synthetic)"),
+        # ("vqav2_coco_restval_icq_synthetic",     "VQAv2 (Synthetic)"),
     ]
 )
 
-# ── metrics ─────────────────────────────────────────────────────────────────
-# key   = metric name inside the safetensors dict  AND  the `_last_{key}`
-#         filename suffix
+# ── metrics ──────────────────────────────────────────────────────────────────
+# key   = metric name inside the safetensors dict AND the `_{key}` filename suffix
 # value = column header text  (\n renders as two lines)
 METRICS = OrderedDict(
     [
         ("neighborhood_overlap", "neighborhood_overlap"),
         ("linear_cka", "linear_cka"),
-        ("information_imbalance", "II Complement\n(Text->Image)"),
-        ("information_imbalance_reversed", "II Complement\n(Image->Text)"),
+        ("information_imbalance", "II Complement\n(Text→Image)"),
+        ("information_imbalance_reversed", "II Complement\n(Image→Text)"),
         ("information_imbalance_mean", "II Complement\n(Mean)"),
     ]
 )
 
-# ── layout knobs ────────────────────────────────────────────────────────────
-# All sizes in inches.  Figure dimensions are computed from these.
-CELL_W = 2.8  # nominal width of one heatmap (colorbar steals ~5 %)
-CELL_H = 2.5  # nominal height of one heatmap row
-MARGIN_LEFT = 1.8  # left margin  – row labels live here
-MARGIN_TOP = 1.0  # top margin   – column headers + suptitle
+# ── layout knobs ─────────────────────────────────────────────────────────────
+CELL_W = 2.8
+CELL_H = 2.5
+MARGIN_LEFT = 1.8
+MARGIN_TOP = 1.0
 MARGIN_RIGHT = 0.6
 MARGIN_BOTTOM = 0.7
-WSPACE = 0.35  # fraction of cell width used as horizontal gap
-HSPACE = 0.30  # fraction of cell height used as vertical gap
+WSPACE = 0.35
+HSPACE = 0.30
 
-# ── typography ──────────────────────────────────────────────────────────────
+# ── typography ───────────────────────────────────────────────────────────────
 FONT = dict(
     suptitle=20,
-    col_header=11,  # metric name  (column header, top row)
-    row_label=13,  # dataset label (left margin)
-    axis_label=8,  # "Image Layers" / "Text Layers"
+    col_header=11,
+    row_label=13,
+    axis_label=8,
     tick=7,
     cbar=7,
 )
 
-# ── rendering ───────────────────────────────────────────────────────────────
+# ── rendering ────────────────────────────────────────────────────────────────
 CMAP = "viridis"
-TICK_STEP = 5  # show every N-th layer index
+TICK_STEP = 5
 DPI_PNG = 300
 
 
@@ -127,15 +142,31 @@ DPI_PNG = 300
 # SECTION 2  –  DATA LOADING
 # ==============================================================================
 
+def _make_plots_dir() -> Path:
+    """Compute the output directory for plots given POOLING_METHOD / SEMANTIC_FILTER_TAG."""
+    d = PLOTS_DIR_BASE / POOLING_METHOD
+    if SEMANTIC_FILTER_TAG:
+        d = d / f"sf-{SEMANTIC_FILTER_TAG}"
+    return d
+
+
+def _make_similarities_dir(dataset_dir: str) -> Path:
+    """
+    Build the path to the similarities/ folder for a given dataset directory name.
+
+    Structure:
+      RESULTS_DIR / {dataset_dir} / {POOLING_METHOD} / [sf-{tag}/] similarities/
+    """
+    d = RESULTS_DIR / dataset_dir / POOLING_METHOD
+    if SEMANTIC_FILTER_TAG:
+        d = d / f"sf-{SEMANTIC_FILTER_TAG}"
+    return d / "similarities"
+
 
 def _load_matrix(model_id: str, metric: str, dataset_dir: str):
     """Load one matrix.  Returns None when file or key is missing."""
-    path = (
-        RESULTS_DIR
-        / dataset_dir
-        / "similarities"
-        / f"{model_id}_last_{metric}.safetensors"
-    )
+    # Filename: {model}_{metric}.safetensors  (pooling in directory, not filename)
+    path = _make_similarities_dir(dataset_dir) / f"{model_id}_{metric}.safetensors"
     if not path.exists():
         return None
     try:
@@ -169,7 +200,7 @@ def load_all_data() -> dict:
                 arr = _load_matrix(model_id, metric, dataset_dir)
                 if arr is not None:
                     ds[metric] = arr
-            if ds:  # at least one metric loaded
+            if ds:
                 model_data[dataset_dir] = ds
         if model_data:
             data[model_id] = model_data
@@ -264,10 +295,10 @@ def _row_specs(model_data: dict, avgs: dict):
     Returns list of (row_id, display_label, {metric: ndarray}).
     """
     rows = []
-    for dd in DATASETS:  # config order preserved
+    for dd in DATASETS:
         if dd in model_data:
             rows.append((dd, DATASETS[dd], model_data[dd]))
-    if avgs and len(model_data) > 1:  # average only when meaningful
+    if avgs and len(model_data) > 1:
         rows.append(("average", "Average", avgs))
     return rows
 
@@ -284,7 +315,6 @@ def build_figure(model_id: str, model_data: dict):
     if nR == 0:
         return None
 
-    # ── figure size (scales with actual grid dimensions) ────────────────────
     fig_w = MARGIN_LEFT + nC * CELL_W + (nC - 1) * CELL_W * WSPACE + MARGIN_RIGHT
     fig_h = MARGIN_TOP + nR * CELL_H + (nR - 1) * CELL_H * HSPACE + MARGIN_BOTTOM
 
@@ -298,7 +328,6 @@ def build_figure(model_id: str, model_data: dict):
         hspace=HSPACE,
     )
 
-    # ── populate every cell ─────────────────────────────────────────────────
     for r, (_rid, _lbl, row_data) in enumerate(rows):
         for c, mk in enumerate(mkeys):
             ax = axes[r, c]
@@ -308,15 +337,14 @@ def build_figure(model_id: str, model_data: dict):
             else:
                 _draw_missing(ax)
 
-            if r == 0:  # column header – top row only
+            if r == 0:
                 ax.set_title(METRICS[mk], fontsize=FONT["col_header"], pad=8)
 
-    # ── row labels (placed in the left margin via fig.text) ─────────────────
-    # One draw() to lock axes geometry; then read positions.
+    # Row labels in left margin
     fig.canvas.draw()
-    x_lbl = 0.5 * MARGIN_LEFT / fig_w  # centred in left margin
+    x_lbl = 0.5 * MARGIN_LEFT / fig_w
     for r, (_rid, lbl, _data) in enumerate(rows):
-        bb = axes[r, 0].get_position()  # figure-coordinate BBox
+        bb = axes[r, 0].get_position()
         fig.text(
             x_lbl,
             bb.y0 + bb.height / 2,
@@ -327,7 +355,6 @@ def build_figure(model_id: str, model_data: dict):
             fontweight="bold",
         )
 
-    # ── suptitle ────────────────────────────────────────────────────────────
     fig.suptitle(MODELS[model_id], fontsize=FONT["suptitle"], fontweight="bold", y=0.98)
     return fig
 
@@ -338,12 +365,14 @@ def build_figure(model_id: str, model_data: dict):
 
 
 def main():
+    plots_dir = _make_plots_dir()
+    sf_info = f" | sf={SEMANTIC_FILTER_TAG}" if SEMANTIC_FILTER_TAG else ""
     print("=" * 66)
-    print("  per_model_similarity_grid  –  loading")
+    print(f"  per_model_similarity_grid  –  pooling={POOLING_METHOD}{sf_info}")
     print("=" * 66)
     data = load_all_data()
 
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
     print()
     print("=" * 66)
@@ -360,7 +389,7 @@ def main():
             continue
 
         for ext in ("png", "pdf"):
-            out = PLOTS_DIR / f"{model_id}_similarity_grid.{ext}"
+            out = plots_dir / f"{model_id}_similarity_grid.{ext}"
             fig.savefig(
                 out,
                 dpi=DPI_PNG if ext == "png" else None,

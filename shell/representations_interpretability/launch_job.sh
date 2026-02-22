@@ -5,14 +5,14 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="dssc"
+ACCOUNT="lade"
 JOB_NAME="experiment"
-PARTITION="DGX"
-GPU_TYPE="A100"
+PARTITION="H100"
+GPU_TYPE="H100"
 NUM_GPUS=1              # Number of GPUs
 CPUS=16
 MEM="32GB"
-TIME="08:00:00"
+TIME="06:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -34,14 +34,20 @@ SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analys
 
 # Dataset parameters
 # For COCOQA, VQAv2, MME and GQA use:
-export GUIDE_TEXT="Answer the question using a single word or phrase.\n"
+export GUIDE_TEXT="Answer the question using a single word or phrase."
 # For MMBench use:
 # export GUIDE_TEXT="Answer with the option's letter from the given choices directly."
 export DOWNSAMPLE_SIZE="10000"
 
 # Representations storage configuration
 export REPRESENTATIONS_DIR="$HOME/scratch"
-export SAVE_REPRESENTATIONS="true"  # Set to "false" to disable saving
+export SAVE_REPRESENTATIONS="true"   # Set to "false" to disable saving
+
+# Caption source: "human" for COCOQA / VQAv2-ICQ, "synthetic" for everything else
+export CAPTION_SOURCE="synthetic"
+
+# Force recompute: set to "true" to overwrite existing representations and results
+export FORCE_RECOMPUTE="false"
 
 # =============================================================================
 # Job Execution Script
