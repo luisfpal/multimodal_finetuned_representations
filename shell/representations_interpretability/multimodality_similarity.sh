@@ -35,7 +35,7 @@ GUIDE_TEXT_MULTICHOICE="Answer with the option's letter from the given choices d
 # Configuration from environment (set by launch_job.sh)
 DOWNSAMPLE_SIZE="${DOWNSAMPLE_SIZE:-}"
 DATASET_SPLIT="${DATASET_SPLIT:-}"
-UNIQUE_IMAGES="${UNIQUE_IMAGES:-false}"
+REPEATED_IMAGES="${REPEATED_IMAGES:-false}"
 ENABLE_SEMANTIC_FILTER="${ENABLE_SEMANTIC_FILTER:-false}"
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 SAVE_REPRESENTATIONS="${SAVE_REPRESENTATIONS:-true}"
@@ -141,9 +141,9 @@ for DATASET_PATH_OR_NAME in "${DATASETS[@]}"; do
                 CMD_ARGS+=(--force)
             fi
 
-            # Apply --unique-images only to MC datasets
-            if [ "$UNIQUE_IMAGES" = "true" ] && [ "$IS_MC_DATASET" = "true" ]; then
-                CMD_ARGS+=(--unique-images)
+            # Apply --repeated-images only to MC datasets
+            if [ "$REPEATED_IMAGES" = "true" ] && [ "$IS_MC_DATASET" = "true" ]; then
+                CMD_ARGS+=(--repeated-images)
             fi
 
             # Apply --dataset-split only to OpenVQA datasets

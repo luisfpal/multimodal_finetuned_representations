@@ -274,11 +274,14 @@ def main():
         help="Skip ALL caching: no load, no save, no skip existing. For debugging.",
     )
     parser.add_argument(
-        "--unique-images",
+        "--repeated-images",
         action="store_true",
         help=(
-            "Deduplicate MC datasets (MME, MMBench, POPE, SEED) by imageHash. "
-            "Ignored for OpenVQA datasets. Results go under unique_images_mc/ subdir."
+            "Run MC datasets (MMBench, MME, POPE, SEED) WITHOUT deduplication, "
+            "keeping all samples including repeated images. Results land under "
+            "repeated_images/. Default (without this flag) deduplicates MC datasets "
+            "to unique images. Ignored for non-MC datasets (COCOQA, VQAv2, GQA) "
+            "which are naturally unique."
         ),
     )
     parser.add_argument(
@@ -327,7 +330,7 @@ def main():
             )
         dataset_slug = f"{dataset_slug}_{args.dataset_split}"
 
-    unique_images_tag = "unique_images_mc" if args.unique_images and is_mc else ""
+    sample_set_tag = "repeated_images" if (is_mc and args.repeated_images) else "unique_images"
     dataset_prefix = f"{dataset_slug}_{args.caption_source}"
 
     seed_all(args.seed)
@@ -361,12 +364,12 @@ def main():
         "caption_source": args.caption_source,
     }
 
-    allowed_indices, sem_tag = resolve_semantic_filter(
+    allowed_indices, _ = resolve_semantic_filter(
         args, results_dir, dataset_slug, datasets_cache_dir
     )
     if allowed_indices is not None:
         dl_args["allowed_indices"] = allowed_indices
-    if args.unique_images:
+    if is_mc and not args.repeated_images:
         dl_args["unique_images"] = True
     if args.dataset_split:
         dl_args["dataset_split"] = args.dataset_split
@@ -384,8 +387,7 @@ def main():
             "multimodality_comparison",
             dataset_prefix,
             pooling_method,
-            sem_tag,
-            unique_images_tag,
+            sample_set_tag,
         )
         similarities_dir = os.path.join(analysis_dir, "similarities")
         os.makedirs(similarities_dir, exist_ok=True)
@@ -413,7 +415,7 @@ def main():
             continue
         print(f"    ⚠️  Missing/forced measures: {missing_measures}")
 
-        # Closure: captures pooling_method, sem_tag, unique_images_tag from loop scope
+        # Closure: captures pooling_method, sample_set_tag from loop scope
         def get_repr_path(dataset_n: str) -> str:
             repr_dir = os.path.join(
                 os.path.expanduser(args.representations_dir),
@@ -422,8 +424,7 @@ def main():
                 dataset_n,
                 RESIDUAL_STREAM_TYPE,
                 pooling_method,
-                sem_tag,
-                unique_images_tag,
+                sample_set_tag,
             )
             os.makedirs(repr_dir, exist_ok=True)
             return os.path.join(repr_dir, "representations.safetensors")
@@ -459,7 +460,6 @@ def main():
             "pooling_method": pooling_method_txt,
             "pooling_method_requested": pooling_method,
             "caption_source": args.caption_source,
-            "semantic_filter": sem_tag,
             "type": RESIDUAL_STREAM_TYPE,
         }
         img_metadata = {
@@ -468,7 +468,6 @@ def main():
             "pooling_method": pooling_method_img,
             "pooling_method_requested": pooling_method,
             "caption_source": "n/a",
-            "semantic_filter": sem_tag,
             "type": RESIDUAL_STREAM_TYPE,
         }
 
@@ -494,7 +493,6 @@ def main():
             "pooling_method_text": pooling_method_txt,
             "pooling_method_image": pooling_method_img,
             "caption_source": args.caption_source,
-            "semantic_filter": sem_tag,
         }
         print("    ℹ️  Matrix orientation: Rows=Text, Columns=Image")
 

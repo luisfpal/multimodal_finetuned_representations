@@ -5,8 +5,8 @@ One figure per model per stage: a (datasets × metrics) grid of heatmaps.
 Stages  – four dataset groups, each producing a separate figure per model:
             1. cocoqa        — COCOQA splits (human + synthetic)
             2. vqav2         — VQAv2 splits  (human + synthetic)
-            3. single_base   — GQA, MMBench, MME, POPE, SEED  (base variant)
-            4. single_unique — MMBench, MME, POPE, SEED  (unique_images_mc)
+            3. single_base   — MMBench, MME, POPE, SEED  (repeated_images — raw, with duplicates)
+            4. single_unique — MMBench, MME, POPE, SEED  (unique_images — deduplicated)
 
 Rows    – datasets present for this model in this stage, in STAGES order.
           Optionally appends an "Average" row per stage (SHOW_AVERAGE).
@@ -34,8 +34,8 @@ Colormap normalization (COLORMAP_NORM):
                     in CROSS_MODEL_PAIRS; models not in any pair use per_metric
 
 Note on variants (POOLING_METHOD):
-    "last"         → base + unique_images_mc available for the 4 benchmarks
-    "mean_context" → unique_images_mc only for benchmarks (no base)
+    "last"         → repeated_images + unique_images available for the 4 benchmarks
+    "mean_context" → unique_images only for benchmarks (repeated_images not computed)
 ────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -131,69 +131,69 @@ MODELS = OrderedDict(
 #       silently skipped. Stage 3 (single_base) will produce N/A cells or be
 #       empty for those datasets.
 STAGES: list[tuple[str, str, list]] = [
-    # ── Stage 1: COCOQA ───────────────────────────────────────────────────────
+    # ── Stage 1: Open-Ended VQA (COCOQA + GQA) ────────────────────────────────
     (
-        "cocoqa",
-        "COCOQA",
+        "cocoqa_gqa",
+        "Open-Ended VQA (COCOQA + GQA)",
         [
-            ("cocoqa_restval_icqa_split01_human", "", "COCOQA Split01 (Human)"),
-            ("cocoqa_restval_icqa_split01_synthetic", "", "COCOQA Split01 (Synthetic)"),
-            ("cocoqa_restval_icqa_split02_human", "", "COCOQA Split02 (Human)"),
-            ("cocoqa_restval_icqa_split02_synthetic", "", "COCOQA Split02 (Synthetic)"),
+            ("cocoqa_restval_icqa_split01_human", "unique_images", "COCOQA Split01 (Human)"),
+            ("cocoqa_restval_icqa_split01_synthetic", "unique_images", "COCOQA Split01 (Synthetic)"),
+            ("cocoqa_restval_icqa_split02_human", "unique_images", "COCOQA Split02 (Human)"),
+            ("cocoqa_restval_icqa_split02_synthetic", "unique_images", "COCOQA Split02 (Synthetic)"),
+            ("gqa_val_balanced_noyesno_captioned_synthetic", "unique_images", "GQA"),
         ],
     ),
-    # ── Stage 2: VQAv2 ────────────────────────────────────────────────────────
+    # ── Stage 2: VQAv2 ───────────────────────────────────────────────────────
     (
         "vqav2",
         "VQAv2",
         [
-            ("vqav2_coco_restval_icq_split01_human", "", "VQAv2 Split01 (Human)"),
+            ("vqav2_coco_restval_icq_split01_human", "unique_images", "VQAv2 Split01 (Human)"),
             (
                 "vqav2_coco_restval_icq_split01_synthetic",
-                "",
+                "unique_images",
                 "VQAv2 Split01 (Synthetic)",
             ),
-            ("vqav2_coco_restval_icq_split02_human", "", "VQAv2 Split02 (Human)"),
+            ("vqav2_coco_restval_icq_split02_human", "unique_images", "VQAv2 Split02 (Human)"),
             (
                 "vqav2_coco_restval_icq_split02_synthetic",
-                "",
+                "unique_images",
                 "VQAv2 Split02 (Synthetic)",
             ),
-            ("vqav2_coco_restval_icq_split03_human", "", "VQAv2 Split03 (Human)"),
+            ("vqav2_coco_restval_icq_split03_human", "unique_images", "VQAv2 Split03 (Human)"),
             (
                 "vqav2_coco_restval_icq_split03_synthetic",
-                "",
+                "unique_images",
                 "VQAv2 Split03 (Synthetic)",
             ),
         ],
     ),
-    # ── Stage 3: Single benchmarks — base variant ─────────────────────────────
+    # ── Stage 3: Benchmarks (Repeated Images) ─────────────────────────────────────
     (
         "single_base",
-        "Single Benchmarks (Base)",
+        "Benchmarks (Repeated Images)",
         [
-            ("gqa_val_balanced_noyesno_captioned_synthetic", "", "GQA"),
-            ("mmbench_en_dev_captioned_synthetic", "", "MMBench"),
-            ("mme_test_captioned_synthetic", "", "MME"),
-            ("pope_test_captioned_synthetic", "", "POPE"),
-            ("seed_bench_images_captioned_synthetic", "", "SEED"),
+            ("mmbench_en_dev_captioned_synthetic", "repeated_images", "MMBench"),
+            ("mme_test_captioned_synthetic", "repeated_images", "MME"),
+            ("pope_test_captioned_synthetic", "repeated_images", "POPE"),
+            ("seed_bench_images_captioned_synthetic", "repeated_images", "SEED"),
         ],
     ),
-    # ── Stage 4: Single benchmarks — unique_images_mc variant ─────────────────
+    # ── Stage 4: Benchmarks (Unique Images) ────────────────────────────────────
     (
         "single_unique",
-        "Single Benchmarks (Unique Images)",
+        "Benchmarks (Unique Images)",
         [
             (
                 "mmbench_en_dev_captioned_synthetic",
-                "unique_images_mc",
+                "unique_images",
                 "MMBench (Unique)",
             ),
-            ("mme_test_captioned_synthetic", "unique_images_mc", "MME (Unique)"),
-            ("pope_test_captioned_synthetic", "unique_images_mc", "POPE (Unique)"),
+            ("mme_test_captioned_synthetic", "unique_images", "MME (Unique)"),
+            ("pope_test_captioned_synthetic", "unique_images", "POPE (Unique)"),
             (
                 "seed_bench_images_captioned_synthetic",
-                "unique_images_mc",
+                "unique_images",
                 "SEED (Unique)",
             ),
         ],

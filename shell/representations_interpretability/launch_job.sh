@@ -28,7 +28,7 @@ SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analys
 # Configuration (read by analysis scripts)
 export REPRESENTATIONS_DIR="$HOME/scratch"
 export SAVE_REPRESENTATIONS="true"
-export UNIQUE_IMAGES="false"
+export REPEATED_IMAGES="false"
 export ENABLE_SEMANTIC_FILTER="false"
 export DOWNSAMPLE_SIZE=""
 export DATASET_SPLIT="split01"
