@@ -39,7 +39,7 @@ GPU_TYPE="A100"
 NUM_GPUS=0          # Set to 1 if GPU needed, else 0
 CPUS=16
 MEM="64GB"
-TIME="12:00:00"
+TIME="03:00:00"
 NODELIST=""         # Optional: specific node (e.g., "node01")
 EXCLUDE=""          # Optional: exclude nodes (e.g., "node02")
 
@@ -49,7 +49,7 @@ LOG_DIR="$PROJECT_ROOT/logs"
 OUTPUT_DIR="$PROJECT_ROOT/results/captions"
 
 # --- Default Job Parameters ---
-DEFAULT_NUM_WORKERS=32
+DEFAULT_NUM_WORKERS=1
 DEFAULT_SEED=42
 DEFAULT_DATASET="gqa"
 
@@ -62,7 +62,7 @@ NUM_WORKERS=$DEFAULT_NUM_WORKERS
 SEED=$DEFAULT_SEED
 DATASET=$DEFAULT_DATASET
 PYTHON_ARGS=""
-IS_RETRY=falsecd 
+IS_RETRY=false
 SEED_SET=false
 
 # Argument Parsing
@@ -99,9 +99,9 @@ if [ "$IS_RETRY" = true ]; then
     PARTITION="EPYC"
     CPUS=16
     MEM="48GB"
-    TIME="02:00:00"
+    TIME="00:20:00"
     PYTHON_ARGS="--retry-failed"
-    
+
     # Default retry seed to 999 if not explicitly set to avoid deterministic repeat of failure
     if [ "$SEED_SET" = false ]; then
         SEED=999

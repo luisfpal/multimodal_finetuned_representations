@@ -5,21 +5,24 @@
     "python.envFile": "${workspaceFolder}/.env",
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
     "python.terminal.activateEnvironment": true,
-    "python.analysis.autoImportCompletions": true,
-    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/utils"
+    ],
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
     "python.testing.pytestArgs": [
         "tests"
     ],
     "terminal.integrated.env.linux": {
-        "PYTHONPATH": "${workspaceFolder}",
+        "PYTHONPATH": "/u/dssc/lpalaciosflores/multimodal_finetuned_representations",
         "VIRTUAL_ENV": "${workspaceFolder}/.venv"
     },
     // ========================================
     // Editor Productivity
     // ========================================
-    "editor.formatOnSave": true,
+    "editor.formatOnSave": false,
     "editor.rulers": [
         88
     ],
@@ -195,15 +198,6 @@
             "matchCommandLine": true
         },
         "/^which python$/": {
-            "approve": true,
-            "matchCommandLine": true
-        },
-        // === Workspace-Specific Scripts ===
-        "/^python3 /u/dssc/lpalaciosflores/multimodal_finetuned_representations/scripts/basic_benchmarking/create_vqav2_coco_icq\\.py$/": {
-            "approve": true,
-            "matchCommandLine": true
-        },
-        "/^/u/dssc/lpalaciosflores/multimodal_finetuned_representations/\\.venv/bin/python /u/dssc/lpalaciosflores/multimodal_finetuned_representations/scripts/basic_benchmarking/create_vqav2_coco_icq\\.py$/": {
             "approve": true,
             "matchCommandLine": true
         }

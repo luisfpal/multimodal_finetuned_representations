@@ -3,7 +3,7 @@ import copy
 import gc
 import os
 import time
-from typing import Callable, Dict, Optional, Union, Literal, List
+from typing import Dict, Optional, Union, Literal, List
 import torch
 from einops import einsum
 from tqdm import tqdm
@@ -12,17 +12,28 @@ from safetensors.torch import save_file, load_file
 from transformers.feature_extraction_utils import BatchFeature
 from torch.utils.data import DataLoader
 from utils import ModelType, ProcessorType, sample_image_and_text_positions
+from utils.context_pooling_utils import (
+    get_image_token_indices,
+    get_text_context_indices,
+    get_tokenizer_from_processor,
+    resolve_image_token_ids,
+)
 from utils.internvl_utils import (
     IMG_CONTEXT_TOKEN,
     generate_responses,
     get_combined_embeddings,
 )
 
-IMAGE_TOKEN_INDEX = 32000
-
 # Constants for valid parameter values
 VALID_RESIDUAL_STREAM_TYPES = ["output_layer", "post_mlp", "heads_projection"]
-VALID_TOKENS_POOLING_METHODS = ["mean", "last", "none", "sample", "mean_image"]
+VALID_TOKENS_POOLING_METHODS = [
+    "mean",
+    "last",
+    "none",
+    "sample",
+    "mean_image",
+    "mean_text_context",
+]
 
 
 class ResidualStreamTracer(abc.ABC):
@@ -39,6 +50,7 @@ class ResidualStreamTracer(abc.ABC):
         self,
         model: ModelType,
         num_samples: int,
+        processor: Optional[ProcessorType] = None,
         return_dtype: torch.dtype = torch.bfloat16,
         tokens_pooling_method: Optional[str] = "last",
         embeddings_sampling_args: Optional[dict] = None,
@@ -62,6 +74,9 @@ class ResidualStreamTracer(abc.ABC):
                 'skip_image_pos', 'skip_text_pos', 'generator'.
         """
         self.model = model
+        self.processor = processor
+        self.tokenizer = get_tokenizer_from_processor(processor)
+        self.image_token_ids = resolve_image_token_ids(model, processor)
         self.tokens_pooling_method = tokens_pooling_method
         self.embeddings_sampling_args = embeddings_sampling_args
         self.num_layers = self.model.language_model.config.num_hidden_layers
@@ -157,9 +172,13 @@ class ResidualStreamTracer(abc.ABC):
         self, hidden_states: torch.Tensor
     ) -> torch.Tensor:
         """Sample embeddings from specific image/text positions."""
+        if not hasattr(self, "current_batch_input_ids"):
+            raise ValueError("current_batch_input_ids is required for sample pooling")
+
+        sampling_args = self.embeddings_sampling_args or {}
         positions = sample_image_and_text_positions(
             input_ids=self.current_batch_input_ids,
-            **self.embeddings_sampling_args,
+            **sampling_args,
         )
 
         # Two positions per batch element (image and text)
@@ -168,6 +187,97 @@ class ResidualStreamTracer(abc.ABC):
         )
         # Take the first position (image) if both are sampled, otherwise use the single position
         return hidden_states[batch_indices, positions]
+
+    def _compute_context_pooling_indices(
+        self,
+        input_ids: torch.Tensor,
+        sequence_lengths: torch.Tensor,
+    ) -> list[torch.Tensor]:
+        """Compute per-sample indices for context-based pooling modes.
+
+        Supports ``mean_image`` (image token positions) and
+        ``mean_text_context`` (user-turn text span).
+
+        Note: ``mean_context`` is a *virtual* pooling method dispatched at
+        the experiment-script level (e.g. ``multimodality_similarity.py``)
+        by splitting it into ``mean_image`` for image batches and
+        ``mean_text_context`` for text batches.  It is intentionally NOT
+        handled here — passing it directly will raise a validation error.
+        """
+        if input_ids is None:
+            raise ValueError(
+                f"input_ids are required for pooling '{self.tokens_pooling_method}'"
+            )
+
+        pooling_indices: list[torch.Tensor] = []
+        batch_length = input_ids.shape[0]
+
+        for idx in range(batch_length):
+            seq_len = int(sequence_lengths[idx])
+            current_input_ids = input_ids[idx, -seq_len:]
+
+            if self.tokens_pooling_method == "mean_image":
+                pooling_indices.append(
+                    get_image_token_indices(
+                        current_input_ids,
+                        self.image_token_ids,
+                    )
+                )
+            elif self.tokens_pooling_method == "mean_text_context":
+                pooling_indices.append(
+                    get_text_context_indices(
+                        current_input_ids,
+                        tokenizer=self.tokenizer,
+                    )
+                )
+                # decoded_caption_text = self.tokenizer.decode(
+                #     current_input_ids[pooling_indices[-1]].tolist(),
+                #     skip_special_tokens=False,
+                # )
+                # print(
+                #     f"Decoded text context for sample {self.counter + idx}: {decoded_caption_text!r}"
+                # )
+            else:
+                raise ValueError(
+                    f"Unsupported pooling method for context indices: "
+                    f"'{self.tokens_pooling_method}'"
+                )
+
+        return pooling_indices
+
+    def _resolve_batch_pooling_indices(
+        self,
+        batch_inputs: BatchFeature,
+        batch_input_ids: Optional[torch.Tensor],
+        sequence_lengths: torch.Tensor,
+    ) -> Optional[Union[torch.Tensor, list[torch.Tensor]]]:
+        """Resolve pooling indices for a batch, shared by all trace_batch implementations.
+
+        Returns ``None`` when the current pooling method does not require
+        per-token indices (``mean``, ``last``, ``none``).
+        """
+        if self.tokens_pooling_method == "sample":
+            source_input_ids = batch_input_ids
+            if source_input_ids is None:
+                source_input_ids = getattr(batch_inputs, "input_ids", None)
+            if source_input_ids is None:
+                raise ValueError("input_ids are required for sample pooling")
+            sampling_args = self.embeddings_sampling_args or {}
+            return sample_image_and_text_positions(
+                input_ids=source_input_ids,
+                **sampling_args,
+            )
+
+        if self.tokens_pooling_method in ["mean_image", "mean_text_context"]:
+            source_input_ids = batch_input_ids
+            if source_input_ids is None:
+                source_input_ids = getattr(batch_inputs, "input_ids", None)
+            return self._compute_context_pooling_indices(
+                input_ids=source_input_ids,
+                sequence_lengths=sequence_lengths,
+            )
+
+        return None
 
     def _pool_tokens(
         self,
@@ -185,7 +295,7 @@ class ResidualStreamTracer(abc.ABC):
             Pooled tensor or original tensor if no pooling
         """
         if (
-            self.tokens_pooling_method in ["sample", "mean_image"]
+            self.tokens_pooling_method in ["sample", "mean_image", "mean_text_context"]
             and pooling_indices is None
         ):
             raise ValueError(
@@ -227,7 +337,18 @@ class ResidualStreamTracer(abc.ABC):
                 raise ValueError(
                     f"Unsupported tensor dimensions for sampling: {hidden_states.ndim}"
                 )
-        elif self.tokens_pooling_method == "mean_image":
+        elif self.tokens_pooling_method in [
+            "mean_image",
+            "mean_text_context",
+        ]:
+            # Guard: empty indices → fail loudly instead of producing NaN
+            if len(pooling_indices) == 0:
+                raise ValueError(
+                    f"Empty pooling indices for '{self.tokens_pooling_method}' — "
+                    "cannot compute mean over 0 tokens. Check that the input "
+                    "contains the expected token type (image tokens for mean_image, "
+                    "user text span for mean_text_context)."
+                )
             # case 1: (layers, seq_len(idx), hidden_size) or (num_heads, seq_len(idx), hidden_size)
             # The indices in pooling_indices select the dimension 1 (seq_len)
             if ndims == 3:
@@ -237,7 +358,7 @@ class ResidualStreamTracer(abc.ABC):
                 return hidden_states[pooling_indices, :].mean(dim=0)
             else:
                 raise ValueError(
-                    f"Unsupported tensor dimensions for mean_image: {hidden_states.ndim}"
+                    f"Unsupported tensor dimensions for context pooling: {hidden_states.ndim}"
                 )
 
         else:
@@ -246,7 +367,11 @@ class ResidualStreamTracer(abc.ABC):
             )
 
     @abc.abstractmethod
-    def trace_batch(self, batch_inputs: BatchFeature):
+    def trace_batch(
+        self,
+        batch_inputs: BatchFeature,
+        batch_input_ids: Optional[torch.Tensor] = None,
+    ):
         """
         Trace a tokenized/processed batch of inputs. To be implemented by subclasses.
         """
@@ -294,6 +419,7 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
         self,
         model: ModelType,
         num_samples: int,
+        processor: Optional[ProcessorType] = None,
         return_dtype: torch.dtype = torch.bfloat16,
         tokens_pooling_method: Optional[str] = None,
         embeddings_sampling_args: Optional[dict] = None,
@@ -303,11 +429,12 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
         """
         # Initialize parent class first
         super().__init__(
-            model,
-            num_samples,
-            return_dtype,
-            tokens_pooling_method,
-            embeddings_sampling_args,
+            model=model,
+            num_samples=num_samples,
+            processor=processor,
+            return_dtype=return_dtype,
+            tokens_pooling_method=tokens_pooling_method,
+            embeddings_sampling_args=embeddings_sampling_args,
         )
 
         # Hook-specific attributes
@@ -333,7 +460,11 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
         """Set up hooks for the model. To be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement _trace")
 
-    def trace_batch(self, batch_inputs: BatchFeature):
+    def trace_batch(
+        self,
+        batch_inputs: BatchFeature,
+        batch_input_ids: Optional[torch.Tensor] = None,
+    ):
         """
         Trace the batch inputs using hooks.
         """
@@ -348,22 +479,10 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
             if self.tokens_pooling_method == "none":
                 self._initialize_none_pooling_storage(batch_length)
 
-            # Store input_ids for embeddings sampling if needed
-            if self.tokens_pooling_method == "sample":
-                self.current_batch_pooling_indices = sample_image_and_text_positions(
-                    input_ids=batch_inputs.input_ids,
-                    **self.embeddings_sampling_args,
-                )
-            elif self.tokens_pooling_method == "mean_image":
-                # Compute image token positions for hooks
-                self.current_batch_pooling_indices = []
-                for i in range(batch_length):
-                    seq_len = self.sequence_lengths[i]
-                    current_input_ids = batch_inputs.input_ids[i, -seq_len:]
-                    indices = torch.nonzero(
-                        current_input_ids == IMAGE_TOKEN_INDEX, as_tuple=True
-                    )[0]
-                    self.current_batch_pooling_indices.append(indices)
+            # Resolve pooling indices for this batch
+            self.current_batch_pooling_indices = self._resolve_batch_pooling_indices(
+                batch_inputs, batch_input_ids, self.sequence_lengths
+            )
 
             # Increment counter for next batch
             self.counter += batch_length
@@ -385,8 +504,6 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
         if hasattr(self, "sequence_lengths"):
             del self.sequence_lengths
         self.current_batch_start_idx = 0
-        if hasattr(self, "current_batch_embeddings_positions"):
-            del self.current_batch_embeddings_positions
 
         super().clear()
 
@@ -411,16 +528,18 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
         self,
         model: ModelType,
         num_samples: int,
+        processor: Optional[ProcessorType] = None,
         return_dtype: torch.dtype = torch.bfloat16,
         tokens_pooling_method: Optional[str] = None,
         embeddings_sampling_args: Optional[dict] = None,
     ):
         super().__init__(
-            model,
-            num_samples,
-            return_dtype,
-            tokens_pooling_method,
-            embeddings_sampling_args,
+            model=model,
+            num_samples=num_samples,
+            processor=processor,
+            return_dtype=return_dtype,
+            tokens_pooling_method=tokens_pooling_method,
+            embeddings_sampling_args=embeddings_sampling_args,
         )
         print(
             f"\nThe estimated memory usage per token is {self.memory_usage_per_token:.2f} GB"
@@ -428,7 +547,13 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
 
     def _initialize_storage(self):
         """Initialize storage for output residual stream."""
-        if self.tokens_pooling_method in ["mean", "last", "sample", "mean_image"]:
+        if self.tokens_pooling_method in [
+            "mean",
+            "last",
+            "sample",
+            "mean_image",
+            "mean_text_context",
+        ]:
             self._residual_stream = torch.zeros(
                 self.num_layers,
                 self.num_samples,
@@ -442,7 +567,11 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
             }
             # each element is a tensor of shape (num_layers, seq_len(idx), hidden_size)
 
-    def trace_batch(self, batch_inputs: BatchFeature):
+    def trace_batch(
+        self,
+        batch_inputs: BatchFeature,
+        batch_input_ids: Optional[torch.Tensor] = None,
+    ):
         """
         Trace a tokenized/processed batch of inputs of samples along all the layers of the model.
         """
@@ -450,24 +579,10 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
         batch_length = sequence_lengths.shape[0]
         self.num_tokens += sequence_lengths.sum().item()
 
-        # Store input_ids for embeddings sampling if needed
-        pooling_indices = None
-        if self.tokens_pooling_method == "sample":
-            pooling_indices = sample_image_and_text_positions(
-                input_ids=batch_inputs.input_ids,
-                **self.embeddings_sampling_args,
-            )  # (B,)
-        elif self.tokens_pooling_method == "mean_image":
-            embeddings_positions = []
-            for i in range(batch_length):
-                seq_len = sequence_lengths[i]
-                current_input_ids = batch_inputs.input_ids[i, -seq_len:]
-                # Find indices where token is image token
-                indices = torch.nonzero(
-                    current_input_ids == IMAGE_TOKEN_INDEX, as_tuple=True
-                )[0]
-                embeddings_positions.append(indices)
-            pooling_indices = embeddings_positions
+        # Resolve pooling indices for this batch
+        pooling_indices = self._resolve_batch_pooling_indices(
+            batch_inputs, batch_input_ids, sequence_lengths
+        )
 
         # Run forward pass with gradient tracking disabled
         with torch.no_grad():
@@ -489,7 +604,7 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
             for idx in range(batch_length):
                 # Get the position of the embedding to sample
                 current_pooling_indices = None
-                if self.tokens_pooling_method in ["sample", "mean_image"]:
+                if pooling_indices is not None:
                     current_pooling_indices = pooling_indices[idx]
 
                 batch_residual_stream.append(
@@ -550,16 +665,18 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
         self,
         model: ModelType,
         num_samples: int,
+        processor: Optional[ProcessorType] = None,
         return_dtype: torch.dtype = torch.bfloat16,
         tokens_pooling_method: Optional[str] = None,
         embeddings_sampling_args: Optional[dict] = None,
     ):
         super().__init__(
-            model,
-            num_samples,
-            return_dtype,
-            tokens_pooling_method,
-            embeddings_sampling_args,
+            model=model,
+            num_samples=num_samples,
+            processor=processor,
+            return_dtype=return_dtype,
+            tokens_pooling_method=tokens_pooling_method,
+            embeddings_sampling_args=embeddings_sampling_args,
         )
         print(
             f"\nThe estimated memory usage per token is {self.memory_usage_per_token:.2f} GB"
@@ -567,7 +684,13 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
 
     def _initialize_storage(self):
         """Initialize storage for post-MLP residual stream."""
-        if self.tokens_pooling_method in ["mean", "last", "sample", "mean_image"]:
+        if self.tokens_pooling_method in [
+            "mean",
+            "last",
+            "sample",
+            "mean_image",
+            "mean_text_context",
+        ]:
             self._residual_stream = torch.zeros(
                 self.num_layers,
                 self.num_samples,
@@ -602,7 +725,7 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
             for idx in range(batch_length):
                 # Get the position of the embedding to sample
                 pooling_indices = None
-                if self.tokens_pooling_method in ["sample", "mean_image"]:
+                if self.current_batch_pooling_indices is not None:
                     pooling_indices = self.current_batch_pooling_indices[idx]
 
                 batch_residual_stream.append(
@@ -676,6 +799,7 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
         self,
         model: ModelType,
         num_samples: int,
+        processor: Optional[ProcessorType] = None,
         return_dtype: torch.dtype = torch.bfloat16,
         tokens_pooling_method: Optional[str] = None,
         embeddings_sampling_args: Optional[dict] = None,
@@ -689,11 +813,12 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
 
         # Initialize parent class
         super().__init__(
-            model,
-            num_samples,
-            return_dtype,
-            tokens_pooling_method,
-            embeddings_sampling_args,
+            model=model,
+            num_samples=num_samples,
+            processor=processor,
+            return_dtype=return_dtype,
+            tokens_pooling_method=tokens_pooling_method,
+            embeddings_sampling_args=embeddings_sampling_args,
         )
 
         # Override memory calculation for heads projection
@@ -718,7 +843,13 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
 
     def _initialize_storage(self):
         """Initialize storage for heads projection residual stream."""
-        if self.tokens_pooling_method in ["mean", "last", "sample"]:
+        if self.tokens_pooling_method in [
+            "mean",
+            "last",
+            "sample",
+            "mean_image",
+            "mean_text_context",
+        ]:
             self._residual_stream = torch.zeros(
                 self.num_layers,
                 self.num_samples,
@@ -817,7 +948,7 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
             for idx in range(batch_length):
                 # Get the position of the embedding to sample
                 pooling_indices = None
-                if self.tokens_pooling_method in ["sample", "mean_image"]:
+                if self.current_batch_pooling_indices is not None:
                     pooling_indices = self.current_batch_pooling_indices[idx]
 
                 # shape: (num_heads, max_seq_len, hidden_size_out)
@@ -889,7 +1020,14 @@ def residual_stream_tracer(
     processor: Optional[ProcessorType] = None,
     return_dtype: torch.dtype = torch.bfloat16,
     tokens_pooling_method: Optional[
-        Literal["mean", "last", "none", "sample", "mean_image"]
+        Literal[
+            "mean",
+            "last",
+            "none",
+            "sample",
+            "mean_image",
+            "mean_text_context",
+        ]
     ] = "last",
     residual_stream_type: Literal[
         "output_layer", "post_mlp", "heads_projection"
@@ -933,7 +1071,10 @@ def residual_stream_tracer(
         model (ModelType): huggingface multimodal decoder-based model
         processed_dataloader (DataLoader): processed dataloader to iterate over the dataset
         return_dtype (torch.dtype, optional): dtype of the residual stream. Defaults to torch.bfloat16.
-        tokens_pooling_method (Optional[Literal["mean", "last", "none", "sample", "mean_image"]], optional): method to pool the tokens. Defaults to "last".
+        tokens_pooling_method (Optional[Literal["mean", "last", "none", "sample", "mean_image", "mean_text_context"]], optional): method to pool the tokens. Defaults to "last".
+            Note: ``mean_context`` is a virtual pooling method dispatched at
+            the experiment-script level (splits into ``mean_image`` for images
+            and ``mean_text_context`` for text).  Pass the concrete method here.
         residual_stream_type (str, optional): type of the residual stream. Defaults to "output_layer".
         return_deepcopy (bool, optional): whether to return a deepcopy of the residual stream.
             Defaults to True, which deletes the tracer and intermediate variables.
@@ -1006,6 +1147,7 @@ def residual_stream_tracer(
     tracer_kwargs = {
         "model": model,
         "num_samples": dataset_size,
+        "processor": processor,
         "tokens_pooling_method": tokens_pooling_method,
         "return_dtype": return_dtype,
         "embeddings_sampling_args": embeddings_sampling_args,
@@ -1043,10 +1185,13 @@ def residual_stream_tracer(
 
     # Process batches
     for batch in processed_dataloader:
+        batch_input_ids = None
+
         # Prepare batch_inputs for tracing (batch stays untouched)
         if isinstance(batch, (list, tuple)):
             if "llava" in model.__class__.__name__.lower():
                 batch_inputs = batch[0]
+                batch_input_ids = batch_inputs["input_ids"]
 
             elif "intern" in model.__class__.__name__.lower():
                 if len(batch) > 1 and isinstance(batch[1], torch.Tensor):
@@ -1055,6 +1200,7 @@ def residual_stream_tracer(
                     tokenized = batch[0]
                     input_ids = tokenized["input_ids"]
                     attention_mask = tokenized["attention_mask"]
+                    batch_input_ids = input_ids
                     combined_embeds = get_combined_embeddings(
                         model,
                         input_ids=input_ids,
@@ -1070,10 +1216,15 @@ def residual_stream_tracer(
                 else:
                     # Text-only mode: use input_ids directly
                     batch_inputs = batch[0]
+                    batch_input_ids = batch_inputs["input_ids"]
             else:
                 batch_inputs = batch[0]
+                if "input_ids" in batch_inputs:
+                    batch_input_ids = batch_inputs["input_ids"]
         else:
             batch_inputs = batch
+            if "input_ids" in batch_inputs:
+                batch_input_ids = batch_inputs["input_ids"]
 
         batch_inputs = batch_inputs.to(model.device)
 
@@ -1119,7 +1270,7 @@ def residual_stream_tracer(
         # ------------------------------------------------------------------
 
         current_batch_size = batch_inputs.attention_mask.shape[0]
-        tracer.trace_batch(batch_inputs)
+        tracer.trace_batch(batch_inputs, batch_input_ids=batch_input_ids)
         del batch, batch_inputs
 
         # Update progress tracking

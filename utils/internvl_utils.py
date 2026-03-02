@@ -139,7 +139,7 @@ def apply_chat_template(
 
     for idx, txt in enumerate(text):
         if guide_text and guide_text != "":
-            txt = txt + "\n " + guide_text + "\n"
+            txt += f"\n{guide_text}\n"
 
         # Add <image> placeholder only if we have images
         has_image = num_patches_list is not None and idx < len(num_patches_list)

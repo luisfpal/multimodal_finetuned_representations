@@ -44,6 +44,7 @@ from .multimodal_extraction_setup import setup_multimodal_model
 from .operations_utils import seed_all
 from .plot_utils import plot_similarity_measure_matrix
 from .sample_img_txt_embedding_positions import sample_image_and_text_positions
+from .token_analysis import find_caption_token_span
 
 __all__ = [
     "LLAVA_CHAT_TEMPLATE",
@@ -82,4 +83,6 @@ __all__ = [
     "plot_similarity_measure_matrix",
     "infer_lmms_eval_backend",
     "ensure_llm_judge_env",
+    # token analysis
+    "find_caption_token_span",
 ]

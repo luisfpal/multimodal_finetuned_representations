@@ -30,7 +30,7 @@ DEFAULT_NUM_WORKERS = 16
 DEFAULT_CACHE_DIR = os.path.expanduser("~/scratch/cache/huggingface/datasets")
 
 CAPTIONING_PROMPT = (
-    "URGENT: Generate a precise 3–5 sentence caption for this image.\n"
+    "URGENT: Generate a precise 5–7 sentence caption for this image.\n"
     "Rules:\n"
     "- Start immediately with the visual description\n"
     "- Describe ONLY what is visibly present\n"
@@ -131,17 +131,21 @@ def load_vqav2_coco_restval_icq_images(
 ) -> Tuple[Dict[str, Image.Image], str]:
     """
     Loader for VQAv2-COCO-restval-ICQ dataset.
-    
+
     Dataset has 'image_id' as identifier.
     Only 'train' split available.
     """
-    dataset = load_dataset("l11p/VQAv2-COCO-restval-ICQ", split="train", cache_dir=cache_dir)
-    
+    dataset = load_dataset(
+        "l11p/VQAv2-COCO-restval-ICQ", split="train", cache_dir=cache_dir
+    )
+
     # Use image_id as key.
     images = {str(sample["image_id"]): sample["image"] for sample in dataset}
     dataset_name = "l11p_VQAv2-COCO-restval-ICQ"
-    
-    console.print(f"[green]Loaded {len(images)} unique images from VQAv2-COCO-restval-ICQ[/green]")
+
+    console.print(
+        f"[green]Loaded {len(images)} unique images from VQAv2-COCO-restval-ICQ[/green]"
+    )
     return images, dataset_name
 
 
@@ -150,17 +154,63 @@ def load_cocoqa_restval_icqa_images(
 ) -> Tuple[Dict[str, Image.Image], str]:
     """
     Loader for COCOQA-restval-ICQA dataset.
-    
+
     Dataset has 'image_id' as identifier.
     Only 'train' split available.
     """
-    dataset = load_dataset("l11p/COCOQA-restval-ICQA", split="train", cache_dir=cache_dir)
-    
+    dataset = load_dataset(
+        "l11p/COCOQA-restval-ICQA", split="train", cache_dir=cache_dir
+    )
+
     # Use image_id as key.
     images = {str(sample["image_id"]): sample["image"] for sample in dataset}
     dataset_name = "l11p_COCOQA-restval-ICQA"
-    
-    console.print(f"[green]Loaded {len(images)} unique images from COCOQA-restval-ICQA[/green]")
+
+    console.print(
+        f"[green]Loaded {len(images)} unique images from COCOQA-restval-ICQA[/green]"
+    )
+    return images, dataset_name
+
+
+def load_seed_images_captioned(
+    cache_dir: str = DEFAULT_CACHE_DIR,
+) -> Tuple[Dict[str, Image.Image], str]:
+    """
+    Loader for SEED-Bench-images-captioned dataset.
+
+    Uses imageHash as unique image identifier.
+    """
+    dataset = load_dataset(
+        "l11p/SEED-Bench-images-captioned", split="train", cache_dir=cache_dir
+    )
+
+    images = {str(sample["imageHash"]): sample["image"] for sample in dataset}
+    dataset_name = "l11p_SEED-Bench-images-captioned"
+
+    console.print(
+        f"[green]Loaded {len(images)} unique images from SEED-Bench-images-captioned[/green]"
+    )
+    return images, dataset_name
+
+
+def load_pope_test_captioned_images(
+    cache_dir: str = DEFAULT_CACHE_DIR,
+) -> Tuple[Dict[str, Image.Image], str]:
+    """
+    Loader for POPE-test-captioned dataset.
+
+    Uses imageHash as unique image identifier.
+    """
+    dataset = load_dataset(
+        "l11p/POPE-test-captioned", split="train", cache_dir=cache_dir
+    )
+
+    images = {str(sample["imageHash"]): sample["image"] for sample in dataset}
+    dataset_name = "l11p_POPE-test-captioned"
+
+    console.print(
+        f"[green]Loaded {len(images)} unique images from POPE-test-captioned[/green]"
+    )
     return images, dataset_name
 
 
@@ -425,11 +475,16 @@ DATASET_LOADERS = {
     "mme": load_mme_images,
     "gqa": load_gqa_images,
     "mmbench_en_dev": lambda cache_dir: load_mmbench_en_images(cache_dir, split="dev"),
-    "mmbench_en_test": lambda cache_dir: load_mmbench_en_images(cache_dir, split="test"),
+    "mmbench_en_test": lambda cache_dir: load_mmbench_en_images(
+        cache_dir, split="test"
+    ),
     "vqav2_coco": load_vqav2_coco_restval_icq_images,
     "cocoqa": load_cocoqa_restval_icqa_images,
+    "seed": load_seed_images_captioned,
+    "pope": load_pope_test_captioned_images,
     "custom": load_custom_images,
 }
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -440,11 +495,11 @@ def parse_args():
     parser.add_argument("--cache-dir", type=str, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument(
-        "--dataset", 
-        type=str, 
-        default="gqa", 
+        "--dataset",
+        type=str,
+        default="gqa",
         choices=list(DATASET_LOADERS.keys()),
-        help="Dataset to caption (default: gqa)"
+        help="Dataset to caption (default: gqa)",
     )
     return parser.parse_args()
 

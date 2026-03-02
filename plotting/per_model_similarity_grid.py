@@ -1,25 +1,41 @@
 """per_model_similarity_grid.py
 ────────────────────────────────────────────────────────────────────────────────
-One figure per model: a (datasets × metrics) grid of independent heatmaps.
+One figure per model per stage: a (datasets × metrics) grid of heatmaps.
 
-Rows   – every dataset that has data for this model, in DATASETS order.
-         An "Average" row is appended when ≥ 2 datasets are present.
-         Dataset rows with zero data are silently skipped.
-Cols   – every metric in METRICS, in the order defined there.
-Cells  – each heatmap owns its axis labels, ticks, and a compact colorbar
-         (vmin/vmax from that cell's data).  A grey N/A placeholder replaces
-         cells where a specific metric file is missing.
+Stages  – four dataset groups, each producing a separate figure per model:
+            1. cocoqa        — COCOQA splits (human + synthetic)
+            2. vqav2         — VQAv2 splits  (human + synthetic)
+            3. single_base   — GQA, MMBench, MME, POPE, SEED  (base variant)
+            4. single_unique — MMBench, MME, POPE, SEED  (unique_images_mc)
 
-Output – PNG (300 dpi) + PDF (vector, lossless zoom) saved to:
-           PLOTS_DIR / POOLING_METHOD / [sf-{SEMANTIC_FILTER_TAG}/] {model}_similarity_grid.{ext}
+Rows    – datasets present for this model in this stage, in STAGES order.
+          Optionally appends an "Average" row per stage (SHOW_AVERAGE).
+          Rows with zero data are silently skipped.
+Cols    – every metric in METRICS, in order.
+Cells   – vmin/vmax determined by COLORMAP_NORM (see below).
+          Grey "N/A" placeholder when a file is missing.
 
-Quick-start
-    python per_model_similarity_grid.py
+Output  – PNG (300 dpi) saved to:
+            PLOTS_DIR / POOLING_METHOD / [EXPERIMENT_LABEL/] {model}_{stage}.png
 
-Customisation – edit the constants in SECTION 1 only.
-    • Switch pooling variant:  change POOLING_METHOD
-    • Add semantic filter run: set  SEMANTIC_FILTER_TAG = "jina_cpu_m1sd"
-    • Toggle datasets/models:  comment/uncomment rows in DATASETS / MODELS
+Workflow – edit SECTION 1 only:
+    1.  Set POOLING_METHOD   ("last" | "mean_context")
+    2.  Set COLORMAP_NORM    ("none" | "per_metric" | "cross_model")
+    3.  If cross_model: edit CROSS_MODEL_PAIRS (list of (model_id_A, model_id_B))
+    4.  Toggle SHOW_AVERAGE
+    5.  Comment/uncomment stages or individual datasets within stages
+    6.  Run — missing data handled gracefully
+
+Colormap normalization (COLORMAP_NORM):
+    "none"        → each cell: independent per-cell [min, max]
+    "per_metric"  → each metric column: global [min, max] across ALL enabled
+                    datasets for that model; extremes are printed with source
+    "cross_model" → like "per_metric" but bounds are shared across each pair
+                    in CROSS_MODEL_PAIRS; models not in any pair use per_metric
+
+Note on variants (POOLING_METHOD):
+    "last"         → base + unique_images_mc available for the 4 benchmarks
+    "mean_context" → unique_images_mc only for benchmarks (no base)
 ────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -49,59 +65,142 @@ PLOTS_DIR_BASE = Path(
     "plots/similarity_grids"
 )
 
-# ── run variant ──────────────────────────────────────────────────────────────
-# Change POOLING_METHOD to switch between run variants.  That is all.
-POOLING_METHOD = "mean_context"   # "last" | "mean_context"
-SEMANTIC_FILTER_TAG = ""          # "" (no filter) | "jina_cpu_m1sd"
+# ── run variant ───────────────────────────────────────────────────────────────
+POOLING_METHOD = "mean_context"  # "last" | "mean_context"
 
-# ── models ──────────────────────────────────────────────────────────────────
-# key   = exact prefix used in the safetensors filename  (e.g. "InternVL2-8B")
-# value = display name used as the figure suptitle
+# Optional sub-directory label (e.g. "baseline", "unique_vs_default").
+# Empty string → plots land directly under PLOTS_DIR_BASE / POOLING_METHOD.
+EXPERIMENT_LABEL = ""
+
+# ── averaging ─────────────────────────────────────────────────────────────────
+# Append an "Average" row at the bottom of each stage (mean within that stage).
+SHOW_AVERAGE = False
+
+# ── colormap normalization ────────────────────────────────────────────────────
+#   "none"        → per-cell independent [min, max]  (default)
+#   "per_metric"  → per-metric global [min, max] across all enabled datasets
+#                   for that model; prints where the extremes were found
+#   "cross_model" → like "per_metric" but each pair in CROSS_MODEL_PAIRS shares
+#                   the same bounds; models not in any pair use "per_metric"
+COLORMAP_NORM = "cross_model"  # "none" | "per_metric" | "cross_model"
+
+# Used only when COLORMAP_NORM = "cross_model".
+# Each tuple = two model IDs whose colormap bounds are unified per metric.
+# Models not appearing in any pair fall back to per_metric normalization.
+# Comment out pairs to deactivate them.
+CROSS_MODEL_PAIRS: list[tuple[str, str]] = [
+    ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
+    ("InternVL2-8B", "InternVL2-8B-Pretrain"),
+]
+
+# ── models ────────────────────────────────────────────────────────────────────
+# key   = prefix in the safetensors filename
+# value = display name in the figure suptitle
 MODELS = OrderedDict(
     [
         ("InternVL2-8B", "InternVL2-8B"),
         ("InternVL2-8B-Pretrain", "InternVL2-8B (Pretrained)"),
         ("llava_7b", "LLaVA-7B (Finetuned)"),
         ("llava-v1.5-7b-pretrained-lbasile", "LLaVA-7B (Pretrained)"),
-        # ("llava_13b",                         "LLaVA-13B (Finetuned)"),
+        # ("llava_13b",                     "LLaVA-13B (Finetuned)"),
         # ("llava-v1.5-13b-pretrained-lbasile", "LLaVA-13B (Pretrained)"),
-        # ("llava_7b_6_17",                     "LLaVA-7B (6→17)"),
-        # ("llava_7b_6_17_complementary",       "LLaVA-7B (6→17 Complementary)"),
-        # ("InternVL3_5-8B-Pretrained", "InternVL3.5-8B (Pretrained)"),
-        # ("InternVL3_5-8B-Instruct", "InternVL3.5-8B (Instruct)"),
-        # ("InternVL3_5-8B-MPO", "InternVL3.5-8B (MPO)"),
-        # ("InternVL3_5-8B", "InternVL3.5-8B"),
+        # ("llava_7b_6_17",                 "LLaVA-7B (6→17)"),
+        # ("llava_7b_6_17_complementary",   "LLaVA-7B (6→17 Complementary)"),
+        # ("InternVL3_5-8B-Pretrained",     "InternVL3.5-8B (Pretrained)"),
+        # ("InternVL3_5-8B-Instruct",       "InternVL3.5-8B (Instruct)"),
+        # ("InternVL3_5-8B-MPO",            "InternVL3.5-8B (MPO)"),
+        # ("InternVL3_5-8B",                "InternVL3.5-8B"),
     ]
 )
 
-# ── datasets ─────────────────────────────────────────────────────────────────
-# key   = "{dataset}_{caption_source}" folder under results/multimodality_comparison/
-#         (no pooling suffix – that lives in POOLING_METHOD above)
-# value = short row label shown on the left of the grid
+# ── stages ────────────────────────────────────────────────────────────────────
+# Each stage → one figure per model.
 #
-# Available dataset_caption_source combos:
-#   cocoqa_restval_icqa_human         – COCOQA, human captions
-#   cocoqa_restval_icqa_synthetic     – COCOQA, synthetic captions
-#   vqav2_coco_restval_icq_human      – VQAv2, human captions
-#   vqav2_coco_restval_icq_synthetic  – VQAv2, synthetic captions
-#   gqa_val_balanced_noyesno_captioned_synthetic
-#   mme_test_captioned_synthetic
-#   mmbench_en_dev_captioned_synthetic
-DATASETS = OrderedDict(
-    [
-        ("cocoqa_restval_icqa_human",              "COCOQA (Human)"),
-        ("vqav2_coco_restval_icq_human",           "VQAv2 (Human)"),
-        ("mme_test_captioned_synthetic",           "MME"),
-        ("mmbench_en_dev_captioned_synthetic",     "MMBench"),
-        ("gqa_val_balanced_noyesno_captioned_synthetic", "GQA"),
-        # ("cocoqa_restval_icqa_synthetic",        "COCOQA (Synthetic)"),
-        # ("vqav2_coco_restval_icq_synthetic",     "VQAv2 (Synthetic)"),
-    ]
-)
+# Format: (stage_key, stage_display_label, [dataset_tuples])
+#   stage_key           → used in output filename  e.g. "cocoqa"
+#   stage_display_label → appended to model name in suptitle
+#   dataset_tuples      → list of (dataset_dir, variant_tag, row_label)
+#
+# To skip a whole stage: comment out its outer tuple.
+# To skip individual datasets within a stage: comment out their inner tuples.
+#
+# variant_tag: "" = base variant, "unique_images_mc" = unique-images variant
+#
+# Note: For POOLING_METHOD="mean_context", the base variant of the 4 benchmark
+#       datasets (mmbench, mme, pope, seed) does not exist — those rows are
+#       silently skipped. Stage 3 (single_base) will produce N/A cells or be
+#       empty for those datasets.
+STAGES: list[tuple[str, str, list]] = [
+    # ── Stage 1: COCOQA ───────────────────────────────────────────────────────
+    (
+        "cocoqa",
+        "COCOQA",
+        [
+            ("cocoqa_restval_icqa_split01_human", "", "COCOQA Split01 (Human)"),
+            ("cocoqa_restval_icqa_split01_synthetic", "", "COCOQA Split01 (Synthetic)"),
+            ("cocoqa_restval_icqa_split02_human", "", "COCOQA Split02 (Human)"),
+            ("cocoqa_restval_icqa_split02_synthetic", "", "COCOQA Split02 (Synthetic)"),
+        ],
+    ),
+    # ── Stage 2: VQAv2 ────────────────────────────────────────────────────────
+    (
+        "vqav2",
+        "VQAv2",
+        [
+            ("vqav2_coco_restval_icq_split01_human", "", "VQAv2 Split01 (Human)"),
+            (
+                "vqav2_coco_restval_icq_split01_synthetic",
+                "",
+                "VQAv2 Split01 (Synthetic)",
+            ),
+            ("vqav2_coco_restval_icq_split02_human", "", "VQAv2 Split02 (Human)"),
+            (
+                "vqav2_coco_restval_icq_split02_synthetic",
+                "",
+                "VQAv2 Split02 (Synthetic)",
+            ),
+            ("vqav2_coco_restval_icq_split03_human", "", "VQAv2 Split03 (Human)"),
+            (
+                "vqav2_coco_restval_icq_split03_synthetic",
+                "",
+                "VQAv2 Split03 (Synthetic)",
+            ),
+        ],
+    ),
+    # ── Stage 3: Single benchmarks — base variant ─────────────────────────────
+    (
+        "single_base",
+        "Single Benchmarks (Base)",
+        [
+            ("gqa_val_balanced_noyesno_captioned_synthetic", "", "GQA"),
+            ("mmbench_en_dev_captioned_synthetic", "", "MMBench"),
+            ("mme_test_captioned_synthetic", "", "MME"),
+            ("pope_test_captioned_synthetic", "", "POPE"),
+            ("seed_bench_images_captioned_synthetic", "", "SEED"),
+        ],
+    ),
+    # ── Stage 4: Single benchmarks — unique_images_mc variant ─────────────────
+    (
+        "single_unique",
+        "Single Benchmarks (Unique Images)",
+        [
+            (
+                "mmbench_en_dev_captioned_synthetic",
+                "unique_images_mc",
+                "MMBench (Unique)",
+            ),
+            ("mme_test_captioned_synthetic", "unique_images_mc", "MME (Unique)"),
+            ("pope_test_captioned_synthetic", "unique_images_mc", "POPE (Unique)"),
+            (
+                "seed_bench_images_captioned_synthetic",
+                "unique_images_mc",
+                "SEED (Unique)",
+            ),
+        ],
+    ),
+]
 
-# ── metrics ──────────────────────────────────────────────────────────────────
-# key   = metric name inside the safetensors dict AND the `_{key}` filename suffix
-# value = column header text  (\n renders as two lines)
+# ── metrics ───────────────────────────────────────────────────────────────────
 METRICS = OrderedDict(
     [
         ("neighborhood_overlap", "neighborhood_overlap"),
@@ -112,7 +211,7 @@ METRICS = OrderedDict(
     ]
 )
 
-# ── layout knobs ─────────────────────────────────────────────────────────────
+# ── layout knobs ──────────────────────────────────────────────────────────────
 CELL_W = 2.8
 CELL_H = 2.5
 MARGIN_LEFT = 1.8
@@ -122,7 +221,7 @@ MARGIN_BOTTOM = 0.7
 WSPACE = 0.35
 HSPACE = 0.30
 
-# ── typography ───────────────────────────────────────────────────────────────
+# ── typography ────────────────────────────────────────────────────────────────
 FONT = dict(
     suptitle=20,
     col_header=11,
@@ -132,41 +231,50 @@ FONT = dict(
     cbar=7,
 )
 
-# ── rendering ────────────────────────────────────────────────────────────────
+# ── rendering ─────────────────────────────────────────────────────────────────
 CMAP = "viridis"
 TICK_STEP = 5
 DPI_PNG = 300
 
 
 # ==============================================================================
-# SECTION 2  –  DATA LOADING
+# SECTION 2  –  DATA LOADING & BOUNDS
 # ==============================================================================
 
+# Flat deduplicated list of all (dataset_dir, variant_tag, label) across STAGES.
+# Derived from STAGES — do not edit directly.
+_ALL_DATASETS: list[tuple[str, str, str]] = []
+_seen: set = set()
+for _sk, _sl, _ds in STAGES:
+    for _entry in _ds:
+        _key = (_entry[0], _entry[1])
+        if _key not in _seen:
+            _seen.add(_key)
+            _ALL_DATASETS.append(_entry)
+del _sk, _sl, _ds, _entry, _key, _seen
+
+
 def _make_plots_dir() -> Path:
-    """Compute the output directory for plots given POOLING_METHOD / SEMANTIC_FILTER_TAG."""
     d = PLOTS_DIR_BASE / POOLING_METHOD
-    if SEMANTIC_FILTER_TAG:
-        d = d / f"sf-{SEMANTIC_FILTER_TAG}"
+    if EXPERIMENT_LABEL:
+        d = d / EXPERIMENT_LABEL
     return d
 
 
-def _make_similarities_dir(dataset_dir: str) -> Path:
-    """
-    Build the path to the similarities/ folder for a given dataset directory name.
-
-    Structure:
-      RESULTS_DIR / {dataset_dir} / {POOLING_METHOD} / [sf-{tag}/] similarities/
-    """
+def _make_similarities_dir(dataset_dir: str, variant_tag: str = "") -> Path:
+    """RESULTS_DIR / dataset_dir / POOLING_METHOD / [variant_tag/] similarities/"""
     d = RESULTS_DIR / dataset_dir / POOLING_METHOD
-    if SEMANTIC_FILTER_TAG:
-        d = d / f"sf-{SEMANTIC_FILTER_TAG}"
+    if variant_tag:
+        d = d / variant_tag
     return d / "similarities"
 
 
-def _load_matrix(model_id: str, metric: str, dataset_dir: str):
-    """Load one matrix.  Returns None when file or key is missing."""
-    # Filename: {model}_{metric}.safetensors  (pooling in directory, not filename)
-    path = _make_similarities_dir(dataset_dir) / f"{model_id}_{metric}.safetensors"
+def _load_matrix(model_id: str, metric: str, dataset_dir: str, variant_tag: str = ""):
+    """Load one matrix. Returns None when file or key is missing."""
+    path = (
+        _make_similarities_dir(dataset_dir, variant_tag)
+        / f"{model_id}_{metric}.safetensors"
+    )
     if not path.exists():
         return None
     try:
@@ -184,24 +292,24 @@ def _load_matrix(model_id: str, metric: str, dataset_dir: str):
 
 def load_all_data() -> dict:
     """
-    Walk MODELS × DATASETS × METRICS and load everything that exists.
+    Walk MODELS × all datasets in STAGES × METRICS and load everything present.
 
     Returns
     -------
-    {model_id : {dataset_dir : {metric : ndarray}}}
-    Only files present on disk appear in the nested dict.
+    {model_id : {(dataset_dir, variant_tag) : {metric : ndarray}}}
     """
     data: dict = {}
     for model_id in MODELS:
         model_data: dict = {}
-        for dataset_dir in DATASETS:
+        for dataset_dir, variant_tag, _label in _ALL_DATASETS:
+            key = (dataset_dir, variant_tag)
             ds: dict = {}
             for metric in METRICS:
-                arr = _load_matrix(model_id, metric, dataset_dir)
+                arr = _load_matrix(model_id, metric, dataset_dir, variant_tag)
                 if arr is not None:
                     ds[metric] = arr
             if ds:
-                model_data[dataset_dir] = ds
+                model_data[key] = ds
         if model_data:
             data[model_id] = model_data
             print(f"  ✓  {MODELS[model_id]:45s} – {len(model_data)} dataset(s)")
@@ -210,38 +318,95 @@ def load_all_data() -> dict:
     return data
 
 
-def _averages(model_data: dict) -> dict:
+def compute_metric_bounds(data: dict) -> dict:
     """
-    Per-metric element-wise mean across datasets.
-    Only metrics with ≥ 2 same-shape arrays are averaged.
+    Compute per-metric [vmin, vmax] for each model, respecting COLORMAP_NORM.
 
-    Returns {metric : ndarray}.
+    Returns
+    -------
+    {model_id: {metric: (vmin, vmax, min_source, max_source)}}
+        min_source / max_source = dataset_dir where the extreme was found.
+    Returns {} when COLORMAP_NORM = "none" (no shared bounds needed).
+
+    Logic
+    -----
+    1. Compute per-metric bounds for every model independently (per_metric).
+    2. If COLORMAP_NORM = "cross_model": for each pair in CROSS_MODEL_PAIRS,
+       unify the bounds of the two models (take global min/max across both).
+       Models not in any pair retain their individual per_metric bounds.
     """
-    buckets: dict = {}
-    for ds in model_data.values():
-        for m, arr in ds.items():
-            buckets.setdefault(m, []).append(arr)
-    return {
-        m: np.mean(np.stack(arrs), axis=0)
-        for m, arrs in buckets.items()
-        if len(arrs) >= 2 and len({a.shape for a in arrs}) == 1
-    }
+    if COLORMAP_NORM == "none":
+        return {}
+
+    bounds: dict = {}
+
+    # Step 1 — per-model, per-metric bounds
+    for model_id, model_data in data.items():
+        model_bounds: dict = {}
+        for metric in METRICS:
+            candidates = [
+                (float(ds[metric].min()), float(ds[metric].max()), ds_dir)
+                for (ds_dir, _var), ds in model_data.items()
+                if metric in ds
+            ]
+            if not candidates:
+                continue
+            vmin = min(c[0] for c in candidates)
+            vmax = max(c[1] for c in candidates)
+            min_src = next(c[2] for c in candidates if c[0] == vmin)
+            max_src = next(c[2] for c in candidates if c[1] == vmax)
+            model_bounds[metric] = (vmin, vmax, min_src, max_src)
+        bounds[model_id] = model_bounds
+
+    # Step 2 — unify bounds across each cross-model pair
+    if COLORMAP_NORM == "cross_model":
+        for m1, m2 in CROSS_MODEL_PAIRS:
+            if m1 not in bounds or m2 not in bounds:
+                continue
+            for metric in METRICS:
+                b1 = bounds[m1].get(metric)
+                b2 = bounds[m2].get(metric)
+                if b1 is None or b2 is None:
+                    continue
+                shared_vmin = min(b1[0], b2[0])
+                shared_vmax = max(b1[1], b2[1])
+                # Track which model's dataset drove each extreme
+                min_src = f"{m1}:{b1[2]}" if b1[0] <= b2[0] else f"{m2}:{b2[2]}"
+                max_src = f"{m1}:{b1[3]}" if b1[1] >= b2[1] else f"{m2}:{b2[3]}"
+                shared = (shared_vmin, shared_vmax, min_src, max_src)
+                bounds[m1][metric] = shared
+                bounds[m2][metric] = shared
+
+    return bounds
+
+
+def _print_bounds(bounds: dict) -> None:
+    """Print colormap bound summary (model → metric → vmin/vmax + source)."""
+    if not bounds:
+        return
+    print(f"\n  Colormap bounds  (COLORMAP_NORM={COLORMAP_NORM!r}):")
+    for model_id, model_bounds in bounds.items():
+        print(f"\n  ┌ {MODELS[model_id]}")
+        for metric, (vmin, vmax, min_src, max_src) in model_bounds.items():
+            print(f"  │  {metric:35s}  min={vmin:.4f}  [{min_src}]")
+            print(f"  │  {metric:35s}  max={vmax:.4f}  [{max_src}]")
+        print("  └")
 
 
 # ==============================================================================
-# SECTION 3  –  PLOTTING PRIMITIVES  (each one touches exactly one Axes)
+# SECTION 3  –  PLOTTING PRIMITIVES  (each touches exactly one Axes)
 # ==============================================================================
 
 
-def _draw_heatmap(ax, matrix):
-    """Render heatmap on *ax*.  Returns the ScalarMappable for the colorbar."""
+def _draw_heatmap(ax, matrix, vmin=None, vmax=None):
+    """Render heatmap on ax.  vmin/vmax=None → matrix's own extremes."""
     im = ax.imshow(
         matrix,
         origin="lower",
         aspect="auto",
         cmap=CMAP,
-        vmin=matrix.min(),
-        vmax=matrix.max(),
+        vmin=float(matrix.min()) if vmin is None else vmin,
+        vmax=float(matrix.max()) if vmax is None else vmax,
         interpolation="nearest",
     )
     ticks = list(range(0, matrix.shape[0], TICK_STEP))
@@ -254,7 +419,6 @@ def _draw_heatmap(ax, matrix):
 
 
 def _draw_colorbar(ax, im):
-    """Attach a compact colorbar to the right of *ax*."""
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.08)
     cb = ax.figure.colorbar(im, cax=cax)
@@ -264,7 +428,6 @@ def _draw_colorbar(ax, im):
 
 
 def _draw_missing(ax):
-    """Style *ax* as a visible 'no data' placeholder."""
     ax.set_facecolor("#ececec")
     ax.text(
         0.5,
@@ -288,28 +451,53 @@ def _draw_missing(ax):
 # ==============================================================================
 
 
-def _row_specs(model_data: dict, avgs: dict):
-    """
-    Determine which rows the figure will contain.
+def _stage_averages(stage_datasets: list, model_data: dict) -> dict:
+    """Element-wise mean across datasets present in this stage."""
+    buckets: dict = {}
+    for dataset_dir, variant_tag, _ in stage_datasets:
+        key = (dataset_dir, variant_tag)
+        if key in model_data:
+            for m, arr in model_data[key].items():
+                buckets.setdefault(m, []).append(arr)
+    return {
+        m: np.mean(np.stack(arrs), axis=0)
+        for m, arrs in buckets.items()
+        if len(arrs) >= 2 and len({a.shape for a in arrs}) == 1
+    }
 
-    Returns list of (row_id, display_label, {metric: ndarray}).
-    """
+
+def _row_specs(stage_datasets: list, model_data: dict, avgs: dict) -> list:
+    """Ordered list of (key, label, data_dict) rows for this stage figure."""
     rows = []
-    for dd in DATASETS:
-        if dd in model_data:
-            rows.append((dd, DATASETS[dd], model_data[dd]))
-    if avgs and len(model_data) > 1:
+    for dataset_dir, variant_tag, label in stage_datasets:
+        key = (dataset_dir, variant_tag)
+        if key in model_data:
+            rows.append((key, label, model_data[key]))
+    if SHOW_AVERAGE and avgs and len(rows) > 1:
         rows.append(("average", "Average", avgs))
     return rows
 
 
-def build_figure(model_id: str, model_data: dict):
+def build_figure(
+    model_id: str,
+    stage_label: str,
+    stage_datasets: list,
+    model_data: dict,
+    model_bounds: dict,
+) -> "plt.Figure | None":
     """
-    Assemble the full (rows × metrics) grid figure for one model.
-    Returns the Figure, or None when there is nothing to show.
+    Assemble one (rows × metrics) grid figure for a single (model, stage) pair.
+
+    Parameters
+    ----------
+    model_id      : key in MODELS
+    stage_label   : displayed in suptitle after the model name
+    stage_datasets: list of (dataset_dir, variant_tag, row_label) for this stage
+    model_data    : {(dataset_dir, variant_tag): {metric: ndarray}}
+    model_bounds  : {metric: (vmin, vmax, ...)}; empty dict → per-cell mode
     """
-    avgs = _averages(model_data)
-    rows = _row_specs(model_data, avgs)
+    avgs = _stage_averages(stage_datasets, model_data)
+    rows = _row_specs(stage_datasets, model_data, avgs)
     mkeys = list(METRICS.keys())
     nR, nC = len(rows), len(mkeys)
     if nR == 0:
@@ -332,7 +520,10 @@ def build_figure(model_id: str, model_data: dict):
         for c, mk in enumerate(mkeys):
             ax = axes[r, c]
             if mk in row_data:
-                im = _draw_heatmap(ax, row_data[mk])
+                vmin, vmax = None, None
+                if model_bounds and mk in model_bounds:
+                    vmin, vmax = model_bounds[mk][0], model_bounds[mk][1]
+                im = _draw_heatmap(ax, row_data[mk], vmin=vmin, vmax=vmax)
                 _draw_colorbar(ax, im)
             else:
                 _draw_missing(ax)
@@ -340,14 +531,18 @@ def build_figure(model_id: str, model_data: dict):
             if r == 0:
                 ax.set_title(METRICS[mk], fontsize=FONT["col_header"], pad=8)
 
-    # Row labels in left margin
-    fig.canvas.draw()
+    # Row labels in left margin (computed analytically — avoids OOM from canvas.draw())
+    bottom_f = MARGIN_BOTTOM / fig_h
+    top_f = 1.0 - MARGIN_TOP / fig_h
+    grid_span = top_f - bottom_f
+    eff_h = grid_span / (nR + max(nR - 1, 0) * HSPACE)
     x_lbl = 0.5 * MARGIN_LEFT / fig_w
     for r, (_rid, lbl, _data) in enumerate(rows):
-        bb = axes[r, 0].get_position()
+        row_from_bottom = nR - 1 - r
+        y0 = bottom_f + row_from_bottom * eff_h * (1 + HSPACE)
         fig.text(
             x_lbl,
-            bb.y0 + bb.height / 2,
+            y0 + eff_h / 2,
             lbl,
             fontsize=FONT["row_label"],
             ha="center",
@@ -355,7 +550,12 @@ def build_figure(model_id: str, model_data: dict):
             fontweight="bold",
         )
 
-    fig.suptitle(MODELS[model_id], fontsize=FONT["suptitle"], fontweight="bold", y=0.98)
+    fig.suptitle(
+        f"{MODELS[model_id]}  —  {stage_label}",
+        fontsize=FONT["suptitle"],
+        fontweight="bold",
+        y=0.98,
+    )
     return fig
 
 
@@ -366,38 +566,54 @@ def build_figure(model_id: str, model_data: dict):
 
 def main():
     plots_dir = _make_plots_dir()
-    sf_info = f" | sf={SEMANTIC_FILTER_TAG}" if SEMANTIC_FILTER_TAG else ""
-    print("=" * 66)
-    print(f"  per_model_similarity_grid  –  pooling={POOLING_METHOD}{sf_info}")
-    print("=" * 66)
+
+    norm_info = f"norm={COLORMAP_NORM}"
+    if COLORMAP_NORM == "cross_model":
+        pairs_str = ", ".join(f"{a}↔{b}" for a, b in CROSS_MODEL_PAIRS)
+        norm_info += f" [{pairs_str}]"
+    label_info = f" | label={EXPERIMENT_LABEL}" if EXPERIMENT_LABEL else ""
+
+    print("=" * 72)
+    print("  per_model_similarity_grid")
+    print(f"  pooling={POOLING_METHOD} | {norm_info}{label_info}")
+    print("=" * 72)
+
+    print("\n  Loading data...")
     data = load_all_data()
+
+    print("\n  Computing colormap bounds...")
+    bounds = compute_metric_bounds(data)
+    _print_bounds(bounds)
 
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     print()
-    print("=" * 66)
-    print("  per_model_similarity_grid  –  generating figures")
-    print("=" * 66)
+    print("=" * 72)
+    print("  Generating figures")
+    print("=" * 72)
 
     for model_id in MODELS:
         if model_id not in data:
             continue
-        print(f"\n  {MODELS[model_id]}")
-        fig = build_figure(model_id, data[model_id])
-        if fig is None:
-            print("    (nothing to plot)")
-            continue
+        model_bounds = bounds.get(model_id, {})
 
-        for ext in ("png", "pdf"):
-            out = plots_dir / f"{model_id}_similarity_grid.{ext}"
-            fig.savefig(
-                out,
-                dpi=DPI_PNG if ext == "png" else None,
-                facecolor="white",
-                bbox_inches="tight",
+        for stage_key, stage_label, stage_datasets in STAGES:
+            print(f"\n  {MODELS[model_id]}  [{stage_key}]")
+            fig = build_figure(
+                model_id,
+                stage_label,
+                stage_datasets,
+                data[model_id],
+                model_bounds,
             )
+            if fig is None:
+                print("    (no data for this stage — skipped)")
+                continue
+
+            out = plots_dir / f"{model_id}_{stage_key}.png"
+            fig.savefig(str(out), dpi=DPI_PNG, facecolor="white", bbox_inches="tight")
             print(f"    ✓  {out}")
-        plt.close(fig)
+            plt.close(fig)
 
     print("\n  Done.")
 

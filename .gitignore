@@ -29,7 +29,7 @@ logs/
 
 # Experimental files
 tinkering/
-results_test/
+tests/
 
 # Backup files and directories
 *.bak
@@ -40,6 +40,7 @@ evals/**/finetuned_pretrained/
 evals/**/Llava1.5-7B*/
 evals/**/MME_Benchmark_release_version/
 evals/**/original_llava_example/
+evals/**/*json
 plots/
 
 # Large data files (to prevent accidental commit of big files)
@@ -69,8 +70,6 @@ GEMINI.md
 CLAUDE.md
 .cursor*
 .vscode/
-
-
 
 # Internal docs
 internal_docs/

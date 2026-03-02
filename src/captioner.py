@@ -47,7 +47,9 @@ class VlmCaptioner:
         username = os.getenv("ORFEO_USERNAME")
 
         if not all([auth_url, client_id, client_secret, username]):
-            console.print("[red]Error: Missing authentication variables in .env file.[/red]")
+            console.print(
+                "[red]Error: Missing authentication variables in .env file.[/red]"
+            )
             return None
 
         try:
@@ -87,12 +89,12 @@ class VlmCaptioner:
             should_close = False
 
         try:
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
+            if img.mode != "RGB":
+                img = img.convert("RGB")
             buffer = BytesIO()
-            img.save(buffer, format='JPEG')
+            img.save(buffer, format="JPEG")
             img_bytes = buffer.getvalue()
-            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
             return f"data:image/jpeg;base64,{img_base64}"
         finally:
             if should_close:
@@ -113,19 +115,12 @@ class VlmCaptioner:
             return ""
         # 1. Remove complete <think>...</think> blocks
         text = re.sub(
-            r'<\s*think\s*>.*?</\s*think\s*>',
-            '',
-            text,
-            flags=re.DOTALL | re.IGNORECASE
+            r"<\s*think\s*>.*?</\s*think\s*>", "", text, flags=re.DOTALL | re.IGNORECASE
         )
 
         # 2. Remove any unclosed <think> and everything after it
-        text = re.split(
-            r'<\s*think\s*>',
-            text,
-            flags=re.IGNORECASE
-        )[0]
-        
+        text = re.split(r"<\s*think\s*>", text, flags=re.IGNORECASE)[0]
+
         return text.strip()
 
     @staticmethod
@@ -142,9 +137,9 @@ class VlmCaptioner:
         """
         if not text:
             return ""
-        
+
         # Regex to find the last occurrence of sentence-ending punctuation
-        match = re.search(r'(.*[.!?])', text, flags=re.DOTALL)
+        match = re.search(r"(.*[.!?])", text, flags=re.DOTALL)
         if match:
             return match.group(1).strip()
         return ""
@@ -193,13 +188,13 @@ class VlmCaptioner:
                     "content": (
                         "You are an expert image captioning system. CRITICAL INSTRUCTIONS:\n"
                         "- Detailed thinking off\n"
-                        "- Generate exactly 3-5 sentences describing the image\n"
+                        "- Generate exactly 5-7 sentences describing the image\n"
                         "- Start IMMEDIATELY with the visual description\n"
                         "- Output ONLY the final caption - no reasoning, no meta-commentary, no thinking tags\n"
                         "- If you must think, complete your thinking fully before the caption\n"
                         "- Focus on main objects, actions, and scene elements visible in the image\n"
                         "- This is an URGENT, top-priority task - follow these rules exactly"
-                    )
+                    ),
                 },
                 {
                     "role": "user",
@@ -214,11 +209,13 @@ class VlmCaptioner:
 
             for attempt in range(max_retries):
                 if attempt > 0:
-                    console.print(f"[yellow]Retry attempt {attempt + 1}/{max_retries}...[/yellow]")
+                    console.print(
+                        f"[yellow]Retry attempt {attempt + 1}/{max_retries}...[/yellow]"
+                    )
 
                 # Use seed + attempt to ensure different (but deterministic) results per attempt
                 current_seed = seed + attempt
-                
+
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
@@ -233,41 +230,53 @@ class VlmCaptioner:
 
                 # Check for incomplete thinking (has <think> but output suggests it didn't finish)
                 raw_lower = raw_output.lower()
-                has_open_think = '<think>' in raw_lower
-                has_close_think = '</think>' in raw_lower
+                has_open_think = "<think>" in raw_lower
+                has_close_think = "</think>" in raw_lower
                 has_incomplete_think = has_open_think and not has_close_think
-                has_think_in_cleaned = '<think>' in cleaned_output.lower()
+                has_think_in_cleaned = "<think>" in cleaned_output.lower()
                 is_empty = not final_caption
 
                 # Accept only if: (1) no thinking tags in cleaned output, (2) not empty, (3) thinking was complete if present
-                if not has_think_in_cleaned and not is_empty and not has_incomplete_think:
+                if (
+                    not has_think_in_cleaned
+                    and not is_empty
+                    and not has_incomplete_think
+                ):
                     return final_caption
 
-                candidates.append({
-                    'caption': final_caption,
-                    'has_think': has_think_in_cleaned,
-                    'incomplete_think': has_incomplete_think,
-                    'raw': raw_output
-                })
+                candidates.append(
+                    {
+                        "caption": final_caption,
+                        "has_think": has_think_in_cleaned,
+                        "incomplete_think": has_incomplete_think,
+                        "raw": raw_output,
+                    }
+                )
 
-            console.print("[red]Max retries reached. Selecting best available caption.[/red]")
+            console.print(
+                "[red]Max retries reached. Selecting best available caption.[/red]"
+            )
 
             # Prioritize: (1) no think tags + complete + non-empty
-            clean_candidates = [c for c in candidates
-                               if not c['has_think'] and not c['incomplete_think'] and c['caption']]
+            clean_candidates = [
+                c
+                for c in candidates
+                if not c["has_think"] and not c["incomplete_think"] and c["caption"]
+            ]
             if clean_candidates:
-                return clean_candidates[-1]['caption']
+                return clean_candidates[-1]["caption"]
 
             # Fallback: (2) complete thinking but has tags
-            complete_candidates = [c for c in candidates
-                                  if not c['incomplete_think'] and c['caption']]
+            complete_candidates = [
+                c for c in candidates if not c["incomplete_think"] and c["caption"]
+            ]
             if complete_candidates:
-                return complete_candidates[-1]['caption']
+                return complete_candidates[-1]["caption"]
 
             # Last resort: (3) any non-empty caption
-            any_candidates = [c for c in candidates if c['caption']]
+            any_candidates = [c for c in candidates if c["caption"]]
             if any_candidates:
-                return any_candidates[-1]['caption']
+                return any_candidates[-1]["caption"]
 
             return ""
 

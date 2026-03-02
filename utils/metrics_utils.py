@@ -31,7 +31,7 @@ def _ensure_device(
     return moved_tensors
 
 
-def _preprocess_data(
+def preprocess_data(
     data1: Union[np.ndarray, torch.Tensor],
     data2: Union[np.ndarray, torch.Tensor],
     output_format: str = "tensor",
@@ -41,15 +41,15 @@ def _preprocess_data(
     Common preprocessing for similarity computation.
 
     Args:
-        data1: First dataset
-        data2: Second dataset
+        data1: First array
+        data2: Second array
         output_format: 'tensor' or 'numpy'
         remove_duplicates: Whether to remove duplicates and match indices
 
     Returns:
         Tuple of preprocessed data1 and data2
     """
-    # Ensure both datasets have the same number of samples
+    # Ensure both arrays have the same number of samples
     if data1.shape[0] != data2.shape[0]:
         raise ValueError(
             f"Data1 has {data1.shape[0]} samples, Data2 has {data2.shape[0]} samples"
@@ -68,14 +68,24 @@ def _preprocess_data(
 
     # Remove duplicates and match indices if requested
     if remove_duplicates:
-        unique_data1, indices1 = np.unique(np_data1, axis=0, return_index=True)
+        # Get unique indices for BOTH arrays
+        _, idx1 = np.unique(np_data1, axis=0, return_index=True)
+        _, idx2 = np.unique(np_data2, axis=0, return_index=True)
+
+        # Keep only indices that are unique in BOTH arrays.
+        # np.intersect1d naturally returns a sorted 1D array.
+        valid_indices = np.intersect1d(idx1, idx2)
+
         original_num_samples = np_data1.shape[0]
-        unique_num_samples = unique_data1.shape[0]
+        unique_num_samples = valid_indices.shape[0]
         if unique_num_samples < original_num_samples:
             print(
                 f"Warning: {original_num_samples - unique_num_samples} duplicate samples removed."
             )
-        matched_data2 = np_data2[indices1]
+
+        # Apply the exact same valid indices mask to both arrays to guarantee 1-to-1 sync
+        unique_data1 = np_data1[valid_indices]
+        matched_data2 = np_data2[valid_indices]
     else:
         unique_data1 = np_data1
         matched_data2 = np_data2
@@ -84,6 +94,7 @@ def _preprocess_data(
     if output_format == "tensor":
         unique_data1 = torch.tensor(unique_data1, dtype=torch.float32)
         matched_data2 = torch.tensor(matched_data2, dtype=torch.float32)
+        # Assuming _ensure_device is defined elsewhere in your module
         unique_data1, matched_data2 = _ensure_device(unique_data1, matched_data2)
         return unique_data1, matched_data2
     else:
@@ -115,7 +126,7 @@ def compute_neighborhood_overlap(
     """
     if use_dadapy:
         # For dadapy, we need numpy arrays and should remove duplicates
-        processed_data1, processed_data2 = _preprocess_data(
+        processed_data1, processed_data2 = preprocess_data(
             data1, data2, output_format="numpy", remove_duplicates=True
         )
         d1 = Data(processed_data1)
@@ -123,7 +134,7 @@ def compute_neighborhood_overlap(
         return d1.return_data_overlap(processed_data2)
 
     # For manual computation, preprocess as tensors with duplicate removal
-    data1, data2 = _preprocess_data(
+    data1, data2 = preprocess_data(
         data1, data2, output_format="tensor", remove_duplicates=True
     )
 
@@ -187,7 +198,7 @@ def compute_information_imbalance(
     """
     # Preprocess and move to GPU if available
     # We keep duplicates to preserve the exact structure of the representation
-    data1, data2 = _preprocess_data(
+    data1, data2 = preprocess_data(
         data1, data2, output_format="tensor", remove_duplicates=False
     )
     data1, data2 = _ensure_device(data1, data2)
@@ -245,7 +256,7 @@ def compute_distance_correlation(
         Distance correlation score between the two datasets
     """
     # Preprocess and move to GPU if available
-    latent, control = _preprocess_data(
+    latent, control = preprocess_data(
         latent, control, output_format="tensor", remove_duplicates=False
     )
 
@@ -306,7 +317,7 @@ def compute_distance_correlation(
 #         SVCCA similarity score between the two datasets
 #     """
 #     # Preprocess and move to GPU if available
-#     X, Y = _preprocess_data(X, Y, output_format="tensor", remove_duplicates=False)
+#     X, Y = preprocess_data(X, Y, output_format="tensor", remove_duplicates=False)
 
 #     # Ensure tensors are on GPU if available
 #     X, Y = _ensure_device(X, Y)
@@ -329,7 +340,7 @@ def compute_linear_cka_similarity(
         Linear CKA similarity score between the two datasets
     """
     # Preprocess and move to GPU if available
-    X, Y = _preprocess_data(X, Y, output_format="tensor", remove_duplicates=False)
+    X, Y = preprocess_data(X, Y, output_format="tensor", remove_duplicates=False)
 
     # Ensure tensors are on GPU if available
     X, Y = _ensure_device(X, Y)
@@ -351,7 +362,7 @@ def compute_rbf_cka_similarity(
     Returns:
         RBF CKA similarity score between the two datasets
     """
-    X, Y = _preprocess_data(X, Y, output_format="tensor", remove_duplicates=False)
+    X, Y = preprocess_data(X, Y, output_format="tensor", remove_duplicates=False)
 
     # Ensure tensors are on GPU if available
     X, Y = _ensure_device(X, Y)
@@ -511,7 +522,7 @@ def compute_id_correlation_similarity(
         ID correlation score (and optionally p-value, but currently only score is returned to fit interface)
     """
     # Preprocess and move to GPU if available
-    data1, data2 = _preprocess_data(
+    data1, data2 = preprocess_data(
         data1, data2, output_format="tensor", remove_duplicates=False
     )
     data1, data2 = _ensure_device(data1, data2)
@@ -617,7 +628,7 @@ def compute_similarity(
         raise ValueError(
             f"Unknown measure '{measure}'. Available measures: {available_measures}"
         )
-        
+
     if measure == "neighborhood_overlap":
         maxk = kwargs.get("maxk", 30)
         use_dadapy = kwargs.get("use_dadapy", False)
@@ -1109,7 +1120,7 @@ def compute_cross_layers_residual_stream_similarities(
                      total_comparisons += 1
     else:
         total_comparisons = num_layers_1 * num_layers_2
-    
+
     update_every = max(1, int(0.1 * total_comparisons)) if total_comparisons > 0 else 1
 
     for measure in similarity_measures:
@@ -1152,7 +1163,7 @@ def compute_cross_layers_residual_stream_similarities(
                 # Optimization for Lower Triangular (Strict: i >= j)
                 if lower_triangular_only and j > i:
                     continue
-                
+
                 current_comparison += 1
 
                 # Inject precomputed IDs into kwargs if available
@@ -1431,7 +1442,7 @@ def compute_layers_homogeneity_score(
         for layer in range(num_layers):
             layer_data = data_tensor[layer, :, :]
             # Preprocess data
-            layer_data, _ = _preprocess_data(
+            layer_data, _ = preprocess_data(
                 layer_data,
                 layer_data,
                 output_format="tensor",

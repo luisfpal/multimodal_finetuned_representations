@@ -362,8 +362,8 @@ def load_hf_model_and_processor_or_tokenizer(
 
             if "vicuna" in model_name_or_path.lower():
                 processor.chat_template = LLAVA_CHAT_TEMPLATE
-            elif "lbasile/llava" in model_name_or_path.lower():
-                processor.chat_template = LLAVA_CHAT_TEMPLATE
+            # elif "lbasile/llava" in model_name_or_path.lower():
+            #     processor.chat_template = LLAVA_CHAT_TEMPLATE
 
         except Exception as e:
             raise RuntimeError(

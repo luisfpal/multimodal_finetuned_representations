@@ -5,14 +5,14 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="lade"
+ACCOUNT="dssc"
 JOB_NAME="experiment"
-PARTITION="H100"
-GPU_TYPE="H100"
+PARTITION="DGX"
+GPU_TYPE="A100"
 NUM_GPUS=1              # Number of GPUs
 CPUS=16
-MEM="32GB"
-TIME="06:00:00"
+MEM="64GB"
+TIME="36:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -24,32 +24,15 @@ LOG_DIR="$PROJECT_ROOT/logs"
 # Script selection
 # SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
 SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
-# SCRIPT_NAME="intrinsic_dimension.sh"  # For intrinsic dimension analysis
-# SCRIPT_NAME="intra_model_similarity.sh"  # For intra-model similarity analysis
-# SCRIPT_NAME="multimodality_specific_pooling_similarity.sh" # For multimodality with specific pooling analysis
 
-# =============================================================================
-# Centralized Configuration for All Analysis Scripts
-# =============================================================================
-
-# Dataset parameters
-# For COCOQA, VQAv2, MME and GQA use:
-export GUIDE_TEXT="Answer the question using a single word or phrase."
-# For MMBench use:
-# export GUIDE_TEXT="Answer with the option's letter from the given choices directly."
-export DOWNSAMPLE_SIZE="10000"
-
-# Representations storage configuration
+# Configuration (read by analysis scripts)
 export REPRESENTATIONS_DIR="$HOME/scratch"
-export SAVE_REPRESENTATIONS="true"   # Set to "false" to disable saving
-
-# Caption source: "human" for COCOQA / VQAv2-ICQ, "synthetic" for everything else
-export CAPTION_SOURCE="synthetic"
-
-# Force recompute: set to "true" to overwrite existing representations and results
-export FORCE_RECOMPUTE="false"
-
-# =============================================================================
+export SAVE_REPRESENTATIONS="true"
+export UNIQUE_IMAGES="false"
+export ENABLE_SEMANTIC_FILTER="false"
+export DOWNSAMPLE_SIZE=""
+export DATASET_SPLIT="split01"
+export FORCE_RECOMPUTE="true"
 # Job Execution Script
 # =============================================================================
 
