@@ -14,8 +14,6 @@ from utils import (
     LLaVA1_5_SYSTEM_INSTRUCTION,
     INTERNVL2_SYSTEM_INSTRUCTION,
     INTERNVL3_5_SYSTEM_INSTRUCTION,
-    ensure_llm_judge_env,
-    infer_lmms_eval_backend,
 )
 from utils.patch_llava import patch as patch_llava
 from utils.patch_internvl import patch as patch_internvl
@@ -115,16 +113,11 @@ def create_cli_args(output_path: str) -> argparse.Namespace:
 
 
 def validate_task_requirements(task_name: str) -> None:
-    """Validate environment variables for tasks requiring LLM judge.
-
-    Automatically loads .env and acquires an Orfeo JWT if OPENAI_API_KEY
-    is not already set in the environment.
-    """
+    """Validate environment variables for tasks requiring LLM judge."""
     if task_name in LLM_JUDGE_TASKS:
-        if not ensure_llm_judge_env():
+        if not os.environ.get("OPENAI_API_KEY"):
             print("[bold red]✗ ERROR: LLM judge API key missing![/bold red]")
-            print(f"  Task '{task_name}' requires OPENAI_API_KEY")
-            print("  Set it directly, or configure Orfeo credentials in .env\n")
+            print(f"  Task '{task_name}' requires OPENAI_API_KEY\n")
             sys.exit(1)
 
         api_url = os.environ.get("OPENAI_API_URL", "https://api.openai.com/v1")
@@ -237,16 +230,13 @@ def run_evaluation(
         # Single GPU: use HF auto device mapping
         model_args = f"pretrained={model_name},device_map=auto"
 
-    if args.no_image:
-        patch(layers_to_skip=range(32))
-
-    # Resolve backend (auto-infer from model name if not explicitly provided)
-    backend = args.lmms_eval_model or infer_lmms_eval_backend(model_name)
+    # Resolve backend
+    backend = args.lmms_eval_model
 
     # Instantiate model instance if needed
     model_instance = backend  # Default to string for registry lookup
 
-    if backend == "llava_hf":
+    if args.lmms_eval_model == "llava_hf":
         if LlavaHf is None:
             print(
                 "[yellow]⚠ LlavaHf class not importable, falling back to registry[/yellow]"
@@ -261,7 +251,7 @@ def run_evaluation(
                 batch_size=args.batch_size if args.batch_size else 1,
             )
 
-    elif backend == "internvl2":
+    elif args.lmms_eval_model == "internvl2":
         if InternVL2Custom is None:
             print(
                 "[yellow]⚠ InternVL2Custom class not importable, falling back to registry[/yellow]"
@@ -282,7 +272,7 @@ def run_evaluation(
                 cache_dir=args.model_cache_dir,
             )
 
-    elif backend == "internvl3.5":
+    elif args.lmms_eval_model == "internvl3.5":
         if InternVL3_5Custom is None:
             print(
                 "[yellow]⚠ InternVL3_5Custom class not importable, falling back to registry[/yellow]"
@@ -308,9 +298,9 @@ def run_evaluation(
         elif args.lmms_eval_model == "internvl2":
             patch_internvl(model_instance._model, layers_to_skip=range(32))
     # Select system instruction
-    if backend == "internvl2":
+    if args.lmms_eval_model == "internvl2":
         system_instruction = INTERNVL2_SYSTEM_INSTRUCTION
-    elif backend == "internvl3.5":
+    elif args.lmms_eval_model == "internvl3.5":
         system_instruction = INTERNVL3_5_SYSTEM_INSTRUCTION
     else:
         system_instruction = LLaVA1_5_SYSTEM_INSTRUCTION
