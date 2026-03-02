@@ -46,76 +46,76 @@ DEFAULT_TOP_K_LOGITS = 10
 DATASETS = {
     "l11p/COCOQA-restval-ICQA": {
         "guide_text": "Answer the question using a single word or phrase.",
-        "downsample_size": 20,
+        "downsample_size": 2000,
         "subsets": ["images_qa"],
         "split": "train",
         "type": "open_ended",
         "remove_yes_no": True,
         "eval_methods": ["logit_lens"],
     },
-    # "l11p/VQAv2-COCO-restval-ICQ": {
-    #     "guide_text": "Answer the question using a single word or phrase.",
-    #     "downsample_size": 2000,
-    #     "subsets": ["images_qa"],
-    #     "split": "train",
-    #     "type": "open_ended",
-    #     "remove_yes_no": True,
-    #     "eval_methods": ["logit_lens"],
-    # },
-    # "l11p/MME-test-captioned": {
-    #     "guide_text": "Answer the question using a single word or phrase.",
-    #     "downsample_size": 2000,
-    #     "subsets": ["images_qa"],
-    #     "split": "train",
-    #     "type": "multiple_choice",
-    #     "choices": MME_ANSWER_CHOICES,  # Yes, No
-    #     "eval_methods": ["linear_probe", "logit_lens"],
-    # },
-    # "l11p/MMBench_EN-dev-captioned": {
-    #     "guide_text": "Answer with the option's letter from the given choices directly",
-    #     "downsample_size": 2000,
-    #     "filter_mmbench_4_choices": True,
-    #     "subsets": ["images_qa"],
-    #     "split": "train",
-    #     "type": "multiple_choice",
-    #     "choices": MMBENCH_ANSWER_CHOICES,  # A, B, C, D
-    #     "eval_methods": ["linear_probe", "logit_lens"],
-    # },
-    # "lmms-lab/ai2d": {
-    #     "guide_text": "Answer with the option's letter from the given choices directly",
-    #     "downsample_size": 2000,
-    #     "subsets": ["images_qa"],
-    #     "split": "test",
-    #     "type": "multiple_choice",
-    #     "choices": AI2D_ANSWER_CHOICES,  # A, B, C, D
-    #     "eval_methods": ["linear_probe", "logit_lens"],
-    # },
-    # "lmms-lab/POPE": {
-    #     "guide_text": "Answer the question using a single word or phrase.",
-    #     "downsample_size": 2000,
-    #     "subsets": ["images_qa"],
-    #     "split": "test",
-    #     "type": "multiple_choice",
-    #     "choices": POPE_ANSWER_CHOICES,  # Yes, No
-    #     "eval_methods": ["linear_probe", "logit_lens"],
-    # },
-    # "l11p/GQA-val-balanced-noyesno-captioned": {
-    #     "guide_text": "Answer the question using a single word or phrase.",
-    #     "downsample_size": 2000,
-    #     "subsets": ["images_qa"],
-    #     "split": "train",  # It was created from 'val' but usually loaded as 'train' if from Hub unless specified
-    #     "type": "open_ended",
-    #     "eval_methods": ["logit_lens"],
-    #     # No exclude_yes_no needed as dataset is already filtered
-    # },
-    # "lmms-lab/textvqa": {
-    #     "guide_text": "Answer the question using a single word or phrase.",
-    #     "downsample_size": 2000,
-    #     "subsets": ["images_qa"],
-    #     "split": "validation",
-    #     "type": "open_ended",
-    #     "eval_methods": ["logit_lens"],
-    # },
+    "l11p/VQAv2-COCO-restval-ICQ": {
+        "guide_text": "Answer the question using a single word or phrase.",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "train",
+        "type": "open_ended",
+        "remove_yes_no": True,
+        "eval_methods": ["logit_lens"],
+    },
+    "l11p/MME-test-captioned": {
+        "guide_text": "Answer the question using a single word or phrase.",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "train",
+        "type": "multiple_choice",
+        "choices": MME_ANSWER_CHOICES,  # Yes, No
+        "eval_methods": ["linear_probe", "logit_lens"],
+    },
+    "l11p/MMBench_EN-dev-captioned": {
+        "guide_text": "Answer with the option's letter from the given choices directly",
+        "downsample_size": 2000,
+        "filter_mmbench_4_choices": True,
+        "subsets": ["images_qa"],
+        "split": "train",
+        "type": "multiple_choice",
+        "choices": MMBENCH_ANSWER_CHOICES,  # A, B, C, D
+        "eval_methods": ["linear_probe", "logit_lens"],
+    },
+    "lmms-lab/ai2d": {
+        "guide_text": "Answer with the option's letter from the given choices directly",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "test",
+        "type": "multiple_choice",
+        "choices": AI2D_ANSWER_CHOICES,  # A, B, C, D
+        "eval_methods": ["linear_probe", "logit_lens"],
+    },
+    "lmms-lab/POPE": {
+        "guide_text": "Answer the question using a single word or phrase.",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "test",
+        "type": "multiple_choice",
+        "choices": POPE_ANSWER_CHOICES,  # Yes, No
+        "eval_methods": ["linear_probe", "logit_lens"],
+    },
+    "l11p/GQA-val-balanced-noyesno-captioned": {
+        "guide_text": "Answer the question using a single word or phrase.",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "train",  # It was created from 'val' but usually loaded as 'train' if from Hub unless specified
+        "type": "open_ended",
+        "eval_methods": ["logit_lens"],
+        # No exclude_yes_no needed as dataset is already filtered
+    },
+    "lmms-lab/textvqa": {
+        "guide_text": "Answer the question using a single word or phrase.",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "validation",
+        "type": "open_ended",
+        "eval_methods": ["logit_lens"],
+    },
 }
 
 
@@ -238,6 +238,7 @@ def evaluate_logit_lens(
         if dataloader:
             global_idx = 0
             for batch in tqdm(dataloader, desc="Evaluating Samples"):
+                print(len(batch))
                 inputs = batch[0]
                 batch_labels = batch[-1]
                 pixel_values = None
@@ -325,55 +326,55 @@ def evaluate_logit_lens(
                     for layer_idx, tokens in enumerate(decoded_layers_debug):
                         print(f"  Layer {layer_idx}: {tokens}")
 
-                    if inputs_batch is not None:
-                        # Slice for this sample
-                        sample_input = {}
-                        # print("DEBUG")
-                        # print(inputs_batch)
-                        # print(f"Batch index: {b_idx}")
-                        # print(f"Batch size: {len(inputs_batch)}")
-                        for k, v in inputs_batch.items():
-                            if isinstance(v, torch.Tensor):
-                                sample_input[k] = v[b_idx : b_idx + 1]
-                            else:
-                                sample_input[k] = v[b_idx : b_idx + 1]
-                        # print("Sample input for generation:")
-                        # print(sample_input)
+                    # if inputs_batch is not None:
+                    #     # Slice for this sample
+                    #     sample_input = {}
+                    #     # print("DEBUG")
+                    #     # print(inputs_batch)
+                    #     # print(f"Batch index: {b_idx}")
+                    #     # print(f"Batch size: {len(inputs_batch)}")
+                    #     for k, v in inputs_batch.items():
+                    #         if isinstance(v, torch.Tensor):
+                    #             sample_input[k] = v[b_idx : b_idx + 1]
+                    #         else:
+                    #             sample_input[k] = v[b_idx : b_idx + 1]
+                    #     # print("Sample input for generation:")
+                    #     # print(sample_input)
 
-                        if (
-                            pixel_values_batch[b_idx : b_idx + 1] is not None
-                            and "intern" in model.__class__.__name__.lower()
-                        ):
-                            # print("  🖼️ Processing image context for generation...")
-                            combined_embeds = get_combined_embeddings(
-                                model,
-                                input_ids=sample_input["input_ids"],
-                                pixel_values=pixel_values_batch[b_idx : b_idx + 1],
-                                img_context_token_id=img_context_token_id,
-                            )
-                            sample_input = BatchFeature(
-                                {
-                                    "inputs_embeds": combined_embeds,
-                                    "attention_mask": sample_input["attention_mask"],
-                                }
-                            )
+                    #     if (
+                    #         pixel_values_batch is not None
+                    #         and "intern" in model.__class__.__name__.lower()
+                    #     ):
+                    #         # print("  🖼️ Processing image context for generation...")
+                    #         combined_embeds = get_combined_embeddings(
+                    #             model,
+                    #             input_ids=sample_input["input_ids"],
+                    #             pixel_values=pixel_values_batch[b_idx : b_idx + 1],
+                    #             img_context_token_id=img_context_token_id,
+                    #         )
+                    #         sample_input = BatchFeature(
+                    #             {
+                    #                 "inputs_embeds": combined_embeds,
+                    #                 "attention_mask": sample_input["attention_mask"],
+                    #             }
+                    #         )
 
-                        # Generate
-                        if "llava" in model.__class__.__name__.lower():
-                            gen_out = model.generate(**sample_input, max_new_tokens=20)
-                            gen_out = gen_out[:, sample_input["input_ids"].shape[1] :]
-                            gen_text = tokenizer.decode(
-                                gen_out[0], skip_special_tokens=True
-                            )
-                        elif "intern" in model.__class__.__name__.lower():
-                            gen_text = generate_responses(
-                                model=model,
-                                tokenizer=tokenizer,
-                                inputs_embeds=sample_input["inputs_embeds"],
-                                attention_mask=sample_input["attention_mask"],
-                                max_new_tokens=20,
-                            )[0]
-                        print(f"  🤖 Model Generation: {gen_text}")
+                    #     # Generate
+                    #     if "llava" in model.__class__.__name__.lower():
+                    #         gen_out = model.generate(**sample_input, max_new_tokens=20)
+                    #         gen_out = gen_out[:, sample_input["input_ids"].shape[1] :]
+                    #         gen_text = tokenizer.decode(
+                    #             gen_out[0], skip_special_tokens=True
+                    #         )
+                    #     elif "intern" in model.__class__.__name__.lower():
+                    #         gen_text = generate_responses(
+                    #             model=model,
+                    #             tokenizer=tokenizer,
+                    #             inputs_embeds=sample_input["inputs_embeds"],
+                    #             attention_mask=sample_input["attention_mask"],
+                    #             max_new_tokens=20,
+                    #         )[0]
+                    #     print(f"  🤖 Model Generation: {gen_text}")
             except Exception as e:
                 print(f"  ⚠️ Debug Print Failed: {e}")
                 traceback.print_exc()

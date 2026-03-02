@@ -273,10 +273,13 @@ class InternVL2Custom(lmms):
                         "cache_dir"
                     ),  # Will fallback to env var if None
                     device_map=self.device_map,
+                    attn_implementation="sdpa",
                     skip_processor=False,
                 )
                 # Safety patch in case pre-instantiation missed it
-                from utils.internvl2_compat import patch_internvl_model_post_instantiation
+                from utils.internvl2_compat import (
+                    patch_internvl_model_post_instantiation,
+                )
 
                 patch_internvl_model_post_instantiation(self._model)
             except Exception as e:
@@ -289,12 +292,15 @@ class InternVL2Custom(lmms):
                     low_cpu_mem_usage=True,
                     trust_remote_code=True,
                     device_map=self.device_map,
+                    attn_implementation="sdpa",
                 ).eval()
                 self._tokenizer = AutoTokenizer.from_pretrained(
                     self.path, trust_remote_code=True, device_map=self.device_map
                 )
                 # Patch GenerationMixin for fallback loading path
-                from utils.internvl2_compat import patch_internvl_model_post_instantiation
+                from utils.internvl2_compat import (
+                    patch_internvl_model_post_instantiation,
+                )
 
                 patch_internvl_model_post_instantiation(self._model)
 
