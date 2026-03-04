@@ -1,4 +1,6 @@
-# Python
+# ============================================================================
+# PYTHON & BUILD ARTIFACTS
+# ============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,81 +10,99 @@ __pycache__/
 dist/
 build/
 
-# Virtual environments
+# ============================================================================
+# VIRTUAL ENVIRONMENTS
+# ============================================================================
 .venv/
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb_checkpoints
-
-# IDE
+# ============================================================================
+# IDE & EDITOR CONFIGURATION
+# ============================================================================
 .idea/
+.vscode/
+.cursor*
 *.swp
 *.swo
 
-# OS
+# ============================================================================
+# OS & SYSTEM FILES
+# ============================================================================
 .DS_Store
 Thumbs.db
 
-# Logs
+# ============================================================================
+# JUPYTER NOTEBOOKS & CACHES
+# ============================================================================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ============================================================================
+# LOGS & TEMPORARY FILES
+# ============================================================================
 logs/
-
-# Experimental files
-tinkering/
-tests/
-
-# Results and outputs
-results/ablations/
-results/caption_evaluation/
-results/captions/
-results/semantic_filter/
-data/
-
-# Backup files and directories
 *.bak
 backup/
 
-# Evaluation data directories (exclude large subdirs)
-evals/**/finetuned_pretrained/
-evals/**/Llava1.5-7B*/
-evals/**/MME_Benchmark_release_version/
-evals/**/original_llava_example/
-plots/
+# ============================================================================
+# EXPERIMENTS & DEVELOPMENT
+# ============================================================================
+tinkering/
+tests/
 
-# Internal docs
-internal_docs/
-pth
-*.bin
-*.safetensors
-# Large data files (to prevent accidental commit of big files)
-# Include specific results files
-*.json
-*.tsv
-*.csv
+# ============================================================================
+# LARGE BINARY FILES (models, checkpoints, archives)
+# ============================================================================
 *.pkl
 *.h5
 *.pt
 *.pth
 *.bin
-*.safetensors
 *.tar.gz
 *.zip
+*.7z
+*.rar
 *.pdf
 
-# Exclude all in evals/ except .ipynb and *_results.jsonl
+# ============================================================================
+# TEXT DATA FILES
+# ============================================================================
+*.json
+*.tsv
+*.csv
+
+# ============================================================================
+# PLOTTING & VISUALIZATION
+# ============================================================================
+plots/
+
+# ============================================================================
+# EVALUATION DIRECTORIES (selective)
+# ============================================================================
+evals/**/finetuned_pretrained/
+evals/**/Llava1.5-7B*/
+evals/**/MME_Benchmark_release_version/
+evals/**/original_llava_example/
+evals/**/*json
+# Keep ipynb and results files
 evals/**/*
 !evals/**/*.ipynb
 !evals/**/*_results.jsonl
-*.7z
-*.rar
 
-# Agents and IDEs
+# ============================================================================
+# PROJECT-SPECIFIC EXCLUSIONS
+# ============================================================================
+results/representations/
+internal_docs/
+
+# ============================================================================
+# GIT & METADATA (git internals should never be in version control)
+# ============================================================================
+.git/
+
+# ============================================================================
+# EXTERNAL TOOLS & DOCUMENTATION
+# ============================================================================
 .github/
 .claude/
 GEMINI.md
 CLAUDE.md
-.cursor*
-.vscode/
-
-# git
-.git/
