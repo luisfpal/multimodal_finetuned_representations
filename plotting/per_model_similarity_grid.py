@@ -2,11 +2,12 @@
 ────────────────────────────────────────────────────────────────────────────────
 One figure per model per stage: a (datasets × metrics) grid of heatmaps.
 
-Stages  – four dataset groups, each producing a separate figure per model:
-            1. cocoqa        — COCOQA splits (human + synthetic)
+Stages  – five dataset groups, each producing a separate figure per model:
+            1. cocoqa_gqa    — COCOQA splits + GQA (human + synthetic)
             2. vqav2         — VQAv2 splits  (human + synthetic)
             3. single_base   — MMBench, MME, POPE, SEED  (repeated_images — raw, with duplicates)
             4. single_unique — MMBench, MME, POPE, SEED  (unique_images — deduplicated)
+            5. open_ended    — MMBench, SEED formatted as open-ended VQA (no choices list)
 
 Rows    – datasets present for this model in this stage, in STAGES order.
           Optionally appends an "Average" row per stage (SHOW_AVERAGE).
@@ -66,7 +67,7 @@ PLOTS_DIR_BASE = Path(
 )
 
 # ── run variant ───────────────────────────────────────────────────────────────
-POOLING_METHOD = "mean_context"  # "last" | "mean_context"
+POOLING_METHOD = "last"  # "last" | "mean_context"
 
 # Optional sub-directory label (e.g. "baseline", "unique_vs_default").
 # Empty string → plots land directly under PLOTS_DIR_BASE / POOLING_METHOD.
@@ -90,6 +91,7 @@ COLORMAP_NORM = "cross_model"  # "none" | "per_metric" | "cross_model"
 # Comment out pairs to deactivate them.
 CROSS_MODEL_PAIRS: list[tuple[str, str]] = [
     ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
+    ("llava_13b", "llava-v1.5-13b-pretrained-lbasile"),
     ("InternVL2-8B", "InternVL2-8B-Pretrain"),
 ]
 
@@ -102,8 +104,8 @@ MODELS = OrderedDict(
         ("InternVL2-8B-Pretrain", "InternVL2-8B (Pretrained)"),
         ("llava_7b", "LLaVA-7B (Finetuned)"),
         ("llava-v1.5-7b-pretrained-lbasile", "LLaVA-7B (Pretrained)"),
-        # ("llava_13b",                     "LLaVA-13B (Finetuned)"),
-        # ("llava-v1.5-13b-pretrained-lbasile", "LLaVA-13B (Pretrained)"),
+        ("llava_13b", "LLaVA-13B (Finetuned)"),
+        ("llava-v1.5-13b-pretrained-lbasile", "LLaVA-13B (Pretrained)"),
         # ("llava_7b_6_17",                 "LLaVA-7B (6→17)"),
         # ("llava_7b_6_17_complementary",   "LLaVA-7B (6→17 Complementary)"),
         # ("InternVL3_5-8B-Pretrained",     "InternVL3.5-8B (Pretrained)"),
@@ -195,6 +197,25 @@ STAGES: list[tuple[str, str, list]] = [
                 "seed_bench_images_captioned_synthetic",
                 "unique_images",
                 "SEED (Unique)",
+            ),
+        ],
+    ),
+    # ── Stage 5: Benchmarks (Open-Ended) ───────────────────────────────────────
+    # MMBench and SEED reformatted as open-ended VQA: no choices list, open guide text.
+    # Dataset prefix: {slug}_open_ended_{caption_source} → separate directory.
+    (
+        "open_ended",
+        "Benchmarks (Open-Ended)",
+        [
+            (
+                "mmbench_en_dev_captioned_open_ended_synthetic",
+                "unique_images",
+                "MMBench (Open-Ended)",
+            ),
+            (
+                "seed_bench_images_captioned_open_ended_synthetic",
+                "unique_images",
+                "SEED (Open-Ended)",
             ),
         ],
     ),
