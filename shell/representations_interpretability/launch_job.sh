@@ -9,10 +9,10 @@ ACCOUNT="dssc"
 JOB_NAME="experiment"
 PARTITION="DGX"
 GPU_TYPE="A100"
-NUM_GPUS=1              # Number of GPUs
+NUM_GPUS=1              # Number of GPUs (requires at least 1 for CUDA models)
 CPUS=16
 MEM="64GB"
-TIME="36:00:00"
+TIME="30:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -25,43 +25,8 @@ LOG_DIR="$PROJECT_ROOT/logs"
 # SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
 SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
 
-# Configuration (read by analysis scripts)
-export REPRESENTATIONS_DIR="$HOME/scratch"
-export SAVE_REPRESENTATIONS="true"
-export UNIQUE_IMAGES="false"
-export ENABLE_SEMANTIC_FILTER="false"
-export DOWNSAMPLE_SIZE=""
-export DATASET_SPLIT="split01"
-export FORCE_RECOMPUTE="true"
 # Job Execution Script
 # =============================================================================
-
-read -r -d '' JOB_COMMANDS << JOB_EOF || true
-# =============================================================================
-# ENVIRONMENT SETUP
-# =============================================================================
-
-TOKENIZERS_PARALLELISM="false"
-
-# Load environment variables from .env
-if [ -f "$PROJECT_ROOT/.env" ]; then
-    set -a
-    source "$PROJECT_ROOT/.env"
-    set +a
-fi
-
-# Change to working directory
-cd "$SCRIPTS_DIR"
-
-# Disable tokenizer parallelism warnings
-export TOKENIZERS_PARALLELISM=\$TOKENIZERS_PARALLELISM
-
-# =============================================================================
-# RUN ANALYSIS
-# =============================================================================
-
-bash "$SCRIPT_NAME"
-JOB_EOF
 
 # =============================================================================
 # Generate SBATCH Script
@@ -86,18 +51,57 @@ SBATCH_DIRECTIVES="#SBATCH --account=$ACCOUNT
 [[ -n "$EXCLUDE" ]] && SBATCH_DIRECTIVES+="
 #SBATCH --exclude=$EXCLUDE"
 
+# Generate sbatch header with environment setup
 cat <<EOT >"$SBATCH_SCRIPT"
 #!/bin/bash
 $SBATCH_DIRECTIVES
 
-$JOB_COMMANDS
+# =============================================================================
+# ENVIRONMENT SETUP
+# =============================================================================
+
+# Configuration (values snapshotted at submission time)
+export REPRESENTATIONS_DIR="$HOME/scratch"
+export SAVE_REPRESENTATIONS="true"
+export REPEATED_IMAGES="false"
+export OPEN_ENDED="true"
+export REPRESENTATIONS_ONLY="false"
+export ENABLE_SEMANTIC_FILTER="false"
+export DOWNSAMPLE_SIZE=""
+export DATASET_SPLIT="split01"
+export FORCE_RECOMPUTE="false"
+
+TOKENIZERS_PARALLELISM="false"
+
+# Load environment variables from .env
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
+# Change to working directory
+cd "$SCRIPTS_DIR"
+
+# Disable tokenizer parallelism warnings
+export TOKENIZERS_PARALLELISM=\$TOKENIZERS_PARALLELISM
+
+# =============================================================================
+# RUN ANALYSIS (script content snapshotted at submission time)
+# =============================================================================
+
 EOT
+
+# Append the analysis script verbatim — raw bytes, no variable expansion
+# This ensures the script is immune to edits made while the job is queued
+cat "$SCRIPTS_DIR/$SCRIPT_NAME" >> "$SBATCH_SCRIPT"
 
 # =============================================================================
 # Submit Job
 # =============================================================================
 
 echo "🟢 Submitting job: $SCRIPT_NAME"
+echo "📋 Snapshotted: $SCRIPTS_DIR/$SCRIPT_NAME ($(wc -l < "$SCRIPTS_DIR/$SCRIPT_NAME") lines)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 JOB_OUTPUT=$(sbatch "$SBATCH_SCRIPT" 2>&1)

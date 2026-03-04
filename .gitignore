@@ -51,7 +51,9 @@ plots/
 *.pkl
 *.h5
 *.pt
+*.pth
 *.bin
+*.safetensors
 *.tar.gz
 *.zip
 *.pdf

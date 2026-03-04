@@ -118,6 +118,7 @@ class MultipleChoiceDatasetBenchmark(Dataset):
         filter_mmbench_4_choices: bool = False,
         allowed_indices: Optional[set[int]] = None,
         unique_images: bool = False,
+        open_ended: bool = False,
     ):
         supported_datasets = [
             "scienceqa",
@@ -143,6 +144,7 @@ class MultipleChoiceDatasetBenchmark(Dataset):
         self.question_instruction_type = question_instruction_type
         self.texts_qa = texts_qa
         self.images_qa = images_qa
+        self.open_ended = open_ended
 
         # Load the initial dataset
         dataset = get_hf_dataset_split(
@@ -352,30 +354,31 @@ class MultipleChoiceDatasetBenchmark(Dataset):
 
         full_question_prompt += f"{question_text}"
 
-        # additional instruction for mmbench
-        if "mmbench" in self.dataset_path_or_name:
-            full_question_prompt += "\nThere are several options:\n"
-        elif (
-            "mme" not in self.dataset_path_or_name
-            and "pope" not in self.dataset_path_or_name
-        ):
-            full_question_prompt += "\n"
+        if not self.open_ended:
+            # additional instruction for mmbench
+            if "mmbench" in self.dataset_path_or_name:
+                full_question_prompt += "\nThere are several options:\n"
+            elif (
+                "mme" not in self.dataset_path_or_name
+                and "pope" not in self.dataset_path_or_name
+            ):
+                full_question_prompt += "\n"
 
-        # add choices for multiple choice benchmarks except MME and POPE (which are Yes/No)
-        if (
-            "mme" not in self.dataset_path_or_name
-            and "pope" not in self.dataset_path_or_name
-        ):
-            if choices_list is not None:
-                last_choice = choices_list[-1]
-                for letter_ord, choice_text in zip(
-                    range(ord("A"), ord("Z") + 1), choices_list
-                ):
-                    separator = (
-                        "." if "scienceqa" not in self.dataset_path_or_name else ":"
-                    )
-                    full_question_prompt += f"{chr(letter_ord)}{separator}{choice_text}"
-                    full_question_prompt += "\n" if choice_text != last_choice else ""
+            # add choices for multiple choice benchmarks except MME and POPE (which are Yes/No)
+            if (
+                "mme" not in self.dataset_path_or_name
+                and "pope" not in self.dataset_path_or_name
+            ):
+                if choices_list is not None:
+                    last_choice = choices_list[-1]
+                    for letter_ord, choice_text in zip(
+                        range(ord("A"), ord("Z") + 1), choices_list
+                    ):
+                        separator = (
+                            "." if "scienceqa" not in self.dataset_path_or_name else ":"
+                        )
+                        full_question_prompt += f"{chr(letter_ord)}{separator}{choice_text}"
+                        full_question_prompt += "\n" if choice_text != last_choice else ""
 
         # these datasets have an imageHash field that can be used to uniquely identify the image
         imageHash = question_data.get("imageHash", None)
@@ -1131,6 +1134,7 @@ def get_dataloader(
     model: Optional[PreTrainedModel] = None,
     allowed_indices: Optional[set[int]] = None,
     unique_images: bool = False,
+    open_ended: bool = False,
     dataset_split: Optional[str] = None,
 ):
     """
@@ -1186,6 +1190,7 @@ def get_dataloader(
             filter_mmbench_4_choices=filter_mmbench_4_choices,
             allowed_indices=allowed_indices,
             unique_images=unique_images,
+            open_ended=open_ended,
         )
     elif (
         "vqav2" in dataset_path_or_name.lower()

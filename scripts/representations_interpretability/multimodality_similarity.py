@@ -127,8 +127,13 @@ def load_or_extract_representation(
                 print(f"  ⚠️ Invalid tensor shape: {tensor.shape}. Re-extracting...")
             else:
                 print("  ⚠️ Key 'residual_stream' not found. Re-extracting...")
-        except Exception as e:
+        except (OSError, IOError, ValueError, KeyError) as e:
+            # File not found, read error, malformed safetensors, or missing key
             print(f"  ⚠️ Error loading cache: {type(e).__name__}: {e}. Re-extracting...")
+        except Exception as e:
+            # Unexpected error — likely a bug, not a cache issue
+            print(f"  ❌ Unexpected error loading cache: {type(e).__name__}: {e}")
+            raise
 
     return residual_stream_tracer(
         model=model,
@@ -274,11 +279,34 @@ def main():
         help="Skip ALL caching: no load, no save, no skip existing. For debugging.",
     )
     parser.add_argument(
-        "--unique-images",
+        "--representations-only",
         action="store_true",
         help=(
-            "Deduplicate MC datasets (MME, MMBench, POPE, SEED) by imageHash. "
-            "Ignored for OpenVQA datasets. Results go under unique_images_mc/ subdir."
+            "Extract and save representations only — skip similarity computation. "
+            "Use this for a two-phase workflow: run with --representations-only first "
+            "across all datasets/models, then rerun without it to compute similarities "
+            "from the cached representations."
+        ),
+    )
+    parser.add_argument(
+        "--repeated-images",
+        action="store_true",
+        help=(
+            "Run MC datasets (MMBench, MME, POPE, SEED) WITHOUT deduplication, "
+            "keeping all samples including repeated images. Results land under "
+            "repeated_images/. Default (without this flag) deduplicates MC datasets "
+            "to unique images. Ignored for non-MC datasets (COCOQA, VQAv2, GQA) "
+            "which are naturally unique."
+        ),
+    )
+    parser.add_argument(
+        "--open-ended",
+        action="store_true",
+        help=(
+            "Format MC datasets (MMBench, SEED) as open-ended VQA: skip the choices "
+            "list and 'There are several options:' header. Adds 'open_ended' to the "
+            "dataset prefix so results land in a separate directory. Ignored for "
+            "non-MC datasets and for MME/POPE which are already Yes/No."
         ),
     )
     parser.add_argument(
@@ -297,8 +325,10 @@ def main():
         print("\n🧪 DRY-RUN MODE — no caching, no saving, fresh computation only")
         if args.results_dir is None:
             args.results_dir = "/tmp/debug_run"
+            print(f"    (results dir defaulted to: {args.results_dir})")
         if args.representations_dir is None:
             args.representations_dir = "/tmp/debug_run"
+            print(f"    (representations dir defaulted to: {args.representations_dir})")
     else:
         if args.results_dir is None or args.representations_dir is None:
             parser.error(
@@ -327,8 +357,26 @@ def main():
             )
         dataset_slug = f"{dataset_slug}_{args.dataset_split}"
 
-    unique_images_tag = "unique_images_mc" if args.unique_images and is_mc else ""
-    dataset_prefix = f"{dataset_slug}_{args.caption_source}"
+    sample_set_tag = "repeated_images" if (is_mc and args.repeated_images) else "unique_images"
+    open_ended_tag = "open_ended" if (is_mc and args.open_ended) else ""
+
+    # Warn when flags are inapplicable (shell already guards these, but be explicit)
+    if args.open_ended and not is_mc:
+        print(
+            f"⚠️  --open-ended ignored: '{args.dataset_path_or_name}' is not a "
+            "multiple-choice benchmark."
+        )
+    if args.repeated_images and not is_mc:
+        print(
+            f"⚠️  --repeated-images ignored: '{args.dataset_path_or_name}' is not a "
+            "multiple-choice benchmark."
+        )
+
+    dataset_prefix = (
+        f"{dataset_slug}_{open_ended_tag}_{args.caption_source}"
+        if open_ended_tag
+        else f"{dataset_slug}_{args.caption_source}"
+    )
 
     seed_all(args.seed)
 
@@ -366,8 +414,10 @@ def main():
     )
     if allowed_indices is not None:
         dl_args["allowed_indices"] = allowed_indices
-    if args.unique_images:
+    if is_mc and not args.repeated_images:
         dl_args["unique_images"] = True
+    if open_ended_tag:
+        dl_args["open_ended"] = True
     if args.dataset_split:
         dl_args["dataset_split"] = args.dataset_split
     if "intern" in model.__class__.__name__.lower():
@@ -385,7 +435,7 @@ def main():
             dataset_prefix,
             pooling_method,
             sem_tag,
-            unique_images_tag,
+            sample_set_tag,
         )
         similarities_dir = os.path.join(analysis_dir, "similarities")
         os.makedirs(similarities_dir, exist_ok=True)
@@ -413,7 +463,7 @@ def main():
             continue
         print(f"    ⚠️  Missing/forced measures: {missing_measures}")
 
-        # Closure: captures pooling_method, sem_tag, unique_images_tag from loop scope
+        # Closure: captures pooling_method, sem_tag, sample_set_tag from loop scope
         def get_repr_path(dataset_n: str) -> str:
             repr_dir = os.path.join(
                 os.path.expanduser(args.representations_dir),
@@ -423,7 +473,7 @@ def main():
                 RESIDUAL_STREAM_TYPE,
                 pooling_method,
                 sem_tag,
-                unique_images_tag,
+                sample_set_tag,
             )
             os.makedirs(repr_dir, exist_ok=True)
             return os.path.join(repr_dir, "representations.safetensors")
@@ -457,19 +507,21 @@ def main():
             "model": model_name,
             "dataset": f"{dataset_prefix}_txt",
             "pooling_method": pooling_method_txt,
-            "pooling_method_requested": pooling_method,
             "caption_source": args.caption_source,
             "semantic_filter": sem_tag,
             "type": RESIDUAL_STREAM_TYPE,
+            "open_ended": str(bool(open_ended_tag)),
+            "repeated_images": str(sample_set_tag == "repeated_images"),
         }
         img_metadata = {
             "model": model_name,
             "dataset": f"{dataset_prefix}_img",
             "pooling_method": pooling_method_img,
-            "pooling_method_requested": pooling_method,
-            "caption_source": "n/a",
+            "caption_source": args.caption_source,
             "semantic_filter": sem_tag,
             "type": RESIDUAL_STREAM_TYPE,
+            "open_ended": str(bool(open_ended_tag)),
+            "repeated_images": str(sample_set_tag == "repeated_images"),
         }
 
         res_txt, res_img = preprocess_and_save_pair(
@@ -483,6 +535,13 @@ def main():
             args.dry_run,
             args.force,
         )
+
+        if args.representations_only:
+            print("  ⏭️  --representations-only: skipping similarity computation.")
+            del res_txt, res_img
+            gc.collect()
+            torch.cuda.empty_cache()
+            continue
 
         # ── Compute Similarities ───────────────────────────────────────────────
         print("  👉 Computing Similarities...")
