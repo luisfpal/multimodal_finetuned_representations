@@ -35,8 +35,9 @@ Colormap normalization (COLORMAP_NORM):
                     in CROSS_MODEL_PAIRS; models not in any pair use per_metric
 
 Note on variants (POOLING_METHOD):
-    "last"         → repeated_images + unique_images available for the 4 benchmarks
-    "mean_context" → unique_images only for benchmarks (repeated_images not computed)
+    "last"                    → repeated_images + unique_images available for the 4 benchmarks
+    "mean_context"            → unique_images only for benchmarks (repeated_images not computed)
+    "mean_image_last_caption" → like mean_context; unique_images only for benchmarks
 ────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -67,7 +68,7 @@ PLOTS_DIR_BASE = Path(
 )
 
 # ── run variant ───────────────────────────────────────────────────────────────
-POOLING_METHOD = "last"  # "last" | "mean_context"
+POOLING_METHOD = "last"  # "last" | "mean_context" | "mean_image_last_caption"
 
 # Optional sub-directory label (e.g. "baseline", "unique_vs_default").
 # Empty string → plots land directly under PLOTS_DIR_BASE / POOLING_METHOD.

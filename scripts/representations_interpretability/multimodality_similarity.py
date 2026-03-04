@@ -27,7 +27,26 @@ load_dotenv()
 MODEL_DTYPE = torch.bfloat16
 ATTN_IMPLEMENTATION = "flash_attention_2"
 RESIDUAL_STREAM_TYPE = "output_layer"
-TOKENS_POOLING_METHODS_DEFAULT = ["last", "mean_context"]
+
+# ── Pooling method registry ────────────────────────────────────────────────
+# Single source of truth for all pooling methods accepted by this script.
+#
+# Virtual methods split img/txt at dispatch time; pass-through methods send
+# the same name to both tracers.  To add a new virtual method, register it
+# here — VALID_POOLING_METHODS and the help text are derived automatically.
+#
+# Format: virtual_method -> (txt_concrete, img_concrete)
+VIRTUAL_POOLING_DISPATCH: dict[str, tuple[str, str]] = {
+    "mean_context": ("mean_text_context", "mean_image"),
+    "mean_image_last_caption": ("last_caption", "mean_image"),
+}
+_PASS_THROUGH_POOLING_METHODS: list[str] = ["last", "mean", "none"]
+VALID_POOLING_METHODS: list[str] = (
+    _PASS_THROUGH_POOLING_METHODS + list(VIRTUAL_POOLING_DISPATCH.keys())
+)
+TOKENS_POOLING_METHODS_DEFAULT: list[str] = ["last", "mean_context"]
+# ──────────────────────────────────────────────────────────────────────────
+
 SIMILARITY_MEASURES_DEFAULT = [
     "neighborhood_overlap",
     "linear_cka",
@@ -237,7 +256,11 @@ def main():
         "--pooling-methods",
         nargs="+",
         default=TOKENS_POOLING_METHODS_DEFAULT,
-        help="List of pooling methods to use (last or mean_context)",
+        help=(
+            f"List of pooling methods to use. "
+            f"Valid: {VALID_POOLING_METHODS}. "
+            f"Default: {TOKENS_POOLING_METHODS_DEFAULT}"
+        ),
     )
     parser.add_argument(
         "--similarity-measures",
@@ -320,6 +343,13 @@ def main():
     )
 
     args = parser.parse_args()
+
+    invalid_pooling = [m for m in args.pooling_methods if m not in VALID_POOLING_METHODS]
+    if invalid_pooling:
+        parser.error(
+            f"Invalid --pooling-methods: {invalid_pooling}. "
+            f"Valid options: {VALID_POOLING_METHODS}"
+        )
 
     if args.dry_run:
         print("\n🧪 DRY-RUN MODE — no caching, no saving, fresh computation only")
@@ -440,11 +470,8 @@ def main():
         similarities_dir = os.path.join(analysis_dir, "similarities")
         os.makedirs(similarities_dir, exist_ok=True)
 
-        pooling_method_txt = (
-            "mean_text_context" if pooling_method == "mean_context" else pooling_method
-        )
-        pooling_method_img = (
-            "mean_image" if pooling_method == "mean_context" else pooling_method
+        pooling_method_txt, pooling_method_img = VIRTUAL_POOLING_DISPATCH.get(
+            pooling_method, (pooling_method, pooling_method)
         )
 
         print(f"\n{'-' * 80}")

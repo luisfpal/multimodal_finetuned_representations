@@ -35,7 +35,7 @@ PLOTS_DIR = Path(
 # VISUAL CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-POOLING_METHODS = ["last", "mean_context"]
+POOLING_METHODS = ["last", "mean_context", "mean_image_last_caption"]
 
 DPI = 150
 CELL_W = 4.0  # wider cells for histograms
@@ -861,7 +861,7 @@ def main():
 
         for target_model_id, model_keys in jobs:
             for stage_key, stage_label, stage_datasets in STAGES:
-                if pooling == "mean_context" and stage_key == "single_base":
+                if pooling in ("mean_context", "mean_image_last_caption") and stage_key == "single_base":
                     print(
                         f"\n  ── Skipping {stage_label} ({stage_key}) for {pooling} [No Data]"
                     )

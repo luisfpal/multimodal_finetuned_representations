@@ -6,21 +6,22 @@
 DATASETS=(
     # "l11p/MME-test-captioned"
     # "l11p/POPE-test-captioned"
-    "l11p/MMBench_EN-dev-captioned"
-    "l11p/SEED-Bench-images-captioned"
-    "l11p/GQA-val-balanced-noyesno-captioned"
-    # "l11p/COCOQA-restval-ICQA"
-    # "l11p/VQAv2-COCO-restval-ICQ"
+    # "l11p/MMBench_EN-dev-captioned"
+    # "l11p/SEED-Bench-images-captioned"
+    # "l11p/GQA-val-balanced-noyesno-captioned"
+    "l11p/COCOQA-restval-ICQA"
+    "l11p/VQAv2-COCO-restval-ICQ"
 )
 
 # Caption source: "human" for COCOQA / VQAv2-ICQ (which have human captions),
 # "synthetic" for everything else. Always passed explicitly so path is deterministic.
-CAPTION_SOURCE="${CAPTION_SOURCE:-synthetic}"
+CAPTION_SOURCE="${CAPTION_SOURCE:-human}"
 
 # Analysis configuration
 TOKENS_POOLING_METHODS=(
-    "last"
-    "mean_context"
+    # "last"
+    # "mean_context"
+    "mean_image_last_caption"
 )
 SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
 
@@ -47,12 +48,12 @@ FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-false}"
 
 # Models to evaluate
 MODELS=(
-    # "lbasile/llava_7b"
-    # "l11p/llava-v1.5-7b-pretrained-lbasile"
-    "lbasile/llava_13b"
-    "l11p/llava-v1.5-13b-pretrained-lbasile"
+    "lbasile/llava_7b"
+    "l11p/llava-v1.5-7b-pretrained-lbasile"
     # "OpenGVLab/InternVL2-8B"  # Finetuned
     # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
+    # "lbasile/llava_13b"
+    # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
     # "OpenGVLab/InternVL3_5-8B-Pretrained"
