@@ -51,7 +51,9 @@ plots/
 
 # Internal docs
 internal_docs/
-
+pth
+*.bin
+*.safetensors
 # Large data files (to prevent accidental commit of big files)
 # Include specific results files
 *.json
