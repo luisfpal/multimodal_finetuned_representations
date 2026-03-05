@@ -599,6 +599,7 @@ def main():
                     save_path = os.path.join(
                         similarities_dir, f"{model_name}_{measure_name}.safetensors"
                     )
+                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
                     save_file(
                         {f"{measure_name}": measure_val},
                         save_path,

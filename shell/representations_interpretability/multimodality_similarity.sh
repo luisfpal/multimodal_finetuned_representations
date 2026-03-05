@@ -105,6 +105,7 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
             IS_MC_DATASET=false
             IS_MC_OPENENDED_CAPABLE=false
             IS_OPENVQA_DATASET=false
+            IS_OPENVQA_SPLIT_CAPABLE=false
             if [[ "$DATASET_PATH_OR_NAME" == *"MMBench"* ]] || \
                [[ "$DATASET_PATH_OR_NAME" == *"SEED"* ]]; then
                 IS_MC_DATASET=true
@@ -116,6 +117,11 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
                  [[ "$DATASET_PATH_OR_NAME" == *"VQAv2"* ]] || \
                  [[ "$DATASET_PATH_OR_NAME" == *"GQA"* ]]; then
                 IS_OPENVQA_DATASET=true
+            fi
+            # Only COCOQA and VQAv2 support --dataset-split. GQA does not have splits.
+            if [[ "$DATASET_PATH_OR_NAME" == *"COCOQA"* ]] || \
+               [[ "$DATASET_PATH_OR_NAME" == *"VQAv2"* ]]; then
+                IS_OPENVQA_SPLIT_CAPABLE=true
             fi
 
             # Guide text: derived entirely from the flags above — no string matching needed
@@ -180,8 +186,8 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
                 CMD_ARGS+=(--representations-only)
             fi
 
-            # Apply --dataset-split only to OpenVQA datasets
-            if [ -n "$DATASET_SPLIT" ] && [ "$IS_OPENVQA_DATASET" = "true" ]; then
+            # Apply --dataset-split only to OpenVQA datasets that support splits (COCOQA, VQAv2)
+            if [ -n "$DATASET_SPLIT" ] && [ "$IS_OPENVQA_SPLIT_CAPABLE" = "true" ]; then
                 CMD_ARGS+=(--dataset-split "$DATASET_SPLIT")
             fi
 
