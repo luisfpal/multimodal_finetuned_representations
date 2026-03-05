@@ -8,20 +8,20 @@ DATASETS=(
     # "l11p/POPE-test-captioned"
     # "l11p/MMBench_EN-dev-captioned"
     # "l11p/SEED-Bench-images-captioned"
-    # "l11p/GQA-val-balanced-noyesno-captioned"
-    "l11p/COCOQA-restval-ICQA"
-    "l11p/VQAv2-COCO-restval-ICQ"
+    "l11p/GQA-val-balanced-noyesno-captioned"
+    # "l11p/COCOQA-restval-ICQA"
+    # "l11p/VQAv2-COCO-restval-ICQ"
 )
 
-# Caption source: "human" for COCOQA / VQAv2-ICQ (which have human captions),
+# Caption source: "human" or "synthetic" for COCOQA / VQAv2-ICQ (which have human captions),
 # "synthetic" for everything else. Always passed explicitly so path is deterministic.
-CAPTION_SOURCE="${CAPTION_SOURCE:-human}"
+CAPTION_SOURCE="${CAPTION_SOURCE:-synthetic}"
 
 # Analysis configuration
 TOKENS_POOLING_METHODS=(
-    # "last"
-    # "mean_context"
-    "mean_image_last_caption"
+    "last"
+    "mean_context"
+    # "mean_image_last_caption"
 )
 SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
 
@@ -141,6 +141,13 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
             fi
             echo "    📝 Guide: $GUIDE_TEXT"
 
+            # Determine effective caption source: only COCOQA and VQAv2 support human captions
+            # MMBench, SEED, GQA, MME, POPE only support synthetic (force override to prevent errors)
+            EFFECTIVE_CAPTION_SOURCE="$CAPTION_SOURCE"
+            if [[ "$DATASET_PATH_OR_NAME" != *"COCOQA"* ]] && [[ "$DATASET_PATH_OR_NAME" != *"VQAv2"* ]]; then
+                EFFECTIVE_CAPTION_SOURCE="synthetic"
+            fi
+
             # Build command with conditional flags
             CMD_ARGS=(
                 --results-dir "$RESULTS_DIR"
@@ -150,7 +157,7 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
                 --batch-size "$BATCH_SIZE"
                 --seed "$SEED"
                 --guide-text "$GUIDE_TEXT"
-                --caption-source "$CAPTION_SOURCE"
+                --caption-source "$EFFECTIVE_CAPTION_SOURCE"
                 --pooling-methods "$POOLING_METHOD"
                 --similarity-measures ${SIMILARITY_MEASURES}
             )
