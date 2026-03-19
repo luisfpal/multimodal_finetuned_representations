@@ -110,3 +110,8 @@ url = "https://download.pytorch.org/whl/cu121"
 [tool.uv.sources]
 torch = { index = "pytorch-cu121" }
 torchvision = { index = "pytorch-cu121" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

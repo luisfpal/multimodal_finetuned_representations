@@ -11,6 +11,10 @@ No library modifications required. Existing scripts are untouched.
 Available captioned tasks:
   mme_captioned              — MME with captions replacing images
   mmbench_en_dev_captioned   — MMBench EN dev with captions
+    mmbench_en_dev_open_ended  — MMBench EN dev visual open-ended
+    mmbench_en_dev_captioned_open_ended — MMBench EN dev captioned open-ended
+    seedbench_open_ended       — SEED-Bench visual open-ended
+    seedbench_captioned_open_ended — SEED-Bench captioned open-ended
   vqav2_val_captioned_synthetic — VQAv2 val with synthetic captions
   vqav2_val_captioned_human    — VQAv2 val with human captions
   gqa_val_balanced           — GQA val-balanced WITH images (new dataset)
@@ -98,6 +102,10 @@ TASK_LIMITS = {
     # Captioned variants (same limits as originals)
     # "mme_captioned": 26,
     "mmbench_en_dev_captioned": 5000,
+    # "mmbench_en_dev_open_ended": 5000,
+    # "mmbench_en_dev_captioned_open_ended": 5000,
+    # "seedbench_open_ended": 5000,
+    # "seedbench_captioned_open_ended": 5000,
     "vqav2_val_captioned_synthetic": 5000,
     "vqav2_val_captioned_human": 5000,
     "gqa_val_balanced": 5000,
@@ -543,6 +551,8 @@ def main() -> None:
         epilog="""
 Captioned tasks (images replaced by text captions):
   mme_captioned, mmbench_en_dev_captioned,
+    mmbench_en_dev_open_ended, mmbench_en_dev_captioned_open_ended,
+    seedbench_open_ended, seedbench_captioned_open_ended,
   vqav2_val_captioned_synthetic, vqav2_val_captioned_human,
   gqa_val_balanced_captioned
 

@@ -9,6 +9,7 @@ from transformers import (
     LlavaNextForConditionalGeneration,
     AutoModelForCausalLM,
     AutoModel,
+    AutoProcessor,
     AutoTokenizer,
     CLIPProcessor,
     CLIPModel,
@@ -43,6 +44,11 @@ SUPPORTED_VL_MODELS = {
     "llava-v1.6": {
         "processor": LlavaNextProcessor,
         "model": LlavaNextForConditionalGeneration,
+    },
+    # LLaVA-OneVision-1.5 -- trust_remote_code required; compat patch applied at load time
+    "onevision": {
+        "processor": AutoProcessor,
+        "model": AutoModelForCausalLM,
     },
     # InternVL 3.5 - standard AutoModel loading
     "internvl3": {
@@ -268,6 +274,10 @@ def load_hf_model_and_processor_or_tokenizer(
         ValueError: If the model type is unsupported.
         RuntimeError: If loading the model or processor fails.
     """
+    if "onevision" in model_name_or_path.lower():
+        from .llavaonevision_compat import patch_flash_attn_varlen_import
+        patch_flash_attn_varlen_import()
+
     if cache_dir is None:
         cache_dir = os.path.expanduser(os.environ.get("HF_HUB_CACHE"))
 
@@ -340,10 +350,8 @@ def load_hf_model_and_processor_or_tokenizer(
         "cache_dir": cache_dir,
     }
 
-    if "internvl3" in model_name_or_path.lower():
-        processor_kwargs["trust_remote_code"] = (
-            True  # InternVL 3.5 requires trusting remote code for processor loading
-        )
+    if "internvl3" in model_name_or_path.lower() or "onevision" in model_name_or_path.lower():
+        processor_kwargs["trust_remote_code"] = True
 
     model_kwargs = {
         **processor_kwargs,
@@ -362,8 +370,6 @@ def load_hf_model_and_processor_or_tokenizer(
 
             if "vicuna" in model_name_or_path.lower():
                 processor.chat_template = LLAVA_CHAT_TEMPLATE
-            # elif "lbasile/llava" in model_name_or_path.lower():
-            #     processor.chat_template = LLAVA_CHAT_TEMPLATE
 
         except Exception as e:
             raise RuntimeError(

@@ -13,25 +13,49 @@ DATASETS=(
     "l11p/VQAv2-COCO-restval-ICQ"
 )
 
-# Caption source: "human" for COCOQA / VQAv2-ICQ (which have human captions),
+# Caption source: "human" or "synthetic" for COCOQA / VQAv2-ICQ (which have human captions),
 # "synthetic" for everything else. Always passed explicitly so path is deterministic.
-CAPTION_SOURCE="${CAPTION_SOURCE:-human}"
+CAPTION_SOURCE="human"
 
 # Analysis configuration
 TOKENS_POOLING_METHODS=(
-    # "last"
-    # "mean_context"
+    "last"
+    "mean_context"
     "mean_image_last_caption"
+    # "last_image_last_caption"
 )
 SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
+SIMILARITY_MEASURES="${SIMILARITY_MEASURES} linear_regression_r2 linear_regression_r2_reversed"
 
 # Processing parameters
 BATCH_SIZE="1" # 1 for MMBench
 SEED="42"
+REGRESSION_TYPE="ols" # Valid: ols | ridge | lasso
 
 # Guide text per dataset (auto-selected in the loop below)
 GUIDE_TEXT_OPENENDED="Answer the question using a single word or phrase."
 GUIDE_TEXT_MULTICHOICE="Answer with the option's letter from the given choices directly."
+
+# Models to evaluate
+MODELS=(
+    "lbasile/llava_7b"
+    # "l11p/llava-v1.5-7b-pretrained-lbasile"
+    # "OpenGVLab/InternVL2-8B"  # Finetuned
+    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
+    # "lbasile/llava_13b"
+    # "l11p/llava-v1.5-13b-pretrained-lbasile"
+    # "lbasile/LLaVA-OneVision-1.5-8B-stage1"
+    # "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
+    # "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
+    # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+    # "lbasile/llava_7b_6_17"
+    # "lbasile/llava_7b_6_17_complementary"
+    # "OpenGVLab/InternVL3_5-8B-Pretrained"
+    # "OpenGVLab/InternVL3_5-8B-Instruct"
+    # "OpenGVLab/InternVL3_5-8B-MPO"
+    # "OpenGVLab/InternVL3_5-8B"
+
+)
 
 # Configuration from environment (set by launch_job.sh)
 DOWNSAMPLE_SIZE="${DOWNSAMPLE_SIZE:-}"
@@ -45,22 +69,6 @@ ENABLE_SEMANTIC_FILTER="${ENABLE_SEMANTIC_FILTER:-false}"
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 SAVE_REPRESENTATIONS="${SAVE_REPRESENTATIONS:-true}"
 FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-false}"
-
-# Models to evaluate
-MODELS=(
-    "lbasile/llava_7b"
-    "l11p/llava-v1.5-7b-pretrained-lbasile"
-    # "OpenGVLab/InternVL2-8B"  # Finetuned
-    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
-    # "lbasile/llava_13b"
-    # "l11p/llava-v1.5-13b-pretrained-lbasile"
-    # "lbasile/llava_7b_6_17"
-    # "lbasile/llava_7b_6_17_complementary"
-    # "OpenGVLab/InternVL3_5-8B-Pretrained"
-    # "OpenGVLab/InternVL3_5-8B-Instruct"
-    # "OpenGVLab/InternVL3_5-8B-MPO"
-    # "OpenGVLab/InternVL3_5-8B"
-)
 
 # Directory configuration
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
@@ -105,6 +113,7 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
             IS_MC_DATASET=false
             IS_MC_OPENENDED_CAPABLE=false
             IS_OPENVQA_DATASET=false
+            IS_OPENVQA_SPLIT_CAPABLE=false
             if [[ "$DATASET_PATH_OR_NAME" == *"MMBench"* ]] || \
                [[ "$DATASET_PATH_OR_NAME" == *"SEED"* ]]; then
                 IS_MC_DATASET=true
@@ -116,6 +125,11 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
                  [[ "$DATASET_PATH_OR_NAME" == *"VQAv2"* ]] || \
                  [[ "$DATASET_PATH_OR_NAME" == *"GQA"* ]]; then
                 IS_OPENVQA_DATASET=true
+            fi
+            # Only COCOQA and VQAv2 support --dataset-split. GQA does not have splits.
+            if [[ "$DATASET_PATH_OR_NAME" == *"COCOQA"* ]] || \
+               [[ "$DATASET_PATH_OR_NAME" == *"VQAv2"* ]]; then
+                IS_OPENVQA_SPLIT_CAPABLE=true
             fi
 
             # Guide text: derived entirely from the flags above — no string matching needed
@@ -135,6 +149,13 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
             fi
             echo "    📝 Guide: $GUIDE_TEXT"
 
+            # Determine effective caption source: only COCOQA and VQAv2 support human captions
+            # MMBench, SEED, GQA, MME, POPE only support synthetic (force override to prevent errors)
+            EFFECTIVE_CAPTION_SOURCE="$CAPTION_SOURCE"
+            if [[ "$DATASET_PATH_OR_NAME" != *"COCOQA"* ]] && [[ "$DATASET_PATH_OR_NAME" != *"VQAv2"* ]]; then
+                EFFECTIVE_CAPTION_SOURCE="synthetic"
+            fi
+
             # Build command with conditional flags
             CMD_ARGS=(
                 --results-dir "$RESULTS_DIR"
@@ -144,9 +165,10 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
                 --batch-size "$BATCH_SIZE"
                 --seed "$SEED"
                 --guide-text "$GUIDE_TEXT"
-                --caption-source "$CAPTION_SOURCE"
+                --caption-source "$EFFECTIVE_CAPTION_SOURCE"
                 --pooling-methods "$POOLING_METHOD"
                 --similarity-measures ${SIMILARITY_MEASURES}
+                --regression-type "$REGRESSION_TYPE"
             )
 
             # Only pass --downsample-size when explicitly set (empty = no downsampling)
@@ -180,8 +202,8 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
                 CMD_ARGS+=(--representations-only)
             fi
 
-            # Apply --dataset-split only to OpenVQA datasets
-            if [ -n "$DATASET_SPLIT" ] && [ "$IS_OPENVQA_DATASET" = "true" ]; then
+            # Apply --dataset-split only to OpenVQA datasets that support splits (COCOQA, VQAv2)
+            if [ -n "$DATASET_SPLIT" ] && [ "$IS_OPENVQA_SPLIT_CAPABLE" = "true" ]; then
                 CMD_ARGS+=(--dataset-split "$DATASET_SPLIT")
             fi
 

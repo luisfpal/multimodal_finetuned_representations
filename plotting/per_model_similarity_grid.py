@@ -38,11 +38,13 @@ Note on variants (POOLING_METHOD):
     "last"                    → repeated_images + unique_images available for the 4 benchmarks
     "mean_context"            → unique_images only for benchmarks (repeated_images not computed)
     "mean_image_last_caption" → like mean_context; unique_images only for benchmarks
+    "last_image_last_caption" → like mean_context; unique_images only for benchmarks
 ────────────────────────────────────────────────────────────────────────────────
 """
 
 from collections import OrderedDict
 from pathlib import Path
+import argparse
 
 import numpy as np
 import matplotlib
@@ -68,7 +70,21 @@ PLOTS_DIR_BASE = Path(
 )
 
 # ── run variant ───────────────────────────────────────────────────────────────
-POOLING_METHOD = "last"  # "last" | "mean_context" | "mean_image_last_caption"
+POOLING_METHODS = [
+    "last",
+    "mean_context",
+    "mean_image_last_caption",
+]  # "last" | "mean_context" | "mean_image_last_caption" | "last_image_last_caption"
+
+# Backward-compatible runtime variable used by path helpers.
+# It is overwritten inside main() while iterating POOLING_METHODS.
+POOLING_METHOD = POOLING_METHODS[0]
+
+# Figure generation mode:
+#   "specific"   -> legacy per-stage figures only
+#   "aggregated" -> only one figure per pair averaged across all selected datasets
+#   "both"       -> generate both sets
+FIGURE_MODE = "aggregated"
 
 # Optional sub-directory label (e.g. "baseline", "unique_vs_default").
 # Empty string → plots land directly under PLOTS_DIR_BASE / POOLING_METHOD.
@@ -94,6 +110,8 @@ CROSS_MODEL_PAIRS: list[tuple[str, str]] = [
     ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
     ("llava_13b", "llava-v1.5-13b-pretrained-lbasile"),
     ("InternVL2-8B", "InternVL2-8B-Pretrain"),
+    ("LLaVA-OneVision-1.5-8B-stage2-2600", "LLaVA-OneVision-1.5-8B-stage1"),
+    ("LLaVA-OneVision-1.5-8B-Instruct", "LLaVA-OneVision-1.5-8B-Base"),
 ]
 
 # ── models ────────────────────────────────────────────────────────────────────
@@ -107,6 +125,10 @@ MODELS = OrderedDict(
         ("llava-v1.5-7b-pretrained-lbasile", "LLaVA-7B (Pretrained)"),
         ("llava_13b", "LLaVA-13B (Finetuned)"),
         ("llava-v1.5-13b-pretrained-lbasile", "LLaVA-13B (Pretrained)"),
+        ("LLaVA-OneVision-1.5-8B-stage2-2600", "LLaVA-OneVision-8B (Finetuned)"),
+        ("LLaVA-OneVision-1.5-8B-stage1", "LLaVA-OneVision-8B (Pretrained)"),
+        ("LLaVA-OneVision-1.5-8B-Instruct", "LLaVA-OneVision-8B (Instruct)"),
+        ("LLaVA-OneVision-1.5-8B-Base", "LLaVA-OneVision-8B (Base)"),
         # ("llava_7b_6_17",                 "LLaVA-7B (6→17)"),
         # ("llava_7b_6_17_complementary",   "LLaVA-7B (6→17 Complementary)"),
         # ("InternVL3_5-8B-Pretrained",     "InternVL3.5-8B (Pretrained)"),
@@ -140,9 +162,9 @@ STAGES: list[tuple[str, str, list]] = [
         "Open-Ended VQA (COCOQA + GQA)",
         [
             ("cocoqa_restval_icqa_split01_human", "unique_images", "COCOQA Split01 (Human)"),
-            ("cocoqa_restval_icqa_split01_synthetic", "unique_images", "COCOQA Split01 (Synthetic)"),
-            ("cocoqa_restval_icqa_split02_human", "unique_images", "COCOQA Split02 (Human)"),
-            ("cocoqa_restval_icqa_split02_synthetic", "unique_images", "COCOQA Split02 (Synthetic)"),
+            # ("cocoqa_restval_icqa_split01_synthetic", "unique_images", "COCOQA Split01 (Synthetic)"),
+            # ("cocoqa_restval_icqa_split02_human", "unique_images", "COCOQA Split02 (Human)"),
+            # ("cocoqa_restval_icqa_split02_synthetic", "unique_images", "COCOQA Split02 (Synthetic)"),
             ("gqa_val_balanced_noyesno_captioned_synthetic", "unique_images", "GQA"),
         ],
     ),
@@ -152,55 +174,55 @@ STAGES: list[tuple[str, str, list]] = [
         "VQAv2",
         [
             ("vqav2_coco_restval_icq_split01_human", "unique_images", "VQAv2 Split01 (Human)"),
-            (
-                "vqav2_coco_restval_icq_split01_synthetic",
-                "unique_images",
-                "VQAv2 Split01 (Synthetic)",
-            ),
-            ("vqav2_coco_restval_icq_split02_human", "unique_images", "VQAv2 Split02 (Human)"),
-            (
-                "vqav2_coco_restval_icq_split02_synthetic",
-                "unique_images",
-                "VQAv2 Split02 (Synthetic)",
-            ),
-            ("vqav2_coco_restval_icq_split03_human", "unique_images", "VQAv2 Split03 (Human)"),
-            (
-                "vqav2_coco_restval_icq_split03_synthetic",
-                "unique_images",
-                "VQAv2 Split03 (Synthetic)",
-            ),
+            # (
+            #     "vqav2_coco_restval_icq_split01_synthetic",
+            #     "unique_images",
+            #     "VQAv2 Split01 (Synthetic)",
+            # ),
+            # ("vqav2_coco_restval_icq_split02_human", "unique_images", "VQAv2 Split02 (Human)"),
+            # (
+            #     "vqav2_coco_restval_icq_split02_synthetic",
+            #     "unique_images",
+            #     "VQAv2 Split02 (Synthetic)",
+            # ),
+            # ("vqav2_coco_restval_icq_split03_human", "unique_images", "VQAv2 Split03 (Human)"),
+            # (
+            #     "vqav2_coco_restval_icq_split03_synthetic",
+            #     "unique_images",
+            #     "VQAv2 Split03 (Synthetic)",
+            # ),
         ],
     ),
-    # ── Stage 3: Benchmarks (Repeated Images) ─────────────────────────────────────
-    (
-        "single_base",
-        "Benchmarks (Repeated Images)",
-        [
-            ("mmbench_en_dev_captioned_synthetic", "repeated_images", "MMBench"),
-            ("mme_test_captioned_synthetic", "repeated_images", "MME"),
-            ("pope_test_captioned_synthetic", "repeated_images", "POPE"),
-            ("seed_bench_images_captioned_synthetic", "repeated_images", "SEED"),
-        ],
-    ),
-    # ── Stage 4: Benchmarks (Unique Images) ────────────────────────────────────
-    (
-        "single_unique",
-        "Benchmarks (Unique Images)",
-        [
-            (
-                "mmbench_en_dev_captioned_synthetic",
-                "unique_images",
-                "MMBench (Unique)",
-            ),
-            ("mme_test_captioned_synthetic", "unique_images", "MME (Unique)"),
-            ("pope_test_captioned_synthetic", "unique_images", "POPE (Unique)"),
-            (
-                "seed_bench_images_captioned_synthetic",
-                "unique_images",
-                "SEED (Unique)",
-            ),
-        ],
-    ),
+    # # ── Stage 3: Benchmarks (Repeated Images) ─────────────────────────────────────
+    # (
+    #     "single_base",
+    #     "Benchmarks (Repeated Images)",
+    #     [
+    #         ("mmbench_en_dev_captioned_synthetic", "repeated_images", "MMBench"),
+    #         ("mme_test_captioned_synthetic", "repeated_images", "MME"),
+    #         ("pope_test_captioned_synthetic", "repeated_images", "POPE"),
+    #         ("seed_bench_images_captioned_synthetic", "repeated_images", "SEED"),
+    #     ],
+    # ),
+    # # ── Stage 4: Benchmarks (Unique Images) ────────────────────────────────────
+    # (
+    #     "single_unique",
+    #     "Benchmarks (Unique Images)",
+    #     [
+    #         (
+    #             "mmbench_en_dev_captioned_synthetic",
+    #             "unique_images",
+    #             "MMBench (Unique)",
+    #         ),
+    #         ("mme_test_captioned_synthetic", "unique_images", "MME (Unique)"),
+    #         ("pope_test_captioned_synthetic", "unique_images", "POPE (Unique)"),
+    #         (
+    #             "seed_bench_images_captioned_synthetic",
+    #             "unique_images",
+    #             "SEED (Unique)",
+    #         ),
+    #     ],
+    # ),
     # ── Stage 5: Benchmarks (Open-Ended) ───────────────────────────────────────
     # MMBench and SEED reformatted as open-ended VQA: no choices list, open guide text.
     # Dataset prefix: {slug}_open_ended_{caption_source} → separate directory.
@@ -500,6 +522,24 @@ def _row_specs(stage_datasets: list, model_data: dict, avgs: dict) -> list:
     return rows
 
 
+def aggregate_model_across_all_datasets(model_data: dict) -> dict:
+    """Element-wise mean per metric across all selected datasets for one model."""
+    buckets: dict = {}
+    for ds_metrics in model_data.values():
+        for metric, arr in ds_metrics.items():
+            buckets.setdefault(metric, []).append(arr)
+
+    aggregated: dict = {}
+    for metric, arrays in buckets.items():
+        if len(arrays) == 1:
+            aggregated[metric] = arrays[0]
+            continue
+        if len({a.shape for a in arrays}) != 1:
+            continue
+        aggregated[metric] = np.mean(np.stack(arrays), axis=0)
+    return aggregated
+
+
 def build_figure(
     model_id: str,
     stage_label: str,
@@ -581,13 +621,99 @@ def build_figure(
     return fig
 
 
+def build_aggregated_pair_figure(
+    finetuned_id: str,
+    pretrained_id: str,
+    aggregated_data: dict,
+    bounds: dict,
+) -> "plt.Figure | None":
+    """Build one 2×metrics figure averaged across all selected datasets for a model pair."""
+    row_model_ids = [pretrained_id, finetuned_id]
+    mkeys = list(METRICS.keys())
+    nR, nC = 2, len(mkeys)
+
+    if not any(aggregated_data.get(mid) for mid in row_model_ids):
+        return None
+
+    fig_w = MARGIN_LEFT + nC * CELL_W + (nC - 1) * CELL_W * WSPACE + MARGIN_RIGHT
+    fig_h = MARGIN_TOP + nR * CELL_H + (nR - 1) * CELL_H * HSPACE + MARGIN_BOTTOM
+
+    fig, axes = plt.subplots(nR, nC, figsize=(fig_w, fig_h), squeeze=False)
+    fig.subplots_adjust(
+        left=MARGIN_LEFT / fig_w,
+        right=1.0 - MARGIN_RIGHT / fig_w,
+        top=1.0 - MARGIN_TOP / fig_h,
+        bottom=MARGIN_BOTTOM / fig_h,
+        wspace=WSPACE,
+        hspace=HSPACE,
+    )
+
+    for r, model_id in enumerate(row_model_ids):
+        row_data = aggregated_data.get(model_id, {})
+        row_bounds = bounds.get(model_id, {})
+        for c, mk in enumerate(mkeys):
+            ax = axes[r, c]
+            if mk in row_data:
+                vmin, vmax = None, None
+                if row_bounds and mk in row_bounds:
+                    vmin, vmax = row_bounds[mk][0], row_bounds[mk][1]
+                im = _draw_heatmap(ax, row_data[mk], vmin=vmin, vmax=vmax)
+                _draw_colorbar(ax, im)
+            else:
+                _draw_missing(ax)
+
+            if r == 0:
+                ax.set_title(METRICS[mk], fontsize=FONT["col_header"], pad=8)
+
+    bottom_f = MARGIN_BOTTOM / fig_h
+    top_f = 1.0 - MARGIN_TOP / fig_h
+    grid_span = top_f - bottom_f
+    eff_h = grid_span / (nR + max(nR - 1, 0) * HSPACE)
+    x_lbl = 0.5 * MARGIN_LEFT / fig_w
+    for r, model_id in enumerate(row_model_ids):
+        row_from_bottom = nR - 1 - r
+        y0 = bottom_f + row_from_bottom * eff_h * (1 + HSPACE)
+        fig.text(
+            x_lbl,
+            y0 + eff_h / 2,
+            MODELS.get(model_id, model_id),
+            fontsize=FONT["row_label"],
+            ha="center",
+            va="center",
+            fontweight="bold",
+        )
+
+    fig.suptitle(
+        "Aggregated Across Selected Datasets",
+        fontsize=FONT["suptitle"],
+        fontweight="bold",
+        y=0.98,
+    )
+    return fig
+
+
 # ==============================================================================
 # SECTION 5  –  MAIN
 # ==============================================================================
 
 
 def main():
-    plots_dir = _make_plots_dir()
+    parser = argparse.ArgumentParser(
+        description="Generate multimodality similarity heatmaps."
+    )
+    parser.add_argument(
+        "--figure-mode",
+        choices=["specific", "aggregated", "both"],
+        default=FIGURE_MODE,
+        help="specific=stage figures, aggregated=all-datasets average per pair, both=run both",
+    )
+    parser.add_argument(
+        "--pooling-methods",
+        nargs="+",
+        default=POOLING_METHODS,
+        help="Pooling methods to process.",
+    )
+    args = parser.parse_args()
 
     norm_info = f"norm={COLORMAP_NORM}"
     if COLORMAP_NORM == "cross_model":
@@ -597,45 +723,89 @@ def main():
 
     print("=" * 72)
     print("  per_model_similarity_grid")
-    print(f"  pooling={POOLING_METHOD} | {norm_info}{label_info}")
+    print(f"  mode={args.figure_mode} | {norm_info}{label_info}")
     print("=" * 72)
 
-    print("\n  Loading data...")
-    data = load_all_data()
+    global POOLING_METHOD
+    for pooling in args.pooling_methods:
+        POOLING_METHOD = pooling
+        plots_dir = _make_plots_dir()
 
-    print("\n  Computing colormap bounds...")
-    bounds = compute_metric_bounds(data)
-    _print_bounds(bounds)
+        print("\n" + "-" * 72)
+        print(f"  pooling={POOLING_METHOD}")
+        print("-" * 72)
 
-    plots_dir.mkdir(parents=True, exist_ok=True)
+        print("\n  Loading data...")
+        data = load_all_data()
+        plots_dir.mkdir(parents=True, exist_ok=True)
 
-    print()
-    print("=" * 72)
-    print("  Generating figures")
-    print("=" * 72)
+        if args.figure_mode in {"specific", "both"}:
+            print("\n  Computing colormap bounds (specific)...")
+            bounds = compute_metric_bounds(data)
+            _print_bounds(bounds)
 
-    for model_id in MODELS:
-        if model_id not in data:
-            continue
-        model_bounds = bounds.get(model_id, {})
+            print("\n  Generating specific-stage figures...")
+            for model_id in MODELS:
+                if model_id not in data:
+                    continue
+                model_bounds = bounds.get(model_id, {})
 
-        for stage_key, stage_label, stage_datasets in STAGES:
-            print(f"\n  {MODELS[model_id]}  [{stage_key}]")
-            fig = build_figure(
-                model_id,
-                stage_label,
-                stage_datasets,
-                data[model_id],
-                model_bounds,
-            )
-            if fig is None:
-                print("    (no data for this stage — skipped)")
-                continue
+                for stage_key, stage_label, stage_datasets in STAGES:
+                    print(f"\n  {MODELS[model_id]}  [{stage_key}]")
+                    fig = build_figure(
+                        model_id,
+                        stage_label,
+                        stage_datasets,
+                        data[model_id],
+                        model_bounds,
+                    )
+                    if fig is None:
+                        print("    (no data for this stage — skipped)")
+                        continue
 
-            out = plots_dir / f"{model_id}_{stage_key}.png"
-            fig.savefig(str(out), dpi=DPI_PNG, facecolor="white", bbox_inches="tight")
-            print(f"    ✓  {out}")
-            plt.close(fig)
+                    out = plots_dir / f"{model_id}_{stage_key}.png"
+                    fig.savefig(
+                        str(out), dpi=DPI_PNG, facecolor="white", bbox_inches="tight"
+                    )
+                    print(f"    ✓  {out}")
+                    plt.close(fig)
+
+        if args.figure_mode in {"aggregated", "both"}:
+            print("\n  Computing aggregated data across all selected datasets...")
+            aggregated_data: dict = {}
+            for model_id, model_data in data.items():
+                aggregated = aggregate_model_across_all_datasets(model_data)
+                if aggregated:
+                    aggregated_data[model_id] = aggregated
+
+            agg_bounds_input = {
+                model_id: {("aggregated_all", ""): metrics}
+                for model_id, metrics in aggregated_data.items()
+            }
+            agg_bounds = compute_metric_bounds(agg_bounds_input)
+            _print_bounds(agg_bounds)
+
+            print("\n  Generating aggregated pair figures...")
+            for finetuned_id, pretrained_id in CROSS_MODEL_PAIRS:
+                if finetuned_id not in aggregated_data and pretrained_id not in aggregated_data:
+                    continue
+
+                fig = build_aggregated_pair_figure(
+                    finetuned_id,
+                    pretrained_id,
+                    aggregated_data,
+                    agg_bounds,
+                )
+                if fig is None:
+                    print(
+                        f"    (no aggregated data for pair {finetuned_id} ↔ {pretrained_id} — skipped)"
+                    )
+                    continue
+
+                out = plots_dir / f"{finetuned_id}_aggregated_all.png"
+                fig.savefig(str(out), dpi=DPI_PNG, facecolor="white", bbox_inches="tight")
+                print(f"    ✓  {out}")
+                plt.close(fig)
 
     print("\n  Done.")
 

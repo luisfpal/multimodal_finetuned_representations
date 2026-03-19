@@ -32,6 +32,7 @@ VALID_TOKENS_POOLING_METHODS = [
     "none",
     "sample",
     "mean_image",
+    "last_image",
     "mean_text_context",
     "last_caption",
 ]
@@ -217,14 +218,18 @@ class ResidualStreamTracer(abc.ABC):
             seq_len = int(sequence_lengths[idx])
             current_input_ids = input_ids[idx, -seq_len:]
 
-            if self.tokens_pooling_method == "mean_image":
+            if self.tokens_pooling_method in ["mean_image", "last_image"]:
+                # Both mean_image and last_image use the same image-token span;
+                # mean vs last distinction is resolved downstream in _pool_tokens.
                 pooling_indices.append(
                     get_image_token_indices(
                         current_input_ids,
                         self.image_token_ids,
                     )
                 )
-            elif self.tokens_pooling_method == "mean_text_context":
+            elif self.tokens_pooling_method in ["mean_text_context", "last_caption"]:
+                # Both mean_text_context and last_caption use the same text-context span;
+                # mean vs last distinction is resolved downstream in _pool_tokens.
                 pooling_indices.append(
                     get_text_context_indices(
                         current_input_ids,
@@ -238,15 +243,6 @@ class ResidualStreamTracer(abc.ABC):
                 # print(
                 #     f"Decoded text context for sample {self.counter + idx}: {decoded_caption_text!r}"
                 # )
-            elif self.tokens_pooling_method == "last_caption":
-                # Reuse the same caption-span indices as mean_text_context;
-                # the last-token selection happens downstream in _pool_tokens.
-                pooling_indices.append(
-                    get_text_context_indices(
-                        current_input_ids,
-                        tokenizer=self.tokenizer,
-                    )
-                )
             else:
                 raise ValueError(
                     f"Unsupported pooling method for context indices: "
@@ -278,7 +274,7 @@ class ResidualStreamTracer(abc.ABC):
                 **sampling_args,
             )
 
-        if self.tokens_pooling_method in ["mean_image", "mean_text_context", "last_caption"]:
+        if self.tokens_pooling_method in ["mean_image", "last_image", "mean_text_context", "last_caption"]:
             source_input_ids = batch_input_ids
             if source_input_ids is None:
                 source_input_ids = getattr(batch_inputs, "input_ids", None)
@@ -305,7 +301,7 @@ class ResidualStreamTracer(abc.ABC):
             Pooled tensor or original tensor if no pooling
         """
         if (
-            self.tokens_pooling_method in ["sample", "mean_image", "mean_text_context", "last_caption"]
+            self.tokens_pooling_method in ["sample", "mean_image", "last_image", "mean_text_context", "last_caption"]
             and pooling_indices is None
         ):
             raise ValueError(
@@ -371,16 +367,17 @@ class ResidualStreamTracer(abc.ABC):
                     f"Unsupported tensor dimensions for context pooling: {hidden_states.ndim}"
                 )
 
-        elif self.tokens_pooling_method == "last_caption":
+        elif self.tokens_pooling_method in ["last_caption", "last_image"]:
             # Guard: empty indices → fail loudly
             if len(pooling_indices) == 0:
                 raise ValueError(
                     f"Empty pooling indices for '{self.tokens_pooling_method}' — "
                     "cannot select last token from 0 tokens. Check that the input "
-                    "contains the expected token type (user text span for last_caption)."
+                    "contains the expected token type (text span for last_caption, "
+                    "image tokens for last_image)."
                 )
-            # pooling_indices is torch.arange(start, end), so pooling_indices[-1]
-            # is the index of the last caption token in the (trimmed) sequence.
+            # pooling_indices is torch.arange(start, end); pooling_indices[-1]
+            # is the index of the last token in the span (caption or image).
             # case 1: (layers, seq_len(idx), hidden_size)
             if ndims == 3:
                 return hidden_states[:, pooling_indices[-1], :]
@@ -389,7 +386,7 @@ class ResidualStreamTracer(abc.ABC):
                 return hidden_states[pooling_indices[-1], :]
             else:
                 raise ValueError(
-                    f"Unsupported tensor dimensions for last_caption pooling: {hidden_states.ndim}"
+                    f"Unsupported tensor dimensions for {self.tokens_pooling_method} pooling: {hidden_states.ndim}"
                 )
 
         else:
@@ -583,6 +580,7 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
             "last",
             "sample",
             "mean_image",
+            "last_image",
             "mean_text_context",
             "last_caption",
         ]:
@@ -721,6 +719,7 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
             "last",
             "sample",
             "mean_image",
+            "last_image",
             "mean_text_context",
             "last_caption",
         ]:
@@ -881,6 +880,7 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
             "last",
             "sample",
             "mean_image",
+            "last_image",
             "mean_text_context",
             "last_caption",
         ]:
@@ -1060,6 +1060,7 @@ def residual_stream_tracer(
             "none",
             "sample",
             "mean_image",
+            "last_image",
             "mean_text_context",
             "last_caption",
         ]
@@ -1106,11 +1107,12 @@ def residual_stream_tracer(
         model (ModelType): huggingface multimodal decoder-based model
         processed_dataloader (DataLoader): processed dataloader to iterate over the dataset
         return_dtype (torch.dtype, optional): dtype of the residual stream. Defaults to torch.bfloat16.
-        tokens_pooling_method (Optional[Literal["mean", "last", "none", "sample", "mean_image", "mean_text_context", "last_caption"]], optional): method to pool the tokens. Defaults to "last".
-            Note: ``mean_context`` and ``mean_image_last_caption`` are *virtual* pooling methods
-            dispatched at the experiment-script level.
+        tokens_pooling_method (Optional[Literal["mean", "last", "none", "sample", "mean_image", "last_image", "mean_text_context", "last_caption"]], optional): method to pool the tokens. Defaults to "last".
+            Note: ``mean_context``, ``mean_image_last_caption``, and ``last_image_last_caption`` are
+            *virtual* pooling methods dispatched at the experiment-script level.
             ``mean_context`` splits into ``mean_image`` (images) and ``mean_text_context`` (text).
             ``mean_image_last_caption`` splits into ``mean_image`` (images) and ``last_caption`` (text).
+            ``last_image_last_caption`` splits into ``last_image`` (images) and ``last_caption`` (text).
             Pass the concrete method here.
         residual_stream_type (str, optional): type of the residual stream. Defaults to "output_layer".
         return_deepcopy (bool, optional): whether to return a deepcopy of the residual stream.

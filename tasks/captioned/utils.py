@@ -15,6 +15,7 @@ No library code is modified.
 from typing import List, Optional
 
 import pandas as pd
+from lmms_eval.tasks._task_utils.vqa_eval_metric import EvalAIAnswerProcessor
 
 # =============================================================================
 # CAPTION FORMATTING
@@ -27,6 +28,8 @@ SINGLE_CAPTION_PREFIX = (
 MULTI_CAPTION_PREFIX_TEMPLATE = (
     "\nBelow are {n} descriptions of an image. Use them to answer the question.\n\n"
 )
+
+VQA_ANSWER_PROCESSOR = EvalAIAnswerProcessor()
 
 
 def format_single_caption(caption: str) -> str:
@@ -49,6 +52,11 @@ def format_multi_captions(captions: List[str]) -> str:
 def captioned_doc_to_visual(doc):
     """Return empty list — models operate in text-only mode."""
     return []
+
+
+def single_image_doc_to_visual(doc):
+    """Return a single RGB image from datasets where `image` is one PIL image."""
+    return [doc["image"].convert("RGB")]
 
 
 # =============================================================================
@@ -173,6 +181,109 @@ def mmbench_captioned_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     return f"{format_single_caption(caption)}{query}"
 
 
+def _get_single_word_phrase_post_prompt(lmms_eval_specific_kwargs=None) -> str:
+    if not lmms_eval_specific_kwargs:
+        return ""
+    return lmms_eval_specific_kwargs.get("post_prompt", "")
+
+
+def _normalize_answer_for_exact_match(answer: Optional[str]) -> str:
+    if answer is None:
+        return ""
+    normalized = answer.replace("\n", " ").replace("\t", " ").strip()
+    normalized = VQA_ANSWER_PROCESSOR.process_punctuation(normalized)
+    return VQA_ANSWER_PROCESSOR.process_digit_article(normalized)
+
+
+def _mmbench_letter_to_text_answer(doc) -> str:
+    answer_letter = str(doc.get("answer", "")).strip().upper()
+    answer_text = doc.get(answer_letter)
+    return "" if answer_text is None else str(answer_text)
+
+
+def _seedbench_letter_to_text_answer(doc) -> str:
+    answer_letter = str(doc.get("answer", "")).strip().upper()
+    key_by_letter = {
+        "A": "choice_a",
+        "B": "choice_b",
+        "C": "choice_c",
+        "D": "choice_d",
+    }
+    choice_key = key_by_letter.get(answer_letter)
+    if choice_key is None:
+        return ""
+    answer_text = doc.get(choice_key)
+    return "" if answer_text is None else str(answer_text)
+
+
+def mmbench_open_ended_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+    """MMBench open-ended question text (no options block, no system options prompt)."""
+    hint = doc.get("hint", "")
+    question = doc["question"]
+
+    if pd.notna(hint) and hint != "nan" and hint != "":
+        query = f"{hint} {question}"
+    else:
+        query = question
+
+    post_prompt = _get_single_word_phrase_post_prompt(lmms_eval_specific_kwargs)
+    if post_prompt:
+        query = f"{query}\n{post_prompt}"
+
+    return query
+
+
+def mmbench_captioned_open_ended_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+    """MMBench captioned open-ended question text (caption + question, no options)."""
+    caption = doc["caption"]
+    query = mmbench_open_ended_doc_to_text(doc, lmms_eval_specific_kwargs)
+    return f"{format_single_caption(caption)}{query}"
+
+
+def mmbench_open_ended_doc_to_target(doc):
+    """MMBench open-ended target as option text instead of option letter."""
+    return _mmbench_letter_to_text_answer(doc)
+
+
+def mmbench_open_ended_process_results(doc, result):
+    """Exact match with VQAv2-style normalization for open-ended MMBench."""
+    pred = result[0] if result else ""
+    pred_norm = _normalize_answer_for_exact_match(pred)
+    answer_norm = _normalize_answer_for_exact_match(_mmbench_letter_to_text_answer(doc))
+    return {"exact_match": float(pred_norm == answer_norm)}
+
+
+def seedbench_open_ended_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+    """SEED-Bench open-ended question text (no options block)."""
+    question = doc["question"]
+    post_prompt = _get_single_word_phrase_post_prompt(lmms_eval_specific_kwargs)
+    if post_prompt:
+        return f"{question}\n{post_prompt}"
+    return question
+
+
+def seedbench_captioned_open_ended_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+    """SEED-Bench captioned open-ended question text (caption + question, no options)."""
+    caption = doc.get("synthetic-caption") or doc.get("caption")
+    if not caption:
+        raise ValueError("Missing caption in SEED-Bench captioned sample")
+    query = seedbench_open_ended_doc_to_text(doc, lmms_eval_specific_kwargs)
+    return f"{format_single_caption(caption)}{query}"
+
+
+def seedbench_open_ended_doc_to_target(doc):
+    """SEED-Bench open-ended target as option text instead of option letter."""
+    return _seedbench_letter_to_text_answer(doc)
+
+
+def seedbench_open_ended_process_results(doc, result):
+    """Exact match with VQAv2-style normalization for open-ended SEED-Bench."""
+    pred = result[0] if result else ""
+    pred_norm = _normalize_answer_for_exact_match(pred)
+    answer_norm = _normalize_answer_for_exact_match(_seedbench_letter_to_text_answer(doc))
+    return {"exact_match": float(pred_norm == answer_norm)}
+
+
 # =============================================================================
 # doc_to_text: VQAv2 (SYNTHETIC CAPTION)
 # =============================================================================
@@ -222,7 +333,7 @@ def gqa_val_balanced_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
 def gqa_val_balanced_captioned_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     """GQA val-balanced question with caption replacing image."""
-    caption = doc["caption"]
+    caption = doc["synthetic-caption"]
     if lmms_eval_specific_kwargs is None:
         lmms_eval_specific_kwargs = {}
     question = doc["question"]
