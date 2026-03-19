@@ -12,7 +12,7 @@ GPU_TYPE="A100"
 NUM_GPUS=1              # Number of GPUs (requires at least 1 for CUDA models)
 CPUS=16
 MEM="64GB"
-TIME="20:00:00"
+TIME="17:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 

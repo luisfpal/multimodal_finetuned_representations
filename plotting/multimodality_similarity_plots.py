@@ -23,7 +23,7 @@ DATASET_NAMES = [
 ]
 MODELS = {
     "Pretrained": "l11p/llava-v1.5-13b-pretrained-lbasile",
-    # "Finetuned": "lbasile/llava_13b"
+    "Finetuned": "lbasile/llava_13b"
     "Finetuned": "OpenGVLab/InternVL2-8B"
 }
 FINETUNED_MODEL_ID = MODELS["Finetuned"].split('/')[-1].replace('/', '_')
@@ -72,7 +72,7 @@ def load_id_data(dataset_suffix, model_key, pooling_method, dataset_prefix, id_r
 def plot_measure_comparison(measure_key, measure_title, pooling_method, dataset_prefix, results_dir, id_results_dir, plots_dir):
     sim_pm = load_data("Pretrained", measure_key, pooling_method, results_dir)
     sim_fm = load_data("Finetuned", measure_key, pooling_method, results_dir)
-    
+
     if sim_pm is None or sim_fm is None:
         print(f"⚠️  Skipping plot for {measure_title} ({pooling_method}): Missing similarity data.")
         return
@@ -85,7 +85,7 @@ def plot_measure_comparison(measure_key, measure_title, pooling_method, dataset_
     has_id_data = all(x is not None for x in [id_img_pm, id_txt_pm, id_img_fm, id_txt_fm])
     if not has_id_data:
         print(f"⚠️  Plotting {measure_title} ({pooling_method}) without intrinsic dimension data.")
-    
+
     sim_diff = sim_pm - sim_fm
     id_img_diff = id_img_pm - id_img_fm if has_id_data else None
     id_txt_diff = id_txt_pm - id_txt_fm if has_id_data else None
@@ -93,13 +93,13 @@ def plot_measure_comparison(measure_key, measure_title, pooling_method, dataset_
 
     fig = plt.figure(figsize=(26, 12 if has_id_data else 9))
     gs = gridspec.GridSpec(2, 3, height_ratios=[1, 0.08], width_ratios=[1, 1, 1], hspace=0.25, wspace=0.2)
-    
+
     models_config = [
         ("Pretrained", sim_pm, id_img_pm, id_txt_pm, "viridis", 0, 1),
         ("Finetuned", sim_fm, id_img_fm, id_txt_fm, "viridis", 0, 1),
         ("Difference (PM - FM)", sim_diff, id_img_diff, id_txt_diff, "coolwarm", -max_diff, max_diff)
     ]
-    
+
     main_heatmaps = []
     for idx, (model_label, sim_data, id_img, id_txt, cmap, vmin, vmax) in enumerate(models_config):
         if has_id_data:
@@ -112,11 +112,11 @@ def plot_measure_comparison(measure_key, measure_title, pooling_method, dataset_
             ax_right.tick_params(left=False, labelleft=False)
         else:
             ax_main = fig.add_subplot(gs[0, idx])
-        
+
         hm = sns.heatmap(sim_data, ax=ax_main, cmap=cmap, vmin=vmin, vmax=vmax, center=0 if idx == 2 else None, square=False, cbar=False)
         if idx == 0 or idx == 2:
             main_heatmaps.append(hm.collections[0])
-        
+
         if has_id_data:
             x_centers, y_centers = np.arange(len(id_img)) + 0.5, np.arange(len(id_txt)) + 0.5
             ax_top.plot(x_centers, id_img, color='#377eb8', lw=2)
@@ -132,7 +132,7 @@ def plot_measure_comparison(measure_key, measure_title, pooling_method, dataset_
             ax_top.set_title(f"{model_label}", fontsize=18, pad=10, fontweight='medium')
         else:
             ax_main.set_title(f"{model_label}", fontsize=18, pad=10, fontweight='medium')
-        
+
         ax_main.set_xlabel("Image Layers", fontsize=13, labelpad=8)
         ax_main.set_ylabel("Text Layers", fontsize=13, labelpad=8)
         ax_main.invert_yaxis()
@@ -179,7 +179,7 @@ def plot_averaged_measure_comparison(measure_key, measure_title, pooling_method,
 
     sim_diff = sim_pm - sim_fm
     max_diff = max(abs(np.nanmin(sim_diff)), abs(np.nanmax(sim_diff))) if np.any(sim_diff) else 0
-    
+
     fig = plt.figure(figsize=(26, 10))
     gs = gridspec.GridSpec(2, 3, height_ratios=[1, 0.08], width_ratios=[1, 1, 1], hspace=0.25, wspace=0.2)
 
@@ -200,7 +200,7 @@ def plot_averaged_measure_comparison(measure_key, measure_title, pooling_method,
         if idx == 0:
             ax_main.set_ylabel("Text Layers", fontsize=13, labelpad=8)
         ax_main.invert_yaxis()
-        
+
         num_layers = sim_data.shape[0]
         ticks = range(0, num_layers, 5)
         ax_main.set_xticks([t + 0.5 for t in ticks]); ax_main.set_xticklabels(ticks, fontsize=11)
@@ -219,36 +219,36 @@ def plot_averaged_measure_comparison(measure_key, measure_title, pooling_method,
 
 def plot_averaged_diagonals(pooling_method, dataset_names, plots_dir):
     fig, axes = plt.subplots(1, 2, figsize=(20, 8))
-    
+
     # Filter measures
     measures_to_plot = {}
     has_mean = "information_imbalance_mean" in MEASURES
-    
+
     for key, title in MEASURES.items():
         if has_mean and key in ["information_imbalance", "information_imbalance_reversed"]:
             continue
         measures_to_plot[key] = title
-    
+
     # Define colors
     colors = plt.cm.tab10(np.linspace(0, 1, len(measures_to_plot)))
-    
+
     for (key, title), color in zip(measures_to_plot.items(), colors):
         sim_pm = load_multiple_datasets_data("Pretrained", key, pooling_method, dataset_names)
         sim_fm = load_multiple_datasets_data("Finetuned", key, pooling_method, dataset_names)
-        
+
         if sim_pm is None or sim_fm is None:
             continue
-            
+
         diag_pm = np.diag(sim_pm)
         diag_fm = np.diag(sim_fm)
         diag_diff = np.diag(sim_pm - sim_fm)
-        
+
         x_axis = range(len(diag_pm))
-        
+
         # Plot 1: Diagonals of Pretrained and Finetuned
         axes[0].plot(x_axis, diag_pm, linestyle="--", color=color, label=f"{title}")
         axes[0].plot(x_axis, diag_fm, linestyle="-", color=color)
-        
+
         # Plot 2: Diagonal of Difference
         axes[1].plot(x_axis, diag_diff, linestyle="-", color=color, label=title)
 
@@ -257,11 +257,11 @@ def plot_averaged_diagonals(pooling_method, dataset_names, plots_dir):
     axes[0].set_xlabel("Layer Index")
     axes[0].set_ylabel("Similarity")
     axes[0].set_ylim(0,1)
-    
+
     # Legend 1: Measures (Colors)
     legend1 = axes[0].legend(loc="upper left", bbox_to_anchor=(0, 1), title="Measures")
     axes[0].add_artist(legend1)
-    
+
     # Legend 2: Models (Line Styles)
     from matplotlib.lines import Line2D
     custom_lines = [
@@ -269,16 +269,16 @@ def plot_averaged_diagonals(pooling_method, dataset_names, plots_dir):
         Line2D([0], [0], color="black", lw=1.5, linestyle="-", label="Finetuned")
     ]
     axes[0].legend(handles=custom_lines, loc="upper left", bbox_to_anchor=(0, 0.75), title="Models")
-    
+
     axes[0].grid(True, linestyle=":", alpha=0.6)
-    
+
     # Styling Plot 2
     axes[1].set_title(f"Diagonal of Difference (Pretrained - Finetuned) ({pooling_method})")
     axes[1].set_xlabel("Layer Index")
     axes[1].set_ylabel("Difference")
     axes[1].legend(title="Measures")
     axes[1].grid(True, linestyle=":", alpha=0.6)
-    
+
     plt.tight_layout()
     save_path = plots_dir / f"multimodality_averaged_{pooling_method}_diagonals_comparison.png"
     plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")

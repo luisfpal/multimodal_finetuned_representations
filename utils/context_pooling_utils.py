@@ -13,6 +13,8 @@ def get_tokenizer_from_processor(processor: Optional[Any]) -> Optional[Any]:
     if processor is None:
         return None
     if hasattr(processor, "tokenizer"):
+        # Qwen2TokenizerFast for LLaVA-OneVision
+        # LlamaTokenizerFast for LLaVA 1.5
         return processor.tokenizer
     return processor
 
@@ -34,11 +36,12 @@ def resolve_image_token_ids(model: Any, processor: Optional[Any] = None) -> list
     tokenizer = get_tokenizer_from_processor(processor)
     convert_tokens_to_ids = getattr(tokenizer, "convert_tokens_to_ids", None)
     if callable(convert_tokens_to_ids):
-        for token in (IMG_CONTEXT_TOKEN, "<image>"):
+        for token in (IMG_CONTEXT_TOKEN, "<image>", "<|image_pad|>"):
             token_id = convert_tokens_to_ids(token)
             if isinstance(token_id, int) and token_id >= 0:
                 token_ids.add(token_id)
 
+    token_ids.discard(0)
     return sorted(token_ids)
 
 

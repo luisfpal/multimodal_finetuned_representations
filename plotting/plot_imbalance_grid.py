@@ -41,8 +41,9 @@ PLOTS_DIR = Path(
 # VISUAL CONSTANTS  (tuned to match reference single-plot)
 # ══════════════════════════════════════════════════════════════════════════════
 
-POOLING_METHODS = ["last", "mean_context", "mean_image_last_caption"]
+POOLING_METHODS = ["last", "mean_context", "mean_image_last_caption"]#, "last_image_last_caption"]
 VARIANT = "unique_images"
+FIGURE_MODE = "aggregated"  # "specific" | "aggregated" | "both"
 
 ABSTRACTION = (5.5, 17.5)  # goldenrod band on both axes
 
@@ -65,8 +66,20 @@ MODELS = OrderedDict(
         ("llava_13b", "finetuned\n(LLaVA 13B)"),
         ("InternVL2-8B-Pretrain", "pretrained\n(InternVL2 8B)"),
         ("InternVL2-8B", "finetuned\n(InternVL2 8B)"),
+        ("LLaVA-OneVision-1.5-8B-stage1", "pretrained\n(LLaVA-OneVision 8B)"),
+        ("LLaVA-OneVision-1.5-8B-stage2-2600", "finetuned\n(LLaVA-OneVision 8B)"),
+        ("LLaVA-OneVision-1.5-8B-Base", "pretrained\n(LLaVA-OneVision 8B)"),
+        ("LLaVA-OneVision-1.5-8B-Instruct", "finetuned\n(LLaVA-OneVision 8B)"),
     ]
 )
+
+CROSS_MODEL_PAIRS = [
+    ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
+    ("llava_13b", "llava-v1.5-13b-pretrained-lbasile"),
+    ("InternVL2-8B", "InternVL2-8B-Pretrain"),
+    ("LLaVA-OneVision-1.5-8B-stage2-2600", "LLaVA-OneVision-1.5-8B-stage1"),
+    ("LLaVA-OneVision-1.5-8B-Instruct", "LLaVA-OneVision-1.5-8B-Base"),
+]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE / DATASET REGISTRY
@@ -82,21 +95,21 @@ STAGES = [
                 "unique_images",
                 "COCOQA Split01 (Human)",
             ),
-            (
-                "cocoqa_restval_icqa_split01_synthetic",
-                "unique_images",
-                "COCOQA Split01 (Synth)",
-            ),
-            (
-                "cocoqa_restval_icqa_split02_human",
-                "unique_images",
-                "COCOQA Split02 (Human)",
-            ),
-            (
-                "cocoqa_restval_icqa_split02_synthetic",
-                "unique_images",
-                "COCOQA Split02 (Synth)",
-            ),
+            # (
+            #     "cocoqa_restval_icqa_split01_synthetic",
+            #     "unique_images",
+            #     "COCOQA Split01 (Synth)",
+            # ),
+            # (
+            #     "cocoqa_restval_icqa_split02_human",
+            #     "unique_images",
+            #     "COCOQA Split02 (Human)",
+            # ),
+            # (
+            #     "cocoqa_restval_icqa_split02_synthetic",
+            #     "unique_images",
+            #     "COCOQA Split02 (Synth)",
+            # ),
             ("gqa_val_balanced_noyesno_captioned_synthetic", "unique_images", "GQA"),
         ],
     ),
@@ -109,53 +122,53 @@ STAGES = [
                 "unique_images",
                 "VQAv2 S01 (Human)",
             ),
-            (
-                "vqav2_coco_restval_icq_split01_synthetic",
-                "unique_images",
-                "VQAv2 S01 (Synth)",
-            ),
-            (
-                "vqav2_coco_restval_icq_split02_human",
-                "unique_images",
-                "VQAv2 S02 (Human)",
-            ),
-            (
-                "vqav2_coco_restval_icq_split02_synthetic",
-                "unique_images",
-                "VQAv2 S02 (Synth)",
-            ),
-            (
-                "vqav2_coco_restval_icq_split03_human",
-                "unique_images",
-                "VQAv2 S03 (Human)",
-            ),
-            (
-                "vqav2_coco_restval_icq_split03_synthetic",
-                "unique_images",
-                "VQAv2 S03 (Synth)",
-            ),
+            # (
+            #     "vqav2_coco_restval_icq_split01_synthetic",
+            #     "unique_images",
+            #     "VQAv2 S01 (Synth)",
+            # ),
+            # (
+            #     "vqav2_coco_restval_icq_split02_human",
+            #     "unique_images",
+            #     "VQAv2 S02 (Human)",
+            # ),
+            # (
+            #     "vqav2_coco_restval_icq_split02_synthetic",
+            #     "unique_images",
+            #     "VQAv2 S02 (Synth)",
+            # ),
+            # (
+            #     "vqav2_coco_restval_icq_split03_human",
+            #     "unique_images",
+            #     "VQAv2 S03 (Human)",
+            # ),
+            # (
+            #     "vqav2_coco_restval_icq_split03_synthetic",
+            #     "unique_images",
+            #     "VQAv2 S03 (Synth)",
+            # ),
         ],
     ),
-    (
-        "single_base",
-        "Benchmarks (Repeated Images)",
-        [
-            ("mmbench_en_dev_captioned_synthetic", "repeated_images", "MMBench"),
-            ("mme_test_captioned_synthetic", "repeated_images", "MME"),
-            ("pope_test_captioned_synthetic", "repeated_images", "POPE"),
-            ("seed_bench_images_captioned_synthetic", "repeated_images", "SEED"),
-        ],
-    ),
-    (
-        "single_unique",
-        "Benchmarks (Unique Images)",
-        [
-            ("mmbench_en_dev_captioned_synthetic", "unique_images", "MMBench (Unique)"),
-            ("mme_test_captioned_synthetic", "unique_images", "MME (Unique)"),
-            ("pope_test_captioned_synthetic", "unique_images", "POPE (Unique)"),
-            ("seed_bench_images_captioned_synthetic", "unique_images", "SEED (Unique)"),
-        ],
-    ),
+    # (
+    #     "single_base",
+    #     "Benchmarks (Repeated Images)",
+    #     [
+    #         ("mmbench_en_dev_captioned_synthetic", "repeated_images", "MMBench"),
+    #         ("mme_test_captioned_synthetic", "repeated_images", "MME"),
+    #         ("pope_test_captioned_synthetic", "repeated_images", "POPE"),
+    #         ("seed_bench_images_captioned_synthetic", "repeated_images", "SEED"),
+    #     ],
+    # ),
+    # (
+    #     "single_unique",
+    #     "Benchmarks (Unique Images)",
+    #     [
+    #         ("mmbench_en_dev_captioned_synthetic", "unique_images", "MMBench (Unique)"),
+    #         ("mme_test_captioned_synthetic", "unique_images", "MME (Unique)"),
+    #         ("pope_test_captioned_synthetic", "unique_images", "POPE (Unique)"),
+    #         ("seed_bench_images_captioned_synthetic", "unique_images", "SEED (Unique)"),
+    #     ],
+    # ),
     (
         "open_ended",
         "Benchmarks (Open-Ended)",
@@ -385,6 +398,28 @@ def stage_avg(model_id: str, stage_datasets: list, data: dict):
     return t_img, i_txt
 
 
+def aggregate_model_all_datasets(model_id: str, data: dict):
+    """Average imbalance matrices across all selected datasets for one model."""
+    t_imgs, i_txts = [], []
+    model_data = data.get(model_id, {})
+    for entry in model_data.values():
+        if "information_imbalance_reversed" in entry:
+            t_imgs.append(entry["information_imbalance_reversed"])
+        if "information_imbalance" in entry:
+            i_txts.append(entry["information_imbalance"])
+
+    def _mean_or_none(arrays: list[np.ndarray]):
+        if not arrays:
+            return None
+        if len(arrays) == 1:
+            return arrays[0]
+        if len({a.shape for a in arrays}) != 1:
+            return None
+        return np.mean(np.stack(arrays), axis=0)
+
+    return _mean_or_none(t_imgs), _mean_or_none(i_txts)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # FIGURE BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -434,8 +469,11 @@ def build_stage_figure(
     model_keys: list,
     data: dict,
     uniform_logic: bool,
+    include_stage_average: bool,
 ) -> plt.Figure:
-    row_labels = [lbl for _, _, lbl in stage_datasets] + ["Average"]
+    row_labels = [lbl for _, _, lbl in stage_datasets]
+    if include_stage_average:
+        row_labels.append("Average")
     nR = len(row_labels)
     nC = len(model_keys)
 
@@ -478,7 +516,7 @@ def build_stage_figure(
     legend_placed = False
 
     for r, row_lbl in enumerate(row_labels):
-        is_avg = r == nR - 1
+        is_avg = include_stage_average and r == nR - 1
         print(f"      [DEBUG] Row {r}: {row_lbl} (is_avg={is_avg})")
 
         # 1. Gather all data for this row to compute row-specific thresholds
@@ -578,11 +616,6 @@ def build_stage_figure(
         )
 
     print("      [DEBUG] build_stage_figure: returning fig")
-    import sys
-
-    sys.stdout.flush()
-    return fig
-
     # Shared axis labels
     l_frac = left_margin / fig_w
     fig.text(
@@ -610,6 +643,150 @@ def build_stage_figure(
         y=1.002,
     )
 
+    import sys
+
+    sys.stdout.flush()
+
+    return fig
+
+
+def build_aggregated_pair_figure(
+    pair_label: str,
+    model_keys: list[str],
+    data: dict,
+    uniform_logic: bool,
+) -> plt.Figure | None:
+    """Build one row (average over all datasets) for a pretrained/finetuned model pair."""
+    nR = 1
+    nC = len(model_keys)
+    if nC == 0:
+        return None
+
+    wspace = 0.28
+    hspace = 0.20
+    top_margin = 0.60
+    bottom_margin = 0.55
+    left_margin = 1.4
+    right_margin = 0.25
+
+    fig_w = left_margin + nC * CELL_W + (nC - 1) * CELL_W * wspace + right_margin
+    fig_h = top_margin + nR * CELL_H + (nR - 1) * CELL_H * hspace + bottom_margin
+
+    fig, axes = plt.subplots(nR, nC, figsize=(fig_w, fig_h), squeeze=False)
+    fig.subplots_adjust(
+        left=left_margin / fig_w,
+        right=1 - right_margin / fig_w,
+        top=1 - top_margin / fig_h,
+        bottom=bottom_margin / fig_h,
+        wspace=wspace,
+        hspace=hspace,
+    )
+
+    row_data = []
+    cell_inputs: list[tuple[np.ndarray | None, np.ndarray | None]] = []
+    for mod_id in model_keys:
+        t_img, i_txt = aggregate_model_all_datasets(mod_id, data)
+        cell_inputs.append((t_img, i_txt))
+        if t_img is not None:
+            row_data.append(t_img.flatten())
+        if i_txt is not None:
+            row_data.append(i_txt.flatten())
+
+    if not row_data:
+        plt.close(fig)
+        return None
+
+    thresholds = get_row_thresholds(
+        row_data,
+        stage_key="aggregated_all",
+        uniform_logic=uniform_logic,
+        n_points=32,
+    )
+
+    legend_placed = False
+    for c, mod_id in enumerate(model_keys):
+        ax = axes[0, c]
+        t_img, i_txt = cell_inputs[c]
+        if t_img is not None or i_txt is not None:
+            render_cell(ax, t_img, i_txt, thresholds)
+            q1, q2, q3 = thresholds[0][1], thresholds[1][1], thresholds[2][1]
+            p1, p2, p3 = thresholds[0][3], thresholds[1][3], thresholds[2][3]
+            threshold_txt = f"$q_{{{p1}}}$={q1:.3f}\n$q_{{{p2}}}$={q2:.3f}\n$q_{{{p3}}}$={q3:.3f}"
+            ax.text(
+                0.97,
+                0.03,
+                threshold_txt,
+                transform=ax.transAxes,
+                fontsize=8,
+                color="black",
+                va="bottom",
+                ha="right",
+                zorder=10,
+                bbox=dict(
+                    boxstyle="round,pad=0.4",
+                    facecolor="white",
+                    edgecolor="#aaa",
+                    alpha=1.0,
+                ),
+            )
+
+            if not legend_placed:
+                leg = ax.legend(
+                    handles=_make_dynamic_legend_handles(thresholds),
+                    loc="upper left",
+                    fontsize=7,
+                    framealpha=0.92,
+                    edgecolor="#aaa",
+                    handlelength=1.2,
+                    borderpad=0.5,
+                )
+                leg.set_zorder(10)
+                legend_placed = True
+        else:
+            render_missing(ax)
+
+        ax.set_title(MODELS[mod_id], fontsize=9, fontweight="bold", pad=5)
+        ax.set_xlabel("text input", fontsize=8)
+        ax.set_ylabel("", fontsize=8)
+
+    axes[0, 0].annotate(
+        "Average (All Datasets)",
+        xy=(0, 0.5),
+        xycoords="axes fraction",
+        xytext=(-52, 0),
+        textcoords="offset points",
+        ha="center",
+        va="center",
+        fontsize=7.5,
+        fontweight="bold",
+        rotation=90,
+        annotation_clip=False,
+    )
+
+    l_frac = left_margin / fig_w
+    fig.text(
+        l_frac * 0.28,
+        0.5,
+        "visual input",
+        ha="center",
+        va="center",
+        fontsize=9,
+        rotation=90,
+    )
+    fig.text(
+        0.5,
+        bottom_margin / fig_h * 0.45,
+        "text input",
+        ha="center",
+        va="center",
+        fontsize=9,
+    )
+    fig.suptitle(
+        f"Information Imbalance  —  Aggregated Across Selected Datasets ({pair_label})",
+        fontsize=12,
+        fontweight="bold",
+        y=1.002,
+    )
     return fig
 
 
@@ -627,6 +804,17 @@ def main():
             "--uniform-logic",
             action="store_true",
             help="Force the open-ended quantiles (20/35/50) across all datasets, including benchmarks.",
+        )
+        parser.add_argument(
+            "--figure-mode",
+            choices=["specific", "aggregated", "both"],
+            default=FIGURE_MODE,
+            help="specific=stage figures, aggregated=all-datasets average per pair, both=run both",
+        )
+        parser.add_argument(
+            "--include-stage-average",
+            action="store_true",
+            help="Append stage-average row in specific figures.",
         )
         args = parser.parse_args()
 
@@ -656,12 +844,6 @@ def main():
 
             print("\n  Generating figures...")
 
-            CROSS_MODEL_PAIRS = [
-                ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
-                ("llava_13b", "llava-v1.5-13b-pretrained-lbasile"),
-                ("InternVL2-8B", "InternVL2-8B-Pretrain"),
-            ]
-
             jobs = []
             paired_set = set()
             for m_fine, m_pre in CROSS_MODEL_PAIRS:
@@ -674,60 +856,99 @@ def main():
                 if model_id in data and model_id not in paired_set:
                     jobs.append((model_id, [model_id]))
 
-            for target_model_id, model_keys in jobs:
-                for stage_key, stage_label, stage_datasets in STAGES:
-                    if pooling in ("mean_context", "mean_image_last_caption") and stage_key == "single_base":
-                        print(
-                            f"\n  ── Skipping {stage_label} ({stage_key}) for {pooling} [No Data]"
-                        )
-                        continue
+            if args.figure_mode in {"specific", "both"}:
+                for target_model_id, model_keys in jobs:
+                    for stage_key, stage_label, stage_datasets in STAGES:
+                        if (
+                            pooling in (
+                                "mean_context",
+                                "mean_image_last_caption",
+                                "last_image_last_caption",
+                            )
+                            and stage_key == "single_base"
+                        ):
+                            print(
+                                f"\n  ── Skipping {stage_label} ({stage_key}) for {pooling} [No Data]"
+                            )
+                            continue
 
-                    print(f"\n  ── {stage_label} ({stage_key}) [{target_model_id}]")
-                    import sys
-
-                    sys.stdout.flush()
-
-                    try:
-                        fig = build_stage_figure(
-                            stage_key,
-                            f"{stage_label} - {MODELS[target_model_id]}",
-                            stage_datasets,
-                            model_keys,
-                            data,
-                            args.uniform_logic,
-                        )
-                        out = plots_dir / f"{target_model_id}_{stage_key}.png"
-                        print(f"      [DEBUG] Calling savefig for {out}")
+                        print(f"\n  ── {stage_label} ({stage_key}) [{target_model_id}]")
                         import sys
-                        import resource
 
-                        mem_mb = (
-                            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
-                        )
-                        print(f"      [DEBUG] MEMORY USAGE (Max RSS): {mem_mb:.2f} MB")
                         sys.stdout.flush()
 
                         try:
-                            fig.savefig(str(out), dpi=DPI, facecolor="white")
-                        except BaseException as be:
-                            print("      [DEBUG] CAUGHT BASE EXCEPTION:", type(be), be)
+                            fig = build_stage_figure(
+                                stage_key,
+                                f"{stage_label} - {MODELS[target_model_id]}",
+                                stage_datasets,
+                                model_keys,
+                                data,
+                                args.uniform_logic,
+                                args.include_stage_average,
+                            )
+                            out = plots_dir / f"{target_model_id}_{stage_key}.png"
+                            print(f"      [DEBUG] Calling savefig for {out}")
+                            import sys
+                            import resource
+
+                            mem_mb = (
+                                resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                                / 1024.0
+                            )
+                            print(
+                                f"      [DEBUG] MEMORY USAGE (Max RSS): {mem_mb:.2f} MB"
+                            )
+                            sys.stdout.flush()
+
+                            try:
+                                fig.savefig(str(out), dpi=DPI, facecolor="white")
+                            except BaseException as be:
+                                print(
+                                    "      [DEBUG] CAUGHT BASE EXCEPTION:",
+                                    type(be),
+                                    be,
+                                )
+                                import traceback
+
+                                traceback.print_exc()
+                                sys.exit(1)
+
+                            print("      [DEBUG] Savefig complete")
+                            plt.close("all")
+
+                            print(f"     ✓  {out.name}")
+                            sys.stdout.flush()
+
+                        except Exception:
+                            print("      [DEBUG] EXCEPTION IN BUILD/SAVE")
                             import traceback
 
                             traceback.print_exc()
-                            sys.exit(1)
+                            sys.stdout.flush()
 
-                        print("      [DEBUG] Savefig complete")
-                        plt.close("all")
+            if args.figure_mode in {"aggregated", "both"}:
+                print("\n  Generating aggregated pair figures...")
+                for target_model_id, model_keys in jobs:
+                    if len(model_keys) < 2:
+                        continue
 
-                        print(f"     ✓  {out.name}")
-                        sys.stdout.flush()
+                    pair_label = " vs ".join(MODELS[k] for k in model_keys)
+                    print(f"\n  ── Aggregated [{target_model_id}]")
+                    fig = build_aggregated_pair_figure(
+                        pair_label=pair_label,
+                        model_keys=model_keys,
+                        data=data,
+                        uniform_logic=args.uniform_logic,
+                    )
+                    if fig is None:
+                        print("     (no aggregated data — skipped)")
+                        continue
 
-                    except Exception:
-                        print("      [DEBUG] EXCEPTION IN BUILD/SAVE")
-                        import traceback
-
-                        traceback.print_exc()
-                        sys.stdout.flush()
+                    out = plots_dir / f"{target_model_id}_aggregated_all.png"
+                    fig.savefig(str(out), dpi=DPI, facecolor="white")
+                    plt.close(fig)
+                    print(f"     ✓  {out.name}")
 
         print("\n  Done.")
     except Exception:

@@ -35,7 +35,7 @@ PLOTS_DIR = Path(
 # VISUAL CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-POOLING_METHODS = ["last", "mean_context", "mean_image_last_caption"]
+POOLING_METHODS = ["last", "mean_context", "mean_image_last_caption", "last_image_last_caption"]
 
 DPI = 150
 CELL_W = 4.0  # wider cells for histograms
@@ -53,6 +53,8 @@ MODELS = OrderedDict(
         ("llava_13b", "finetuned\n(LLaVA 13B)"),
         ("InternVL2-8B-Pretrain", "pretrained\n(InternVL2 8B)"),
         ("InternVL2-8B", "finetuned\n(InternVL2 8B)"),
+        ("LLaVA-OneVision-1.5-8B-stage1", "pretrained\n(LLaVA-OneVision 8B)"),
+        ("LLaVA-OneVision-1.5-8B-stage2-2600", "finetuned\n(LLaVA-OneVision 8B)"),
     ]
 )
 
@@ -861,7 +863,7 @@ def main():
 
         for target_model_id, model_keys in jobs:
             for stage_key, stage_label, stage_datasets in STAGES:
-                if pooling in ("mean_context", "mean_image_last_caption") and stage_key == "single_base":
+                if pooling in ("mean_context", "mean_image_last_caption", "last_image_last_caption") and stage_key == "single_base":
                     print(
                         f"\n  ── Skipping {stage_label} ({stage_key}) for {pooling} [No Data]"
                     )

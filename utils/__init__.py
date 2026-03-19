@@ -17,7 +17,6 @@ from .constants import (
     SYSTEM_ROLE,
 )
 from .dataset import (
-    format_prompts,
     get_dataloader,
     get_dataloader_for_captioning,
 )
@@ -60,7 +59,6 @@ __all__ = [
     "COCOQA_VI_DIGITS_MAP",
     "get_dataloader",
     "get_dataloader_for_captioning",
-    "format_prompts",
     "compute_layers_residual_stream_entropy",
     "compute_layers_residual_stream_similarities",
     "compute_cross_layers_residual_stream_similarities",

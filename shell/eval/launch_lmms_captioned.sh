@@ -12,6 +12,8 @@
 # Available tasks:
 #   Captioned (images → text captions):
 #     mme_captioned, mmbench_en_dev_captioned,
+#     mmbench_en_dev_open_ended, mmbench_en_dev_captioned_open_ended,
+#     seedbench_open_ended, seedbench_captioned_open_ended,
 #     vqav2_val_captioned_synthetic, vqav2_val_captioned_human,
 #     gqa_val_balanced_captioned
 #   Visual (new GQA val-balanced with images):
@@ -24,13 +26,13 @@
 # SLURM SETTINGS
 # =============================================================================
 ACCOUNT="dssc"
-JOB_NAME="evals"
+JOB_NAME="experiment"
 PARTITION="DGX"
 GPU_TYPE="A100"
 NUM_GPUS=1
 CPUS=16
 MEM="64GB"
-TIME="06:00:00"
+TIME="08:00:00"
 NODELIST=""
 EXCLUDE=""
 
@@ -76,6 +78,10 @@ TASKS=(
     # Captioned variants
     # "mme_captioned"
     # "mmbench_en_dev_captioned"
+    "mmbench_en_dev_open_ended"
+    "mmbench_en_dev_captioned_open_ended"
+    "seedbench_open_ended"
+    "seedbench_captioned_open_ended"
     # "vqav2_val_captioned_synthetic"
     # "vqav2_val_captioned_human"
     # "gqa_val_balanced_captioned"
@@ -84,10 +90,10 @@ TASKS=(
     # "gqa_val_balanced"
 
     # Original tasks (also work with this script)
-    "mme"
-    "mmbench_en_dev"
-    "vqav2_val"
-    "gqa"
+    # "mme"
+    # "mmbench_en_dev"
+    # "vqav2_val"
+    # "gqa"
 )
 
 # =============================================================================

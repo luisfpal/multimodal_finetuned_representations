@@ -24,8 +24,9 @@ from utils.semantic_filter_utils import (
 
 load_dotenv()
 
-MODEL_DTYPE = torch.bfloat16
-ATTN_IMPLEMENTATION = "flash_attention_2"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MODEL_DTYPE = torch.bfloat16 if DEVICE.type == "cuda" else torch.float32
+ATTN_IMPLEMENTATION = "flash_attention_2" if DEVICE.type == "cuda" else "sdpa"
 RESIDUAL_STREAM_TYPE = "output_layer"
 
 # ── Pooling method registry ────────────────────────────────────────────────
@@ -39,6 +40,7 @@ RESIDUAL_STREAM_TYPE = "output_layer"
 VIRTUAL_POOLING_DISPATCH: dict[str, tuple[str, str]] = {
     "mean_context": ("mean_text_context", "mean_image"),
     "mean_image_last_caption": ("last_caption", "mean_image"),
+    "last_image_last_caption": ("last_caption", "last_image"),
 }
 _PASS_THROUGH_POOLING_METHODS: list[str] = ["last", "mean", "none"]
 VALID_POOLING_METHODS: list[str] = (
@@ -55,7 +57,36 @@ SIMILARITY_MEASURES_DEFAULT = [
     "information_imbalance",
     "information_imbalance_reversed",
     "information_imbalance_mean",
+    "linear_regression_r2",
+    "linear_regression_r2_reversed",
 ]
+
+REGRESSION_SIMILARITY_MEASURES = {
+    "linear_regression_r2",
+    "linear_regression_r2_reversed",
+}
+
+
+def build_similarity_filename(
+    model_name: str, measure_name: str, regression_type: str
+) -> str:
+    """Build similarity filename with backend suffix for regression metrics."""
+    if measure_name in REGRESSION_SIMILARITY_MEASURES:
+        return f"{model_name}_{measure_name}_reg-{regression_type}.safetensors"
+    return f"{model_name}_{measure_name}.safetensors"
+
+
+def build_representations_filename(
+    similarity_measures: list[str],
+    regression_type: str,
+) -> str:
+    """Build representation cache filename, backend-aware for regression runs."""
+    uses_regression_metric = any(
+        measure in REGRESSION_SIMILARITY_MEASURES for measure in similarity_measures
+    )
+    if uses_regression_metric:
+        return f"representations_reg-{regression_type}.safetensors"
+    return "representations.safetensors"
 
 
 def resolve_semantic_filter(
@@ -169,6 +200,7 @@ def find_missing_measures(
     similarity_measures: list[str],
     similarities_dir: str,
     model_name: str,
+    regression_type: str,
     dry_run: bool,
     force: bool,
 ) -> list[str]:
@@ -182,7 +214,7 @@ def find_missing_measures(
 
     missing = []
     for measure_name in similarity_measures:
-        filename = f"{model_name}_{measure_name}.safetensors"
+        filename = build_similarity_filename(model_name, measure_name, regression_type)
         if not os.path.exists(os.path.join(similarities_dir, filename)):
             missing.append(measure_name)
         else:
@@ -204,9 +236,12 @@ def preprocess_and_save_pair(
     """Preprocess both representations per layer (float32 + dedup), then save."""
     print("  👉 Preprocessing representations...")
     proc_txt, proc_img = [], []
-    for l in range(res_txt.shape[0]):
+    for layer_idx in range(res_txt.shape[0]):
         t, i = preprocess_data(
-            res_txt[l], res_img[l], output_format="tensor", remove_duplicates=True
+            res_txt[layer_idx],
+            res_img[layer_idx],
+            output_format="tensor",
+            remove_duplicates=True,
         )
         proc_txt.append(t.cpu())
         proc_img.append(i.cpu())
@@ -267,6 +302,16 @@ def main():
         nargs="+",
         default=SIMILARITY_MEASURES_DEFAULT,
         help="List of similarity measures to use.",
+    )
+    parser.add_argument(
+        "--regression-type",
+        type=str.lower,
+        default="ridge",
+        choices=["ols", "ridge", "lasso"],
+        help=(
+            "Regression backend for linear_regression_r2* measures. "
+            "Choices: 'ols', 'ridge', or 'lasso'."
+        ),
     )
     parser.add_argument("--save-representations", action="store_true")
     parser.add_argument(
@@ -421,7 +466,7 @@ def main():
         cache_dir=model_cache_dir,
         dtype=MODEL_DTYPE,
         attn_implementation=ATTN_IMPLEMENTATION,
-        device_map="cuda:0",
+        device_map=DEVICE,
     )
     model_name = args.model_name_or_path.split("/")[-1]
 
@@ -482,6 +527,7 @@ def main():
             args.similarity_measures,
             similarities_dir,
             model_name,
+            args.regression_type,
             args.dry_run,
             args.force,
         )
@@ -503,7 +549,11 @@ def main():
                 sample_set_tag,
             )
             os.makedirs(repr_dir, exist_ok=True)
-            return os.path.join(repr_dir, "representations.safetensors")
+            repr_filename = build_representations_filename(
+                args.similarity_measures,
+                args.regression_type,
+            )
+            return os.path.join(repr_dir, repr_filename)
 
         repr_path_txt = get_repr_path(f"{dataset_prefix}_txt")
         repr_path_img = get_repr_path(f"{dataset_prefix}_img")
@@ -592,18 +642,27 @@ def main():
                     res_img,
                     similarity_measures=[measure_name],
                     maxk=30,
+                    regression_type=args.regression_type,
                 )
                 measure_val = sim_results[measure_name]
                 print(f"    ✅ Shape: {measure_val.shape}")
                 if not args.dry_run:
+                    measure_metadata = dict(sim_metadata)
+                    if measure_name in REGRESSION_SIMILARITY_MEASURES:
+                        measure_metadata["regression_type"] = args.regression_type
                     save_path = os.path.join(
-                        similarities_dir, f"{model_name}_{measure_name}.safetensors"
+                        similarities_dir,
+                        build_similarity_filename(
+                            model_name,
+                            measure_name,
+                            args.regression_type,
+                        ),
                     )
                     os.makedirs(os.path.dirname(save_path), exist_ok=True)
                     save_file(
                         {f"{measure_name}": measure_val},
                         save_path,
-                        metadata=sim_metadata,
+                        metadata=measure_metadata,
                     )
                     print(f"    💾 Saved: {save_path}")
             except Exception as e:

@@ -5,7 +5,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from dadapy.data import Data
-from sklearn.metrics import homogeneity_completeness_v_measure
+from sklearn.linear_model import LinearRegression, MultiTaskLassoCV, RidgeCV
+from sklearn.metrics import homogeneity_completeness_v_measure, r2_score
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import StandardScaler
 
 # from anatome.similarity import svcca_distance
 from tqdm import tqdm
@@ -578,6 +581,121 @@ def compute_id_correlation_similarity(
     return corr
 
 
+def compute_linear_regression_r2_score(
+    data1: Union[np.ndarray, torch.Tensor],
+    data2: Union[np.ndarray, torch.Tensor],
+    regression_type: str = "ridge",
+    alphas: Union[np.ndarray, None] = None,
+    fit_intercept: bool = True,
+    n_splits: int = 5,
+    random_state: int = 42,
+) -> float:
+    """
+    Compute cross-validated TEST R² for linear regression from X=data1 to Y=data2.
+
+    Uses k-fold cross-validation to measure generalization (test R²), not overfitting.
+
+    Args:
+        data1: Source representation (X), shape (num_samples, d1)
+        data2: Target representation (Y), shape (num_samples, d2)
+        regression_type: Regression backend, one of "ols", "ridge", or "lasso"
+        alphas: Optional alpha grid for RidgeCV/MultiTaskLassoCV.
+            If None, uses backend defaults.
+        fit_intercept: Whether to fit an intercept term
+        n_splits: Number of cross-validation folds (must be in [2, N])
+        random_state: Random seed for reproducible fold splitting
+
+    Returns:
+        Mean test R² across folds (uniform average across target dimensions)
+
+    Raises:
+        ValueError: If invalid n_splits, invalid fold geometry for non-lasso
+            backends, or unknown regression_type.
+    """
+    # --- Convert ---
+    X, Y = preprocess_data(data1, data2, output_format="numpy", remove_duplicates=False)
+
+    N, d = X.shape
+    backend = regression_type.lower()
+
+    if backend not in {"ols", "ridge", "lasso"}:
+        raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
+
+    # --- Core validity (first principles) ---
+    if backend in {"ols", "ridge"} and N <= d:
+        raise ValueError(
+            f"Invalid regime: N={N}, d={d}. Require N > d for meaningful regression."
+        )
+
+    if n_splits < 2 or n_splits > N:
+        raise ValueError(
+            f"Invalid n_splits={n_splits}. Must be in range [2, {N}]."
+        )
+
+    # --- Cross-validation setup ---
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    scores = []
+
+    for train_idx, test_idx in kf.split(X):
+        X_train, X_test = X[train_idx], X[test_idx]
+        Y_train, Y_test = Y[train_idx], Y[test_idx]
+
+        # --- Ensure each fold is overdetermined for non-lasso backends ---
+        if backend in {"ols", "ridge"} and X_train.shape[0] <= X_train.shape[1]:
+            raise ValueError(
+                f"Invalid fold: train samples ({X_train.shape[0]}) "
+                f"must be > number of features ({X_train.shape[1]}). "
+                "Reduce n_splits."
+            )
+
+        # --- Scale (fit on train only, transform both) ---
+        x_scaler = StandardScaler()
+        y_scaler = StandardScaler()
+
+        X_train = x_scaler.fit_transform(X_train)
+        X_test = x_scaler.transform(X_test)
+
+        Y_train = y_scaler.fit_transform(Y_train)
+        Y_test = y_scaler.transform(Y_test)
+
+        # --- Fit model ---
+        if backend == "ols":
+            model = LinearRegression(fit_intercept=fit_intercept)
+        elif backend == "ridge":
+            alpha_grid = np.logspace(-5, 5, 51) if alphas is None else alphas
+            model = RidgeCV(
+                alphas=alpha_grid,
+                fit_intercept=fit_intercept,
+                cv=5,
+            )
+        elif backend == "lasso":
+            alpha_grid = np.logspace(-5, 1, 30) if alphas is None else alphas
+            inner_cv = min(5, X_train.shape[0])
+            if inner_cv < 2:
+                raise ValueError(
+                    f"Invalid fold for lasso: train samples ({X_train.shape[0]}) "
+                    "must be >= 2 for cross-validation. Reduce n_splits."
+                )
+
+            model = MultiTaskLassoCV(
+                alphas=alpha_grid,
+                fit_intercept=fit_intercept,
+                cv=inner_cv,
+                random_state=random_state,
+            )
+        else:
+            raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
+
+        # --- Evaluate on test set ---
+        model.fit(X_train, Y_train)
+        preds = model.predict(X_test)
+        score = r2_score(Y_test, preds, multioutput="uniform_average")
+
+        scores.append(score)
+
+    return float(np.mean(scores))
+
+
 def compute_similarity(
     data1: Union[np.ndarray, torch.Tensor],
     data2: Union[np.ndarray, torch.Tensor],
@@ -622,6 +740,8 @@ def compute_similarity(
         "information_imbalance",
         "information_imbalance_reversed",
         "information_imbalance_mean",
+        "linear_regression_r2",
+        "linear_regression_r2_reversed",
     }
 
     if measure not in available_measures:
@@ -648,6 +768,38 @@ def compute_similarity(
         return 0.5 * (
             compute_information_imbalance(data1, data2, metric)
             + compute_information_imbalance(data2, data1, metric)
+        )
+
+    elif measure == "linear_regression_r2":
+        regression_type = kwargs.get("regression_type", "ridge")
+        alphas = kwargs.get("alphas", None)
+        fit_intercept = kwargs.get("fit_intercept", True)
+        n_splits = kwargs.get("n_splits", 5)
+        random_state = kwargs.get("random_state", 0)
+        return compute_linear_regression_r2_score(
+            data1,
+            data2,
+            regression_type=regression_type,
+            alphas=alphas,
+            fit_intercept=fit_intercept,
+            n_splits=n_splits,
+            random_state=random_state,
+        )
+
+    elif measure == "linear_regression_r2_reversed":
+        regression_type = kwargs.get("regression_type", "ridge")
+        alphas = kwargs.get("alphas", None)
+        fit_intercept = kwargs.get("fit_intercept", True)
+        n_splits = kwargs.get("n_splits", 5)
+        random_state = kwargs.get("random_state", 0)
+        return compute_linear_regression_r2_score(
+            data2,
+            data1,
+            regression_type=regression_type,
+            alphas=alphas,
+            fit_intercept=fit_intercept,
+            n_splits=n_splits,
+            random_state=random_state,
         )
 
     elif measure == "distance_correlation":

@@ -1,4 +1,3 @@
-import argparse
 import base64
 import hashlib
 import json
@@ -17,8 +16,6 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedModel
 
 from .constants import (
-    ANSWER_TEXT,
-    ASSISTANT_ROLE,
     MMBENCH_ANSWER_CHOICES,
     MME_ANSWER_CHOICES,
     MMLU_ANSWER_CHOICES,
@@ -821,125 +818,89 @@ class ImageCaptioningDataset(Dataset):
         return sample
 
 
-def format_prompts(
-    questions: List[str],
-    args: argparse.Namespace,
-    processor: ProcessorType,
-    images: Optional[List[Image.Image]] = None,
-    chat_template_exists: bool = False,
-) -> List[str]:
+_DEFAULT_SYSTEM_CACHE: dict[str, bool] = {}
+
+
+def _is_llava_family_processor(processor: Any) -> bool:
+    """Return True for LLaVA-family processors, including OneVision (Qwen2.5-VL).
+
+    Why this exists:
+    - LLaVA-1.x processors are usually named like ``LlavaProcessor``.
+    - LLaVA-OneVision uses ``Qwen2_5_VLProcessor`` via ``AutoProcessor`` and
+      does not contain "llava" in the processor class name.
     """
-    Format input questions and images into structured prompts for a model.
+    if processor is None:
+        return False
 
-    Parameters:
-        questions: List of question and options in string format.
-        images: List of images associated with each question.
-        args: Arguments namespace with a `chat_mode` boolean attribute.
-        processor: A processor used to tokenize and encode text+image inputs.
-        chat_template_exists: Whether the chat template exists.
-    Returns:
-        list: Formatted prompts either as conversations (dict format) or plain strings.
-    """
-    if args.chat_mode and chat_template_exists:
-        conversations_list = _format_as_conversations(questions, images, args)
-        kwargs_chat_template = {
-            "conversation": conversations_list,
-            "tokenize": False,
-        }
-        if args.continue_final_message:
-            kwargs_chat_template["continue_final_message"] = True
-            kwargs_chat_template["add_generation_prompt"] = False
-        else:
-            kwargs_chat_template["add_generation_prompt"] = True
-        # Apply the chat template to format the conversations
-        return processor.apply_chat_template(**kwargs_chat_template)
+    proc_name = processor.__class__.__name__.lower()
+    tokenizer_name = ""
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is not None:
+        tokenizer_name = tokenizer.__class__.__name__.lower()
 
-    elif args.chat_mode and not chat_template_exists:
-        # for simplicity I use these parameters for the custom prompt
-        return _format_as_custom_prompts_text_image(questions, images, args)
-    elif not args.chat_mode:
-        return _format_as_plain_prompts_forward_pass(
-            questions, images, args.image_first
-        )
-    else:
-        return _format_as_plain_prompts(questions, images)
-
-
-def _format_as_conversations(questions, images, args):
-    formatted_conversations = []
-    continue_final_message = (
-        hasattr(args, "continue_final_message") and args.continue_final_message
+    llava_markers = ("llava", "qwen2_5_vl", "qwen2vl")
+    return any(marker in proc_name for marker in llava_markers) or any(
+        marker in tokenizer_name for marker in llava_markers
     )
-    guide_text: str = ""
-    if hasattr(args, "guide_text") and args.guide_text:
-        guide_text = f"{args.guide_text}"
 
+
+def _processor_has_default_system(processor: Any) -> bool:
+    """Return True if the processor's chat template injects a system message by default.
+
+    Probes by rendering a minimal user-only conversation and checking whether
+    the word "system" appears in the output.  Result is cached per processor
+    class so the probe runs at most once per type.
+    """
+    cls_name = processor.__class__.__name__
+    if cls_name in _DEFAULT_SYSTEM_CACHE:
+        return _DEFAULT_SYSTEM_CACHE[cls_name]
+    tokenizer = getattr(processor, "tokenizer", processor)
+    apply_fn = getattr(tokenizer, "apply_chat_template", None)
+    if apply_fn is None:
+        _DEFAULT_SYSTEM_CACHE[cls_name] = False
+        return False
+    try:
+        probe = apply_fn(
+            [{"role": "user", "content": [{"type": "text", "text": "?"}]}],
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        result = "system" in probe.lower()
+    except Exception:
+        result = False
+    _DEFAULT_SYSTEM_CACHE[cls_name] = result
+    return result
+
+
+def _build_llava_prompts(
+    questions: List[str],
+    images: List[Optional[Image.Image]],
+    processor: Any,
+    guide_text: str = "",
+) -> List[str]:
+    """Format questions + (optional) images into chat-template strings for LLaVA models.
+
+    Injects SYSTEM_ROLE only when the processor has no built-in default system
+    message (LLaVA-1.5).  LLaVA-OneVision's Qwen2 tokenizer already includes
+    one, so no injection is needed there.
+    """
+    include_system = not _processor_has_default_system(processor)
     if not images:
         images = [None] * len(questions)
+    conversations = []
     for question, image in zip(questions, images):
-        content = []
+        content: List[Dict[str, Any]] = []
         if image is not None:
             content.append({"type": "image"})
-        content.append({"type": "text", "text": f"{question}\n{guide_text}\n"})
-
-        conversation = [{"role": "user", "content": content}]
-        conversation.insert(0, SYSTEM_ROLE)
-        if continue_final_message:
-            conversation.append(ASSISTANT_ROLE)
-        formatted_conversations.append(conversation)
-    return formatted_conversations
-
-
-def _format_as_plain_prompts(questions, images):
-    formatted_prompts = []
-    for image, question in zip(images, questions):
-        prompt_prefix = "<image>\n" if image is not None else ""
-        prompt = f"{prompt_prefix}{question}{ANSWER_TEXT}"
-        formatted_prompts.append(prompt)
-    return formatted_prompts
-
-
-def _format_as_custom_prompts_text_image(questions, images, args):
-    system_message = SYSTEM_ROLE["content"][0]["text"]
-
-    continue_final_message = (
-        hasattr(args, "continue_final_message") and args.continue_final_message
+        text = f"{question}\n{guide_text}\n" if guide_text else question
+        content.append({"type": "text", "text": text})
+        conv: List[Dict[str, Any]] = [{"role": "user", "content": content}]
+        if include_system:
+            conv.insert(0, SYSTEM_ROLE)
+        conversations.append(conv)
+    return processor.apply_chat_template(
+        conversations, tokenize=False, add_generation_prompt=True,
     )
-    formatted_prompts = []
-    for image, question_text in zip(images, questions):
-        prompt_parts = []
-
-        # System message
-        prompt_parts.append(f"{system_message}")
-
-        # User message with image token after text
-        user_message = f"USER: {question_text}"
-        user_message += "\n<image>\n" if image is not None else ""
-        prompt_parts.append(user_message)
-
-        # Assistant prefix (optional)
-        if continue_final_message:
-            prompt_parts.append("ASSISTANT: Answer:")
-        else:
-            prompt_parts.append("ASSISTANT:")
-
-        # Join with newlines
-        prompt = "".join(prompt_parts)
-
-        formatted_prompts.append(prompt)
-    return formatted_prompts
-
-
-def _format_as_plain_prompts_forward_pass(questions, images, image_first: bool = True):
-    formatted_prompts = []
-    for image, question_text in zip(images, questions):
-        image_text = "<image>" if image is not None else ""
-        if image_first:
-            prompt = f"{image_text} {question_text}"
-        else:
-            prompt = f"{question_text} {image_text}"
-        formatted_prompts.append(prompt)
-    return formatted_prompts
 
 
 def collate_vqa_batch(
@@ -947,8 +908,6 @@ def collate_vqa_batch(
     processor,
     guide_text,
     answer_letters_with_processed_batch,
-    chat_template_exists=True,
-    chat_mode=True,
     model: Optional[PreTrainedModel] = None,
 ):
     # Custom collate function to handle images and text
@@ -963,27 +922,13 @@ def collate_vqa_batch(
             "padding": (True if len(questions) > 1 else False),
         }
 
-        if "llava" in processor.__class__.__name__.lower():
-            # For simplicity, define args for backward code compatibility
-            # todo: redesign the interface if used in the future
-            args = argparse.Namespace(
-                chat_mode=chat_mode,
-                continue_final_message=False,
-                guide_text=guide_text,
-                # !"enforced" but consistent for these experiments
-            )
-
-            prompts = format_prompts(
+        if _is_llava_family_processor(processor):
+            processor_kwargs["text"] = _build_llava_prompts(
                 questions=questions,
                 images=images,
-                args=args,
                 processor=processor,
-                chat_template_exists=chat_template_exists,
-                # !"enforced" but consistent for these experiments
+                guide_text=guide_text,
             )
-            processor_kwargs["text"] = prompts
-
-            # todo: improve this, it is not neat
             if any(image is not None for image in images):
                 processor_kwargs["images"] = images
 
@@ -1024,7 +969,6 @@ def collate_vqa_batch(
         "questions": questions,
         "answer_letters": answer_letters,
         "images": images,
-        "indices": indices,
         "image_ids": image_ids,
     }
 
@@ -1032,12 +976,9 @@ def collate_vqa_batch(
 def collate_captioning_batch(
     batch,
     processor,
-    chat_template_exists=True,
     return_captions=False,
     return_image_ids=False,
     return_images=False,
-    chat_mode=True,
-    image_first=True,
     model: Optional[PreTrainedModel] = None,
 ):
     # Sanity check
@@ -1058,27 +999,12 @@ def collate_captioning_batch(
             "padding": (True if len(user_prompts) > 1 else False),
         }
 
-        if "llava" in processor.__class__.__name__.lower():
-            # For simplicity, define args for backward code compatibility
-            # todo: redesign the interface if used in the future
-            args = argparse.Namespace(
-                chat_mode=chat_mode,
-                continue_final_message=False,
-                # !"enforced" but consistent for these experiments
-                image_first=image_first,
-            )
-
-            prompts = format_prompts(
-                # todo: rename questions to user_prompts
-                # this is a backward compatibility feature
+        if _is_llava_family_processor(processor):
+            processor_kwargs["text"] = _build_llava_prompts(
                 questions=user_prompts,
                 images=images,
-                args=args,
                 processor=processor,
-                chat_template_exists=chat_template_exists,
             )
-
-            processor_kwargs["text"] = prompts
             processor_kwargs["images"] = images
 
         elif model and "intern" in model.__class__.__name__.lower():
@@ -1127,7 +1053,6 @@ def get_dataloader(
     processor: Optional[ProcessorType] = None,
     guide_text: str = "Answer the question using a single word or phrase.\n",
     answer_letters_with_processed_batch: bool = False,
-    chat_template_exists: bool = True,
     caption_source: Optional[str] = None,
     remove_yes_no: bool = False,
     filter_mmbench_4_choices: bool = False,
@@ -1222,7 +1147,6 @@ def get_dataloader(
         processor=processor,
         guide_text=guide_text,
         answer_letters_with_processed_batch=answer_letters_with_processed_batch,
-        chat_template_exists=chat_template_exists,
         model=model,
     )
 
@@ -1243,14 +1167,11 @@ def get_dataloader_for_captioning(
     downsample_size: Optional[int] = None,
     seed: int = 42,
     processor: Optional[ProcessorType] = None,
-    chat_template_exists: bool = True,
     return_captions: bool = False,
     return_image_ids: bool = False,
     return_images: bool = False,
     concatenate_captions_and_add_prompt: bool = False,
     concatenate_captions: bool = False,
-    chat_mode: bool = True,
-    image_first: bool = True,
     model: Optional[PreTrainedModel] = None,
 ):
     dataset = ImageCaptioningDataset(
@@ -1264,12 +1185,9 @@ def get_dataloader_for_captioning(
     collate_fn = partial(
         collate_captioning_batch,
         processor=processor,
-        chat_template_exists=chat_template_exists,
         return_captions=return_captions,
         return_image_ids=return_image_ids,
         return_images=return_images,
-        chat_mode=chat_mode,
-        image_first=image_first,
         model=model,
     )
 
