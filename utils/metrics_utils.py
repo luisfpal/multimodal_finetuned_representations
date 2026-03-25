@@ -5,10 +5,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from dadapy.data import Data
-from sklearn.linear_model import LinearRegression, MultiTaskLassoCV, RidgeCV
-from sklearn.metrics import homogeneity_completeness_v_measure, r2_score
-from sklearn.model_selection import KFold
-from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import homogeneity_completeness_v_measure
+from sklearn.metrics import r2_score
 
 # from anatome.similarity import svcca_distance
 from tqdm import tqdm
@@ -585,116 +583,259 @@ def compute_linear_regression_r2_score(
     data1: Union[np.ndarray, torch.Tensor],
     data2: Union[np.ndarray, torch.Tensor],
     regression_type: str = "ridge",
-    alphas: Union[np.ndarray, None] = None,
+    alphas: Union[np.ndarray, list, None] = None,
     fit_intercept: bool = True,
-    n_splits: int = 5,
     random_state: int = 42,
 ) -> float:
     """
-    Compute cross-validated TEST R² for linear regression from X=data1 to Y=data2.
+    Compute test R² using a single 80/20 train-test split.
 
-    Uses k-fold cross-validation to measure generalization (test R²), not overfitting.
+    Supports:
+    - 'ols'    → ordinary least squares (no regularization)
+    - 'ridge'  → ridge regression (closed-form + holdout alpha selection)
+    - 'lasso'  → multitask lasso via ISTA (group l21 penalty)
+
+    Computation uses PyTorch and runs on GPU when available.
+    Final scoring uses sklearn.metrics.r2_score (uniform average).
 
     Args:
-        data1: Source representation (X), shape (num_samples, d1)
-        data2: Target representation (Y), shape (num_samples, d2)
-        regression_type: Regression backend, one of "ols", "ridge", or "lasso"
-        alphas: Optional alpha grid for RidgeCV/MultiTaskLassoCV.
-            If None, uses backend defaults.
-        fit_intercept: Whether to fit an intercept term
-        n_splits: Number of cross-validation folds (must be in [2, N])
-        random_state: Random seed for reproducible fold splitting
+        data1: Input features X (n_samples, n_features)
+        data2: Target values Y (n_samples, n_targets)
+        regression_type: 'ols', 'ridge', or 'lasso'
+        alphas: Optional list/array of alpha values to grid-search (ridge/lasso only)
+        fit_intercept: Whether to include bias term
+        random_state: For reproducible train/test split
 
     Returns:
-        Mean test R² across folds (uniform average across target dimensions)
-
-    Raises:
-        ValueError: If invalid n_splits, invalid fold geometry for non-lasso
-            backends, or unknown regression_type.
+        Test set R² (uniform average over output dimensions)
     """
-    # --- Convert ---
-    X, Y = preprocess_data(data1, data2, output_format="numpy", remove_duplicates=False)
 
-    N, d = X.shape
-    backend = regression_type.lower()
+    def score_uniform_average(y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
+        y_true_np = y_true.detach().cpu().numpy()
+        y_pred_np = y_pred.detach().cpu().numpy()
+        return float(r2_score(y_true_np, y_pred_np, multioutput="uniform_average"))
 
-    if backend not in {"ols", "ridge", "lasso"}:
-        raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
+    def fit_multitask_lasso_ista(
+        X: torch.Tensor,
+        Y: torch.Tensor,
+        alpha: float,
+        max_iter: int,
+        tol: float,
+        beta_init: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        n_samples, n_features = X.shape
+        _, n_targets = Y.shape
 
-    # --- Core validity (first principles) ---
-    if backend in {"ols", "ridge"} and N <= d:
-        raise ValueError(
-            f"Invalid regime: N={N}, d={d}. Require N > d for meaningful regression."
-        )
-
-    if n_splits < 2 or n_splits > N:
-        raise ValueError(
-            f"Invalid n_splits={n_splits}. Must be in range [2, {N}]."
-        )
-
-    # --- Cross-validation setup ---
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-    scores = []
-
-    for train_idx, test_idx in kf.split(X):
-        X_train, X_test = X[train_idx], X[test_idx]
-        Y_train, Y_test = Y[train_idx], Y[test_idx]
-
-        # --- Ensure each fold is overdetermined for non-lasso backends ---
-        if backend in {"ols", "ridge"} and X_train.shape[0] <= X_train.shape[1]:
-            raise ValueError(
-                f"Invalid fold: train samples ({X_train.shape[0]}) "
-                f"must be > number of features ({X_train.shape[1]}). "
-                "Reduce n_splits."
-            )
-
-        # --- Scale (fit on train only, transform both) ---
-        x_scaler = StandardScaler()
-        y_scaler = StandardScaler()
-
-        X_train = x_scaler.fit_transform(X_train)
-        X_test = x_scaler.transform(X_test)
-
-        Y_train = y_scaler.fit_transform(Y_train)
-        Y_test = y_scaler.transform(Y_test)
-
-        # --- Fit model ---
-        if backend == "ols":
-            model = LinearRegression(fit_intercept=fit_intercept)
-        elif backend == "ridge":
-            alpha_grid = np.logspace(-5, 5, 51) if alphas is None else alphas
-            model = RidgeCV(
-                alphas=alpha_grid,
-                fit_intercept=fit_intercept,
-                cv=5,
-            )
-        elif backend == "lasso":
-            alpha_grid = np.logspace(-5, 1, 30) if alphas is None else alphas
-            inner_cv = min(5, X_train.shape[0])
-            if inner_cv < 2:
-                raise ValueError(
-                    f"Invalid fold for lasso: train samples ({X_train.shape[0]}) "
-                    "must be >= 2 for cross-validation. Reduce n_splits."
-                )
-
-            model = MultiTaskLassoCV(
-                alphas=alpha_grid,
-                fit_intercept=fit_intercept,
-                cv=inner_cv,
-                random_state=random_state,
+        if beta_init is None:
+            beta = torch.zeros(
+                n_features,
+                n_targets,
+                device=X.device,
+                dtype=X.dtype,
             )
         else:
-            raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
+            beta = beta_init.clone()
 
-        # --- Evaluate on test set ---
-        model.fit(X_train, Y_train)
-        preds = model.predict(X_test)
-        score = r2_score(Y_test, preds, multioutput="uniform_average")
+        spectral_norm = torch.linalg.matrix_norm(X, ord=2)
+        lipschitz = (spectral_norm.item() ** 2) / max(n_samples, 1)
+        step_size = 1.0 / (lipschitz + 1e-8)
 
-        scores.append(score)
+        for _ in range(max_iter):
+            prev_beta = beta
 
-    return float(np.mean(scores))
+            residual = X @ beta - Y
+            gradient = (X.T @ residual) / n_samples
+            beta_temp = beta - step_size * gradient
 
+            row_norms = torch.linalg.norm(beta_temp, ord=2, dim=1, keepdim=True)
+            shrink = torch.clamp(row_norms - alpha * step_size, min=0.0)
+            beta = beta_temp * (shrink / row_norms.clamp(min=1e-12))
+
+            delta = torch.linalg.norm(beta - prev_beta) / (
+                torch.linalg.norm(prev_beta) + 1e-8
+            )
+            if delta.item() < tol:
+                break
+
+        return beta
+
+    regression_type = regression_type.lower()
+    X, Y = preprocess_data(
+        data1,
+        data2,
+        output_format="tensor",
+        remove_duplicates=False,
+    )
+    X, Y = _ensure_device(X, Y)
+
+    if Y.ndim == 1:
+        Y = Y.reshape(-1, 1)
+    elif Y.ndim != 2:
+        raise ValueError(f"Y must be 1D or 2D. Got shape: {Y.shape}")
+
+    X = X.to(torch.float32)
+    Y = Y.to(torch.float32)
+    device = X.device
+
+    n_samples, n_features = X.shape
+
+    if regression_type not in {"ols", "ridge", "lasso"}:
+        raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
+
+    if regression_type in {"ols", "ridge"} and n_samples <= n_features:
+        raise ValueError(
+            f"Require N > d for {regression_type}: got N={n_samples}, d={n_features}"
+        )
+
+    # 80/20 train-test split
+    generator = torch.Generator(device="cpu").manual_seed(random_state)
+    perm = torch.randperm(n_samples, generator=generator)
+    train_size = int(0.8 * n_samples)
+    train_idx = perm[:train_size]
+    test_idx = perm[train_size:]
+
+    X_train, X_test = X[train_idx], X[test_idx]
+    Y_train, Y_test = Y[train_idx], Y[test_idx]
+
+    if regression_type in {"ols", "ridge"} and len(train_idx) <= n_features:
+        raise ValueError(
+            "Require N > d in train split for "
+            f"{regression_type}: got N_train={len(train_idx)}, d={n_features}"
+        )
+
+    x_mean = X_train.mean(dim=0, keepdim=True)
+    x_std = X_train.std(dim=0, unbiased=False, keepdim=True).clamp_(min=1e-8)
+    X_train_scaled = (X_train - x_mean) / x_std
+    X_test_scaled = (X_test - x_mean) / x_std
+
+    y_mean = Y_train.mean(dim=0, keepdim=True)
+    y_std = Y_train.std(dim=0, unbiased=False, keepdim=True).clamp_(min=1e-8)
+    Y_train_scaled = (Y_train - y_mean) / y_std
+    Y_test_scaled = (Y_test - y_mean) / y_std
+
+    if regression_type == "ols":
+        with torch.no_grad():
+            if fit_intercept:
+                ones_train = torch.ones((X_train_scaled.shape[0], 1), device=device)
+                ones_test = torch.ones((X_test_scaled.shape[0], 1), device=device)
+                X_train_fit = torch.cat([X_train_scaled, ones_train], dim=1)
+                X_test_fit = torch.cat([X_test_scaled, ones_test], dim=1)
+            else:
+                X_train_fit = X_train_scaled
+                X_test_fit = X_test_scaled
+
+            beta, *_ = torch.linalg.lstsq(X_train_fit, Y_train_scaled, rcond=None)
+            y_pred = X_test_fit @ beta
+            return score_uniform_average(Y_test_scaled, y_pred)
+
+    train_count = X_train_scaled.shape[0]
+    val_count = max(1, int(0.2 * train_count))
+    has_validation_split = train_count - val_count >= 2
+
+    if has_validation_split:
+        split_generator = torch.Generator(device="cpu").manual_seed(random_state + 1)
+        split_perm = torch.randperm(train_count, generator=split_generator)
+        val_idx = split_perm[:val_count]
+        subtrain_idx = split_perm[val_count:]
+
+        X_subtrain = X_train_scaled[subtrain_idx]
+        Y_subtrain = Y_train_scaled[subtrain_idx]
+        X_val = X_train_scaled[val_idx]
+        Y_val = Y_train_scaled[val_idx]
+    else:
+        X_subtrain = X_train_scaled
+        Y_subtrain = Y_train_scaled
+        X_val = None
+        Y_val = None
+
+    if fit_intercept:
+        ones_subtrain = torch.ones((X_subtrain.shape[0], 1), device=device)
+        X_subtrain = torch.cat([X_subtrain, ones_subtrain], dim=1)
+
+        ones_train = torch.ones((X_train_scaled.shape[0], 1), device=device)
+        X_train_fit = torch.cat([X_train_scaled, ones_train], dim=1)
+
+        ones_test = torch.ones((X_test_scaled.shape[0], 1), device=device)
+        X_test_fit = torch.cat([X_test_scaled, ones_test], dim=1)
+
+        if X_val is not None:
+            ones_val = torch.ones((X_val.shape[0], 1), device=device)
+            X_val = torch.cat([X_val, ones_val], dim=1)
+    else:
+        X_train_fit = X_train_scaled
+        X_test_fit = X_test_scaled
+
+    if regression_type == "ridge":
+        alpha_grid = (
+            np.logspace(-4, 2, 9) if alphas is None else np.asarray(alphas, dtype=float)
+        )
+        best_alpha = float(alpha_grid[0])
+        best_score = -float("inf")
+
+        with torch.no_grad():
+            eye = torch.eye(X_subtrain.shape[1], device=device, dtype=torch.float32)
+            XtX = X_subtrain.T @ X_subtrain
+            XtY = X_subtrain.T @ Y_subtrain
+
+            for alpha_value in alpha_grid:
+                beta = torch.linalg.solve(XtX + float(alpha_value) * eye, XtY)
+                if X_val is not None and Y_val is not None:
+                    current_score = score_uniform_average(Y_val, X_val @ beta)
+                else:
+                    current_score = score_uniform_average(Y_subtrain, X_subtrain @ beta)
+
+                if current_score > best_score:
+                    best_score = current_score
+                    best_alpha = float(alpha_value)
+
+            eye_train = torch.eye(X_train_fit.shape[1], device=device, dtype=torch.float32)
+            beta = torch.linalg.solve(
+                X_train_fit.T @ X_train_fit + best_alpha * eye_train,
+                X_train_fit.T @ Y_train_scaled,
+            )
+            y_pred = X_test_fit @ beta
+            return score_uniform_average(Y_test_scaled, y_pred)
+
+    if regression_type == "lasso":
+        alpha_grid = (
+            np.logspace(-4, 0, 9) if alphas is None else np.asarray(alphas, dtype=float)
+        )
+        best_alpha = float(alpha_grid[0])
+        best_score = -float("inf")
+        warm_beta = None
+
+        with torch.no_grad():
+            for alpha_value in np.sort(alpha_grid)[::-1]:
+                beta = fit_multitask_lasso_ista(
+                    X_subtrain,
+                    Y_subtrain,
+                    alpha=float(alpha_value),
+                    max_iter=3000,
+                    tol=1e-5,
+                    beta_init=warm_beta,
+                )
+                warm_beta = beta
+
+                if X_val is not None and Y_val is not None:
+                    current_score = score_uniform_average(Y_val, X_val @ beta)
+                else:
+                    current_score = score_uniform_average(Y_subtrain, X_subtrain @ beta)
+
+                if current_score > best_score:
+                    best_score = current_score
+                    best_alpha = float(alpha_value)
+
+            best_beta = fit_multitask_lasso_ista(
+                X_train_fit,
+                Y_train_scaled,
+                alpha=best_alpha,
+                max_iter=5000,
+                tol=1e-6,
+            )
+            y_pred = X_test_fit @ best_beta
+            return score_uniform_average(Y_test_scaled, y_pred)
+
+    raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
 
 def compute_similarity(
     data1: Union[np.ndarray, torch.Tensor],
@@ -774,7 +915,6 @@ def compute_similarity(
         regression_type = kwargs.get("regression_type", "ridge")
         alphas = kwargs.get("alphas", None)
         fit_intercept = kwargs.get("fit_intercept", True)
-        n_splits = kwargs.get("n_splits", 5)
         random_state = kwargs.get("random_state", 0)
         return compute_linear_regression_r2_score(
             data1,
@@ -782,7 +922,6 @@ def compute_similarity(
             regression_type=regression_type,
             alphas=alphas,
             fit_intercept=fit_intercept,
-            n_splits=n_splits,
             random_state=random_state,
         )
 
@@ -790,7 +929,6 @@ def compute_similarity(
         regression_type = kwargs.get("regression_type", "ridge")
         alphas = kwargs.get("alphas", None)
         fit_intercept = kwargs.get("fit_intercept", True)
-        n_splits = kwargs.get("n_splits", 5)
         random_state = kwargs.get("random_state", 0)
         return compute_linear_regression_r2_score(
             data2,
@@ -798,7 +936,6 @@ def compute_similarity(
             regression_type=regression_type,
             alphas=alphas,
             fit_intercept=fit_intercept,
-            n_splits=n_splits,
             random_state=random_state,
         )
 

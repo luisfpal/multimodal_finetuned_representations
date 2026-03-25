@@ -10,9 +10,9 @@ JOB_NAME="experiment"
 PARTITION="DGX"
 GPU_TYPE="A100"
 NUM_GPUS=1              # Number of GPUs (requires at least 1 for CUDA models)
-CPUS=16
-MEM="64GB"
-TIME="17:00:00"
+CPUS=8
+MEM="48GB"
+TIME="03:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -39,12 +39,20 @@ SBATCH_SCRIPT=$(mktemp /tmp/sbatch_experiment.XXXXXX.sh)
 SBATCH_DIRECTIVES="#SBATCH --account=$ACCOUNT
 #SBATCH --job-name=$JOB_NAME
 #SBATCH --partition=$PARTITION
-#SBATCH --gres=gpu:$GPU_TYPE:$NUM_GPUS
 #SBATCH --cpus-per-task=$CPUS
 #SBATCH --mem=$MEM
 #SBATCH --time=$TIME
 #SBATCH --output=$LOG_DIR/slurm-%j.out
 #SBATCH --error=$LOG_DIR/slurm-%j.out"
+
+if (( NUM_GPUS > 0 )); then
+    if [[ -z "$GPU_TYPE" ]]; then
+        echo "❌ GPU_TYPE must be set when NUM_GPUS > 0"
+        exit 1
+    fi
+    SBATCH_DIRECTIVES+="
+#SBATCH --gres=gpu:$GPU_TYPE:$NUM_GPUS"
+fi
 
 [[ -n "$NODELIST" ]] && SBATCH_DIRECTIVES+="
 #SBATCH --nodelist=$NODELIST"
@@ -61,15 +69,6 @@ $SBATCH_DIRECTIVES
 # =============================================================================
 
 # Configuration (values snapshotted at submission time)
-export REPRESENTATIONS_DIR="$HOME/scratch"
-export SAVE_REPRESENTATIONS="true"
-export REPEATED_IMAGES="false"
-export OPEN_ENDED="true"
-export REPRESENTATIONS_ONLY="false"
-export ENABLE_SEMANTIC_FILTER="false"
-export DOWNSAMPLE_SIZE=""
-export DATASET_SPLIT="split01"
-export FORCE_RECOMPUTE="false"
 
 TOKENIZERS_PARALLELISM="false"
 

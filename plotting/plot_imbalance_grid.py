@@ -5,13 +5,13 @@ Multimodal Information Imbalance - Layer-Pair Scatter Grids
 Generates one figure per dataset variant (Open-Ended VQA, VQAv2, Benchmarks).
 Each figure is a grid: rows = datasets, cols = models (pretrained + finetuned pairs).
 
-Every cell plots (text_layer, image_layer) coordinates with scatter points.
+Every cell plots coordinates with x = text layer and y = visual layer.
 Marker size is determined by quantile-based bucketing of imbalance values:
   - Open-ended VQA datasets: 20th, 35th, 50th percentiles
   - Benchmark datasets: 30th, 50th, 70th percentiles (empirically tuned for visibility)
 
-Green squares = text->image imbalance (information_imbalance_reversed)
-Purple circles = image->text imbalance (information_imbalance)
+Green squares = text->image imbalance (information_imbalance)
+Purple circles = image->text imbalance (information_imbalance_reversed)
 Goldenrod band (layers 5.5-17.5) marks embedding/attention -> MLP transition
 """
 
@@ -37,6 +37,9 @@ PLOTS_DIR = Path(
     "/u/dssc/lpalaciosflores/multimodal_finetuned_representations/plots/imbalance_grids"
 )
 
+EXPECTED_SOURCE_ORIENTATION = ("text", "image")
+DISPLAY_ORIENTATION = ("image", "text")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # VISUAL CONSTANTS  (tuned to match reference single-plot)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -47,12 +50,13 @@ FIGURE_MODE = "aggregated"  # "specific" | "aggregated" | "both"
 
 ABSTRACTION = (5.5, 17.5)  # goldenrod band on both axes
 
-STYLE_T_IMG = dict(marker="s", edgecolors="green", facecolors="none", linewidths=1.5)
-STYLE_I_TXT = dict(marker="o", edgecolors="purple", facecolors="none", linewidths=1.5)
+STYLE_T_IMG = dict(marker="o", edgecolors="purple", facecolors="none", linewidths=0.85)
+STYLE_I_TXT = dict(marker="s", edgecolors="green", facecolors="none", linewidths=0.85)
 
 DPI = 150
 CELL_W = 3.2  # inches per cell
 CELL_H = 3.0
+MARKER_SIZE_SCALE = 0.63
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL REGISTRY
@@ -192,6 +196,48 @@ STAGES = [
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _normalize_modality_label(value: str, fallback: str) -> str:
+    label = str(value).strip().lower()
+    if label not in {"text", "image"}:
+        return fallback
+    return label
+
+
+def _resolve_matrix_orientation(metadata: dict | None) -> tuple[str, str]:
+    if not metadata:
+        return EXPECTED_SOURCE_ORIENTATION
+
+    row_mod = _normalize_modality_label(
+        metadata.get("row_modality", EXPECTED_SOURCE_ORIENTATION[0]),
+        EXPECTED_SOURCE_ORIENTATION[0],
+    )
+    col_mod = _normalize_modality_label(
+        metadata.get("col_modality", EXPECTED_SOURCE_ORIENTATION[1]),
+        EXPECTED_SOURCE_ORIENTATION[1],
+    )
+
+    if row_mod == col_mod:
+        return EXPECTED_SOURCE_ORIENTATION
+
+    return (row_mod, col_mod)
+
+
+def _orient_for_display(
+    matrix: np.ndarray | None,
+    source_orientation: tuple[str, str],
+) -> np.ndarray | None:
+    if matrix is None:
+        return None
+
+    if source_orientation == DISPLAY_ORIENTATION:
+        return matrix
+
+    if source_orientation == EXPECTED_SOURCE_ORIENTATION:
+        return matrix.T
+
+    return matrix.T
+
+
 def _load_tensor(
     results_dir: Path,
     model_id: str,
@@ -209,14 +255,16 @@ def _load_tensor(
         / f"{model_id}_{metric}.safetensors"
     )
     if not p.exists():
-        return None
+        return None, EXPECTED_SOURCE_ORIENTATION
     try:
         with safe_open(p, framework="np", device="cpu") as f:
             if metric in f.keys():
-                return f.get_tensor(metric).copy()
-    except Exception as e:
+                matrix = f.get_tensor(metric).copy()
+                orientation = _resolve_matrix_orientation(f.metadata())
+                return matrix, orientation
+    except Exception:
         pass
-    return None
+    return None, EXPECTED_SOURCE_ORIENTATION
 
 
 def load_all(results_dir: Path, pooling: str) -> dict:
@@ -230,13 +278,16 @@ def load_all(results_dir: Path, pooling: str) -> dict:
         model_data = {}
         for dataset, variant in all_datasets_variants:
             arrs = {}
+            source_orientation = EXPECTED_SOURCE_ORIENTATION
             for metric in ["information_imbalance_reversed", "information_imbalance"]:
-                arr = _load_tensor(
+                arr, orientation = _load_tensor(
                     results_dir, model_id, dataset, variant, metric, pooling
                 )
                 if arr is not None:
                     arrs[metric] = arr
+                    source_orientation = orientation
             if arrs:
+                arrs["source_orientation"] = source_orientation
                 model_data[f"{dataset}_{variant}"] = arrs
         data[model_id] = model_data
         n = len(model_data)
@@ -253,8 +304,8 @@ def load_all(results_dir: Path, pooling: str) -> dict:
 def render_cell(ax, t_img, i_txt, thresholds):
     """
     Renders the custom scatter logic.
-    t_img: shape (N, N), information_imbalance_reversed
-    i_txt: shape (N, N), information_imbalance
+    t_img: shape (N, N), information_imbalance_reversed (image->text)
+    i_txt: shape (N, N), information_imbalance (text->image)
     """
     n = 32
     if t_img is not None:
@@ -281,16 +332,16 @@ def render_cell(ax, t_img, i_txt, thresholds):
     Y = (vis_idx + 1).astype(float)
 
     for lo, hi, sz, p in thresholds:
-        sz_pad = sz * 0.85  # pad to prevent adjacent marker touch-overlap
+        sz_pad = sz * MARKER_SIZE_SCALE
         try:
-            if t_img is not None:
-                mask = (t_img >= lo) & (t_img < hi)
-                if mask.any():
-                    ax.scatter(X[mask], Y[mask], s=sz_pad, zorder=3, **STYLE_T_IMG)
             if i_txt is not None:
                 mask = (i_txt >= lo) & (i_txt < hi)
                 if mask.any():
-                    ax.scatter(X[mask], Y[mask], s=sz_pad, zorder=4, **STYLE_I_TXT)
+                    ax.scatter(X[mask], Y[mask], s=sz_pad, zorder=3, **STYLE_I_TXT)
+            if t_img is not None:
+                mask = (t_img >= lo) & (t_img < hi)
+                if mask.any():
+                    ax.scatter(X[mask], Y[mask], s=sz_pad, zorder=4, **STYLE_T_IMG)
         except Exception:
             pass
 
@@ -368,6 +419,59 @@ def _make_dynamic_legend_handles(thresholds):
     ]
 
 
+def _make_direction_legend_handles():
+    kw = dict(linestyle="None", markerfacecolor="none")
+    return [
+        mlines.Line2D(
+            [], [], color="green", marker="s", markersize=8, label="text → img", **kw
+        ),
+        mlines.Line2D(
+            [], [], color="purple", marker="o", markersize=8, label="img → text", **kw
+        ),
+    ]
+
+
+def _make_size_legend_handles(thresholds):
+    kw = dict(linestyle="None", markerfacecolor="none")
+    lo1, hi1, s1, p1 = thresholds[0]
+    lo2, hi2, s2, p2 = thresholds[1]
+    lo3, hi3, s3, p3 = thresholds[2]
+
+    d1 = np.sqrt(s1)
+    d2 = np.sqrt(s2)
+    d3 = np.sqrt(s3)
+
+    return [
+        mlines.Line2D(
+            [],
+            [],
+            color="black",
+            marker="o",
+            markersize=d1,
+            label=f"imb. < {hi1:.3f}",
+            **kw,
+        ),
+        mlines.Line2D(
+            [],
+            [],
+            color="black",
+            marker="o",
+            markersize=d2,
+            label=f"{lo2:.3f} ≤ imb. < {hi2:.3f}",
+            **kw,
+        ),
+        mlines.Line2D(
+            [],
+            [],
+            color="black",
+            marker="o",
+            markersize=d3,
+            label=f"{lo3:.3f} ≤ imb. < {hi3:.3f}",
+            **kw,
+        ),
+    ]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE AVERAGE
 # ══════════════════════════════════════════════════════════════════════════════
@@ -378,10 +482,21 @@ def stage_avg(model_id: str, stage_datasets: list, data: dict):
     model_data = data.get(model_id, {})
     for ds, var, _ in stage_datasets:
         entry = model_data.get(f"{ds}_{var}", {})
+        source_orientation = entry.get("source_orientation", EXPECTED_SOURCE_ORIENTATION)
         if "information_imbalance_reversed" in entry:
-            t_imgs.append(entry["information_imbalance_reversed"])
+            t_imgs.append(
+                _orient_for_display(
+                    entry["information_imbalance_reversed"],
+                    source_orientation,
+                )
+            )
         if "information_imbalance" in entry:
-            i_txts.append(entry["information_imbalance"])
+            i_txts.append(
+                _orient_for_display(
+                    entry["information_imbalance"],
+                    source_orientation,
+                )
+            )
 
     shapes_t = {a.shape for a in t_imgs}
     shapes_i = {a.shape for a in i_txts}
@@ -403,10 +518,21 @@ def aggregate_model_all_datasets(model_id: str, data: dict):
     t_imgs, i_txts = [], []
     model_data = data.get(model_id, {})
     for entry in model_data.values():
+        source_orientation = entry.get("source_orientation", EXPECTED_SOURCE_ORIENTATION)
         if "information_imbalance_reversed" in entry:
-            t_imgs.append(entry["information_imbalance_reversed"])
+            t_imgs.append(
+                _orient_for_display(
+                    entry["information_imbalance_reversed"],
+                    source_orientation,
+                )
+            )
         if "information_imbalance" in entry:
-            i_txts.append(entry["information_imbalance"])
+            i_txts.append(
+                _orient_for_display(
+                    entry["information_imbalance"],
+                    source_orientation,
+                )
+            )
 
     def _mean_or_none(arrays: list[np.ndarray]):
         if not arrays:
@@ -488,21 +614,7 @@ def build_stage_figure(
     fig_w = left_margin + nC * CELL_W + (nC - 1) * CELL_W * wspace + right_margin
     fig_h = top_margin + nR * CELL_H + (nR - 1) * CELL_H * hspace + bottom_margin
 
-    print(
-        f"      [DEBUG] Calling subplots with nR={nR} nC={nC} fig_w={fig_w} fig_h={fig_h}"
-    )
-    try:
-        import sys
-
-        sys.stdout.flush()
-        fig, axes = plt.subplots(nR, nC, figsize=(fig_w, fig_h), squeeze=False)
-        print("      [DEBUG] Subplots success")
-        sys.stdout.flush()
-    except Exception as e:
-        print(f"      [DEBUG] EXCEPTION IN SUBPLOTS: {e}")
-        import sys
-
-        sys.exit(2)
+    fig, axes = plt.subplots(nR, nC, figsize=(fig_w, fig_h), squeeze=False)
 
     fig.subplots_adjust(
         left=left_margin / fig_w,
@@ -517,7 +629,6 @@ def build_stage_figure(
 
     for r, row_lbl in enumerate(row_labels):
         is_avg = include_stage_average and r == nR - 1
-        print(f"      [DEBUG] Row {r}: {row_lbl} (is_avg={is_avg})")
 
         # 1. Gather all data for this row to compute row-specific thresholds
         row_data = []
@@ -529,8 +640,18 @@ def build_stage_figure(
             else:
                 ds_name, var_name, _ = stage_datasets[r]
                 entry = model_data.get(f"{ds_name}_{var_name}", {})
-                t_img = entry.get("information_imbalance_reversed")
-                i_txt = entry.get("information_imbalance")
+                source_orientation = entry.get(
+                    "source_orientation",
+                    EXPECTED_SOURCE_ORIENTATION,
+                )
+                t_img = _orient_for_display(
+                    entry.get("information_imbalance_reversed"),
+                    source_orientation,
+                )
+                i_txt = _orient_for_display(
+                    entry.get("information_imbalance"),
+                    source_orientation,
+                )
 
             cell_inputs.append((t_img, i_txt))
             if t_img is not None:
@@ -543,39 +664,14 @@ def build_stage_figure(
 
         # 2. Render each cell in the row using the row-specific thresholds
         for c, mod_id in enumerate(model_keys):
-            print(f"        [DEBUG] Col {c}: {mod_id}")
             ax = axes[r, c]
             t_img, i_txt = cell_inputs[c]
 
             if t_img is not None or i_txt is not None:
-                print(f"          [DEBUG] calling render_cell")
                 render_cell(ax, t_img, i_txt, thresholds)
-
-                # Annotate exact threshold limits on each valid plot
-                q1, q2, q3 = thresholds[0][1], thresholds[1][1], thresholds[2][1]
-                p1, p2, p3 = thresholds[0][3], thresholds[1][3], thresholds[2][3]
-                threshold_txt = f"$q_{{{p1}}}$={q1:.3f}\n$q_{{{p2}}}$={q2:.3f}\n$q_{{{p3}}}$={q3:.3f}"
-                ax.text(
-                    0.97,
-                    0.03,
-                    threshold_txt,
-                    transform=ax.transAxes,
-                    fontsize=8,
-                    color="black",
-                    va="bottom",
-                    ha="right",
-                    zorder=10,
-                    bbox=dict(
-                        boxstyle="round,pad=0.4",
-                        facecolor="white",
-                        edgecolor="#aaa",
-                        alpha=1.0,
-                    ),
-                )
 
                 # Legend in top-left cell only
                 if not legend_placed:
-                    print(f"          [DEBUG] rendering legend")
                     leg = ax.legend(
                         handles=_make_dynamic_legend_handles(thresholds),
                         loc="upper left",
@@ -588,7 +684,6 @@ def build_stage_figure(
                     leg.set_zorder(10)
                     legend_placed = True
             else:
-                print(f"          [DEBUG] calling render_missing")
                 render_missing(ax)
 
             # Column headers (model names) – top row only
@@ -615,7 +710,6 @@ def build_stage_figure(
             annotation_clip=False,
         )
 
-    print("      [DEBUG] build_stage_figure: returning fig")
     # Shared axis labels
     l_frac = left_margin / fig_w
     fig.text(
@@ -643,10 +737,6 @@ def build_stage_figure(
         y=1.002,
     )
 
-    import sys
-
-    sys.stdout.flush()
-
     return fig
 
 
@@ -665,7 +755,7 @@ def build_aggregated_pair_figure(
     wspace = 0.28
     hspace = 0.20
     top_margin = 0.60
-    bottom_margin = 0.55
+    bottom_margin = 1.25
     left_margin = 1.4
     right_margin = 0.25
 
@@ -703,45 +793,11 @@ def build_aggregated_pair_figure(
         n_points=32,
     )
 
-    legend_placed = False
     for c, mod_id in enumerate(model_keys):
         ax = axes[0, c]
         t_img, i_txt = cell_inputs[c]
         if t_img is not None or i_txt is not None:
             render_cell(ax, t_img, i_txt, thresholds)
-            q1, q2, q3 = thresholds[0][1], thresholds[1][1], thresholds[2][1]
-            p1, p2, p3 = thresholds[0][3], thresholds[1][3], thresholds[2][3]
-            threshold_txt = f"$q_{{{p1}}}$={q1:.3f}\n$q_{{{p2}}}$={q2:.3f}\n$q_{{{p3}}}$={q3:.3f}"
-            ax.text(
-                0.97,
-                0.03,
-                threshold_txt,
-                transform=ax.transAxes,
-                fontsize=8,
-                color="black",
-                va="bottom",
-                ha="right",
-                zorder=10,
-                bbox=dict(
-                    boxstyle="round,pad=0.4",
-                    facecolor="white",
-                    edgecolor="#aaa",
-                    alpha=1.0,
-                ),
-            )
-
-            if not legend_placed:
-                leg = ax.legend(
-                    handles=_make_dynamic_legend_handles(thresholds),
-                    loc="upper left",
-                    fontsize=7,
-                    framealpha=0.92,
-                    edgecolor="#aaa",
-                    handlelength=1.2,
-                    borderpad=0.5,
-                )
-                leg.set_zorder(10)
-                legend_placed = True
         else:
             render_missing(ax)
 
@@ -781,6 +837,36 @@ def build_aggregated_pair_figure(
         va="center",
         fontsize=9,
     )
+
+    dir_leg = fig.legend(
+        handles=_make_direction_legend_handles(),
+        loc="lower center",
+        bbox_to_anchor=(0.32, 0.01),
+        ncol=2,
+        fontsize=9,
+        framealpha=0.95,
+        edgecolor="#aaa",
+        handlelength=1.2,
+        borderpad=0.5,
+        columnspacing=1.1,
+        handletextpad=0.5,
+    )
+    fig.add_artist(dir_leg)
+
+    size_leg = fig.legend(
+        handles=_make_size_legend_handles(thresholds),
+        loc="lower center",
+        bbox_to_anchor=(0.73, 0.01),
+        ncol=1,
+        fontsize=9,
+        framealpha=0.95,
+        edgecolor="#aaa",
+        handlelength=1.2,
+        borderpad=0.5,
+        columnspacing=1.1,
+        handletextpad=0.5,
+    )
+    size_leg.set_zorder(10)
     fig.suptitle(
         f"Information Imbalance  —  Aggregated Across Selected Datasets ({pair_label})",
         fontsize=12,
@@ -873,10 +959,6 @@ def main():
                             continue
 
                         print(f"\n  ── {stage_label} ({stage_key}) [{target_model_id}]")
-                        import sys
-
-                        sys.stdout.flush()
-
                         try:
                             fig = build_stage_figure(
                                 stage_key,
@@ -888,44 +970,16 @@ def main():
                                 args.include_stage_average,
                             )
                             out = plots_dir / f"{target_model_id}_{stage_key}.png"
-                            print(f"      [DEBUG] Calling savefig for {out}")
-                            import sys
-                            import resource
-
-                            mem_mb = (
-                                resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-                                / 1024.0
-                            )
-                            print(
-                                f"      [DEBUG] MEMORY USAGE (Max RSS): {mem_mb:.2f} MB"
-                            )
-                            sys.stdout.flush()
-
-                            try:
-                                fig.savefig(str(out), dpi=DPI, facecolor="white")
-                            except BaseException as be:
-                                print(
-                                    "      [DEBUG] CAUGHT BASE EXCEPTION:",
-                                    type(be),
-                                    be,
-                                )
-                                import traceback
-
-                                traceback.print_exc()
-                                sys.exit(1)
-
-                            print("      [DEBUG] Savefig complete")
+                            fig.savefig(str(out), dpi=DPI, facecolor="white")
                             plt.close("all")
 
                             print(f"     ✓  {out.name}")
-                            sys.stdout.flush()
 
-                        except Exception:
-                            print("      [DEBUG] EXCEPTION IN BUILD/SAVE")
-                            import traceback
-
-                            traceback.print_exc()
-                            sys.stdout.flush()
+                        except Exception as e:
+                            print(
+                                f"     ✗  Failed to generate {stage_key} [{target_model_id}]: {e}"
+                            )
+                            plt.close("all")
 
             if args.figure_mode in {"aggregated", "both"}:
                 print("\n  Generating aggregated pair figures...")
@@ -951,10 +1005,8 @@ def main():
                     print(f"     ✓  {out.name}")
 
         print("\n  Done.")
-    except Exception:
-        import traceback
-
-        traceback.print_exc()
+    except Exception as e:
+        print(f"Error generating imbalance grids: {e}")
 
 
 if __name__ == "__main__":

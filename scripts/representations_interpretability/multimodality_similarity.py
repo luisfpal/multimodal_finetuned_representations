@@ -43,8 +43,8 @@ VIRTUAL_POOLING_DISPATCH: dict[str, tuple[str, str]] = {
     "last_image_last_caption": ("last_caption", "last_image"),
 }
 _PASS_THROUGH_POOLING_METHODS: list[str] = ["last", "mean", "none"]
-VALID_POOLING_METHODS: list[str] = (
-    _PASS_THROUGH_POOLING_METHODS + list(VIRTUAL_POOLING_DISPATCH.keys())
+VALID_POOLING_METHODS: list[str] = _PASS_THROUGH_POOLING_METHODS + list(
+    VIRTUAL_POOLING_DISPATCH.keys()
 )
 TOKENS_POOLING_METHODS_DEFAULT: list[str] = ["last", "mean_context"]
 # ──────────────────────────────────────────────────────────────────────────
@@ -65,6 +65,7 @@ REGRESSION_SIMILARITY_MEASURES = {
     "linear_regression_r2",
     "linear_regression_r2_reversed",
 }
+SEMANTIC_FILTER_TAG = "sf-jina_m1sd"
 
 
 def build_similarity_filename(
@@ -74,19 +75,6 @@ def build_similarity_filename(
     if measure_name in REGRESSION_SIMILARITY_MEASURES:
         return f"{model_name}_{measure_name}_reg-{regression_type}.safetensors"
     return f"{model_name}_{measure_name}.safetensors"
-
-
-def build_representations_filename(
-    similarity_measures: list[str],
-    regression_type: str,
-) -> str:
-    """Build representation cache filename, backend-aware for regression runs."""
-    uses_regression_metric = any(
-        measure in REGRESSION_SIMILARITY_MEASURES for measure in similarity_measures
-    )
-    if uses_regression_metric:
-        return f"representations_reg-{regression_type}.safetensors"
-    return "representations.safetensors"
 
 
 def resolve_semantic_filter(
@@ -103,7 +91,7 @@ def resolve_semantic_filter(
     if not args.enable_semantic_filter:
         return None, ""
 
-    sem_tag = "sf-jina_m1sd"
+    sem_tag = SEMANTIC_FILTER_TAG
     cache_path = os.path.join(
         results_dir, "semantic_filter", dataset_slug, f"{sem_tag}_indices.json"
     )
@@ -155,16 +143,12 @@ def resolve_semantic_filter(
     return allowed_indices, sem_tag
 
 
-def load_or_extract_representation(
+def load_representation_from_cache(
     path: str,
-    dl,
-    model,
-    processor,
-    pooling_method: str,
     dry_run: bool,
     force: bool,
-) -> torch.Tensor:
-    """Load representation from cache, or extract fresh if unavailable."""
+) -> torch.Tensor | None:
+    """Load representation from cache, returning None if cache is unavailable."""
     if not dry_run and not force and os.path.exists(path):
         print(f"  💾 Found cached representation at: {path}")
         try:
@@ -185,6 +169,16 @@ def load_or_extract_representation(
             print(f"  ❌ Unexpected error loading cache: {type(e).__name__}: {e}")
             raise
 
+    return None
+
+
+def extract_representation(
+    dl,
+    model,
+    processor,
+    pooling_method: str,
+) -> torch.Tensor:
+    """Extract representation from model and dataloader."""
     return residual_stream_tracer(
         model=model,
         processed_dataloader=dl,
@@ -202,11 +196,11 @@ def find_missing_measures(
     model_name: str,
     regression_type: str,
     dry_run: bool,
-    force: bool,
+    force_recompute: bool,
 ) -> list[str]:
     """Return measures not yet computed, or all measures if dry_run/force."""
-    if dry_run or force:
-        if force:
+    if dry_run or force_recompute:
+        if force_recompute:
             print(
                 f"    🔄 Force mode: recomputing all {len(similarity_measures)} measures"
             )
@@ -342,6 +336,15 @@ def main():
         ),
     )
     parser.add_argument(
+        "--force-metrics-only",
+        action="store_true",
+        help=(
+            "Force similarity recomputation only: skip 'already exists' checks for "
+            "similarity outputs while preserving normal representation cache behavior. "
+            "Use this to refresh metrics without forcing representation overwrite."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Skip ALL caching: no load, no save, no skip existing. For debugging.",
@@ -389,7 +392,12 @@ def main():
 
     args = parser.parse_args()
 
-    invalid_pooling = [m for m in args.pooling_methods if m not in VALID_POOLING_METHODS]
+    if args.force and args.force_metrics_only:
+        parser.error("--force and --force-metrics-only are mutually exclusive.")
+
+    invalid_pooling = [
+        m for m in args.pooling_methods if m not in VALID_POOLING_METHODS
+    ]
     if invalid_pooling:
         parser.error(
             f"Invalid --pooling-methods: {invalid_pooling}. "
@@ -415,6 +423,17 @@ def main():
         print(
             "\n🔄 FORCE MODE — recomputing everything, existing files will be overwritten"
         )
+    elif args.force_metrics_only:
+        print(
+            "\n🔄 FORCE METRICS-ONLY MODE — recomputing similarities while reusing "
+            "representation caches"
+        )
+
+    if args.representations_only and args.force_metrics_only:
+        print(
+            "\nℹ️  --force-metrics-only has no effect with --representations-only "
+            "(similarity computation is skipped)."
+        )
 
     results_dir = os.path.expanduser(args.results_dir)
     os.makedirs(results_dir, exist_ok=True)
@@ -432,7 +451,9 @@ def main():
             )
         dataset_slug = f"{dataset_slug}_{args.dataset_split}"
 
-    sample_set_tag = "repeated_images" if (is_mc and args.repeated_images) else "unique_images"
+    sample_set_tag = (
+        "repeated_images" if (is_mc and args.repeated_images) else "unique_images"
+    )
     open_ended_tag = "open_ended" if (is_mc and args.open_ended) else ""
 
     # Warn when flags are inapplicable (shell already guards these, but be explicit)
@@ -452,56 +473,75 @@ def main():
         if open_ended_tag
         else f"{dataset_slug}_{args.caption_source}"
     )
+    sem_tag = SEMANTIC_FILTER_TAG if args.enable_semantic_filter else ""
 
     seed_all(args.seed)
 
-    print(f"\n🤖 Loading model: {args.model_name_or_path}")
+    model_name = args.model_name_or_path.split("/")[-1]
     model_cache_dir = os.getenv(
         "HF_HUB_CACHE",
         os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
     )
-    print(f"📂 Using model cache directory: {model_cache_dir}")
-    model, processor = load_hf_model_and_processor_or_tokenizer(
-        model_name_or_path=args.model_name_or_path,
-        cache_dir=model_cache_dir,
-        dtype=MODEL_DTYPE,
-        attn_implementation=ATTN_IMPLEMENTATION,
-        device_map=DEVICE,
-    )
-    model_name = args.model_name_or_path.split("/")[-1]
-
-    print("\n📚 Preparing dataloaders...")
     datasets_cache_dir = os.getenv("HF_DATASETS_CACHE")
-    dl_args = {
-        "dataset_path_or_name": args.dataset_path_or_name,
-        "seed": args.seed,
-        "processor": processor,
-        "batch_size": args.batch_size,
-        "cache_dir": datasets_cache_dir,
-        "guide_text": args.guide_text,
-        "downsample_size": args.downsample_size,
-        "split": "train",
-        "caption_source": args.caption_source,
-    }
 
-    allowed_indices, sem_tag = resolve_semantic_filter(
-        args, results_dir, dataset_slug, datasets_cache_dir
-    )
-    if allowed_indices is not None:
-        dl_args["allowed_indices"] = allowed_indices
-    if is_mc and not args.repeated_images:
-        dl_args["unique_images"] = True
-    if open_ended_tag:
-        dl_args["open_ended"] = True
-    if args.dataset_split:
-        dl_args["dataset_split"] = args.dataset_split
-    if "intern" in model.__class__.__name__.lower():
-        dl_args["model"] = model
+    model = None
+    processor = None
+    dl_txt = None
+    dl_img = None
+    extraction_runtime_initialized = False
 
-    print(f"  - Loading {dataset_prefix}_txt...")
-    dl_txt = get_dataloader(texts_qa=True, **dl_args)
-    print(f"  - Loading {dataset_prefix}_img...")
-    dl_img = get_dataloader(images_qa=True, **dl_args)
+    def ensure_extraction_runtime():
+        nonlocal model, processor, dl_txt, dl_img, extraction_runtime_initialized
+
+        if extraction_runtime_initialized:
+            return model, processor, dl_txt, dl_img
+
+        print(f"\n🤖 Loading model: {args.model_name_or_path}")
+        print(f"📂 Using model cache directory: {model_cache_dir}")
+        model, processor = load_hf_model_and_processor_or_tokenizer(
+            model_name_or_path=args.model_name_or_path,
+            cache_dir=model_cache_dir,
+            dtype=MODEL_DTYPE,
+            attn_implementation=ATTN_IMPLEMENTATION,
+            device_map=DEVICE,
+        )
+
+        print("\n📚 Preparing dataloaders...")
+        dl_args = {
+            "dataset_path_or_name": args.dataset_path_or_name,
+            "seed": args.seed,
+            "processor": processor,
+            "batch_size": args.batch_size,
+            "cache_dir": datasets_cache_dir,
+            "guide_text": args.guide_text,
+            "downsample_size": args.downsample_size,
+            "split": "train",
+            "caption_source": args.caption_source,
+        }
+
+        if args.enable_semantic_filter:
+            allowed_indices, _ = resolve_semantic_filter(
+                args, results_dir, dataset_slug, datasets_cache_dir
+            )
+            if allowed_indices is not None:
+                dl_args["allowed_indices"] = allowed_indices
+
+        if is_mc and not args.repeated_images:
+            dl_args["unique_images"] = True
+        if open_ended_tag:
+            dl_args["open_ended"] = True
+        if args.dataset_split:
+            dl_args["dataset_split"] = args.dataset_split
+        if "intern" in model.__class__.__name__.lower():
+            dl_args["model"] = model
+
+        print(f"  - Loading {dataset_prefix}_txt...")
+        dl_txt = get_dataloader(texts_qa=True, **dl_args)
+        print(f"  - Loading {dataset_prefix}_img...")
+        dl_img = get_dataloader(images_qa=True, **dl_args)
+
+        extraction_runtime_initialized = True
+        return model, processor, dl_txt, dl_img
 
     for pooling_method in args.pooling_methods:
         analysis_dir = os.path.join(
@@ -529,14 +569,14 @@ def main():
             model_name,
             args.regression_type,
             args.dry_run,
-            args.force,
+            args.force or args.force_metrics_only,
         )
         if not missing_measures:
             print(f"    ⏩ All measures computed for {pooling_method}. Skipping...")
             continue
         print(f"    ⚠️  Missing/forced measures: {missing_measures}")
 
-        # Closure: captures pooling_method, sem_tag, sample_set_tag from loop scope
+        # Closure: captures pooling_method, sample_set_tag from loop scope
         def get_repr_path(dataset_n: str) -> str:
             repr_dir = os.path.join(
                 os.path.expanduser(args.representations_dir),
@@ -545,40 +585,46 @@ def main():
                 dataset_n,
                 RESIDUAL_STREAM_TYPE,
                 pooling_method,
-                sem_tag,
                 sample_set_tag,
             )
             os.makedirs(repr_dir, exist_ok=True)
-            repr_filename = build_representations_filename(
-                args.similarity_measures,
-                args.regression_type,
-            )
-            return os.path.join(repr_dir, repr_filename)
+            return os.path.join(repr_dir, "representations.safetensors")
 
         repr_path_txt = get_repr_path(f"{dataset_prefix}_txt")
         repr_path_img = get_repr_path(f"{dataset_prefix}_img")
 
-        print("  👉 Extracting Text Representations...")
-        res_txt = load_or_extract_representation(
+        res_txt = load_representation_from_cache(
             repr_path_txt,
-            dl_txt,
-            model,
-            processor,
-            pooling_method_txt,
             args.dry_run,
             args.force,
         )
-
-        print("  👉 Extracting Image Representations...")
-        res_img = load_or_extract_representation(
+        res_img = load_representation_from_cache(
             repr_path_img,
-            dl_img,
-            model,
-            processor,
-            pooling_method_img,
             args.dry_run,
             args.force,
         )
+        txt_from_cache = res_txt is not None
+        img_from_cache = res_img is not None
+
+        if not txt_from_cache or not img_from_cache:
+            model, processor, dl_txt, dl_img = ensure_extraction_runtime()
+
+        if not txt_from_cache:
+            print("  👉 Extracting Text Representations...")
+            res_txt = extract_representation(
+                dl_txt,
+                model,
+                processor,
+                pooling_method_txt,
+            )
+        if not img_from_cache:
+            print("  👉 Extracting Image Representations...")
+            res_img = extract_representation(
+                dl_img,
+                model,
+                processor,
+                pooling_method_img,
+            )
 
         txt_metadata = {
             "model": model_name,
@@ -601,17 +647,23 @@ def main():
             "repeated_images": str(sample_set_tag == "repeated_images"),
         }
 
-        res_txt, res_img = preprocess_and_save_pair(
-            res_txt,
-            res_img,
-            repr_path_txt,
-            repr_path_img,
-            txt_metadata,
-            img_metadata,
-            args.save_representations,
-            args.dry_run,
-            args.force,
-        )
+        if txt_from_cache and img_from_cache:
+            print(
+                "  ⏩ Skipping preprocessing: text and image representations "
+                "loaded from cache."
+            )
+        else:
+            res_txt, res_img = preprocess_and_save_pair(
+                res_txt,
+                res_img,
+                repr_path_txt,
+                repr_path_img,
+                txt_metadata,
+                img_metadata,
+                args.save_representations,
+                args.dry_run,
+                args.force,
+            )
 
         if args.representations_only:
             print("  ⏭️  --representations-only: skipping similarity computation.")
@@ -672,6 +724,11 @@ def main():
                 )
 
         del res_txt, res_img
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    if extraction_runtime_initialized:
+        del model, processor, dl_txt, dl_img
         gc.collect()
         torch.cuda.empty_cache()
 

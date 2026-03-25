@@ -8,23 +8,24 @@ DATASETS=(
     # "l11p/POPE-test-captioned"
     # "l11p/MMBench_EN-dev-captioned"
     # "l11p/SEED-Bench-images-captioned"
-    # "l11p/GQA-val-balanced-noyesno-captioned"
-    "l11p/COCOQA-restval-ICQA"
-    "l11p/VQAv2-COCO-restval-ICQ"
+    "l11p/GQA-val-balanced-noyesno-captioned"
+    # "l11p/COCOQA-restval-ICQA"
+    # "l11p/VQAv2-COCO-restval-ICQ"
 )
 
 # Caption source: "human" or "synthetic" for COCOQA / VQAv2-ICQ (which have human captions),
 # "synthetic" for everything else. Always passed explicitly so path is deterministic.
-CAPTION_SOURCE="human"
+CAPTION_SOURCE="synthetic"
 
 # Analysis configuration
 TOKENS_POOLING_METHODS=(
     "last"
     "mean_context"
-    "mean_image_last_caption"
+    # "mean_image_last_caption"
     # "last_image_last_caption"
 )
-SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
+# SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
+SIMILARITY_MEASURES=""
 SIMILARITY_MEASURES="${SIMILARITY_MEASURES} linear_regression_r2 linear_regression_r2_reversed"
 
 # Processing parameters
@@ -38,16 +39,16 @@ GUIDE_TEXT_MULTICHOICE="Answer with the option's letter from the given choices d
 
 # Models to evaluate
 MODELS=(
-    "lbasile/llava_7b"
+    # "lbasile/llava_7b"
     # "l11p/llava-v1.5-7b-pretrained-lbasile"
-    # "OpenGVLab/InternVL2-8B"  # Finetuned
-    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"  # Pretrained
+    # "OpenGVLab/InternVL2-8B"
+    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
     # "lbasile/llava_13b"
     # "l11p/llava-v1.5-13b-pretrained-lbasile"
-    # "lbasile/LLaVA-OneVision-1.5-8B-stage1"
-    # "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
     # "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
     # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+    "lbasile/LLaVA-OneVision-1.5-8B-stage1"
+    "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
     # "OpenGVLab/InternVL3_5-8B-Pretrained"
@@ -58,17 +59,23 @@ MODELS=(
 )
 
 # Configuration from environment (set by launch_job.sh)
-DOWNSAMPLE_SIZE="${DOWNSAMPLE_SIZE:-}"
-DATASET_SPLIT="${DATASET_SPLIT:-}"
+FORCE_METRICS_ONLY="true"
+DOWNSAMPLE_SIZE=""
+DATASET_SPLIT="split01"
 # REPEATED_IMAGES=true  → use raw benchmark with image repetitions (repeated_images/)
 # REPEATED_IMAGES=false → use deduplicated variant (unique_images/) — DEFAULT
-REPEATED_IMAGES="${REPEATED_IMAGES:-false}"
-OPEN_ENDED="${OPEN_ENDED:-false}"
-REPRESENTATIONS_ONLY="${REPRESENTATIONS_ONLY:-false}"
-ENABLE_SEMANTIC_FILTER="${ENABLE_SEMANTIC_FILTER:-false}"
+REPEATED_IMAGES="false"
+OPEN_ENDED="true"
+REPRESENTATIONS_ONLY="false"
+ENABLE_SEMANTIC_FILTER="false"
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
-SAVE_REPRESENTATIONS="${SAVE_REPRESENTATIONS:-true}"
-FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-false}"
+SAVE_REPRESENTATIONS="true"
+FORCE_RECOMPUTE="false"
+
+if [ "$FORCE_RECOMPUTE" = "true" ] && [ "$FORCE_METRICS_ONLY" = "true" ]; then
+    echo "❌ Invalid config: FORCE_RECOMPUTE and FORCE_METRICS_ONLY cannot both be true."
+    exit 1
+fi
 
 # Directory configuration
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
@@ -82,8 +89,12 @@ FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # --- Run Analysis ---
+START_EPOCH=$(date +%s)
+START_HUMAN=$(date '+%Y-%m-%d %H:%M:%S %Z')
+
 echo "====== Multimodality Similarity Analysis ======"
 echo "Results directory: $RESULTS_DIR"
+echo "Started at: $START_HUMAN"
 
 for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
     echo -e "\n════════════════════════════════════════════════════════════════"
@@ -188,6 +199,10 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
                 CMD_ARGS+=(--force)
             fi
 
+            if [ "$FORCE_METRICS_ONLY" = "true" ]; then
+                CMD_ARGS+=(--force-metrics-only)
+            fi
+
             # Apply --repeated-images only to MC datasets
             if [ "$REPEATED_IMAGES" = "true" ] && [ "$IS_MC_DATASET" = "true" ]; then
                 CMD_ARGS+=(--repeated-images)
@@ -214,5 +229,15 @@ for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
     done
 done
 
+END_EPOCH=$(date +%s)
+END_HUMAN=$(date '+%Y-%m-%d %H:%M:%S %Z')
+ELAPSED_SECONDS=$((END_EPOCH - START_EPOCH))
+ELAPSED_HMS=$(printf '%02d:%02d:%02d' \
+    $((ELAPSED_SECONDS / 3600)) \
+    $(((ELAPSED_SECONDS % 3600) / 60)) \
+    $((ELAPSED_SECONDS % 60)))
+
 echo ""
 echo "====== All Analyses Complete ======"
+echo "Finished at: $END_HUMAN"
+echo "Elapsed: $ELAPSED_HMS"

@@ -17,10 +17,10 @@ Cells   – vmin/vmax determined by COLORMAP_NORM (see below).
           Grey "N/A" placeholder when a file is missing.
 
 Output  – PNG (300 dpi) saved to:
-            PLOTS_DIR / POOLING_METHOD / [EXPERIMENT_LABEL/] {model}_{stage}.png
+            PLOTS_DIR / pooling_method / [EXPERIMENT_LABEL/] {model}_{stage}.png
 
 Workflow – edit SECTION 1 only:
-    1.  Set POOLING_METHOD   ("last" | "mean_context")
+    1.  Set POOLING_METHODS  (list of pooling methods to iterate)
     2.  Set COLORMAP_NORM    ("none" | "per_metric" | "cross_model")
     3.  If cross_model: edit CROSS_MODEL_PAIRS (list of (model_id_A, model_id_B))
     4.  Toggle SHOW_AVERAGE
@@ -34,7 +34,7 @@ Colormap normalization (COLORMAP_NORM):
     "cross_model" → like "per_metric" but bounds are shared across each pair
                     in CROSS_MODEL_PAIRS; models not in any pair use per_metric
 
-Note on variants (POOLING_METHOD):
+Note on variants (POOLING_METHODS loop):
     "last"                    → repeated_images + unique_images available for the 4 benchmarks
     "mean_context"            → unique_images only for benchmarks (repeated_images not computed)
     "mean_image_last_caption" → like mean_context; unique_images only for benchmarks
@@ -50,7 +50,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from safetensors.torch import load_file
+from safetensors import safe_open
 
 matplotlib.rcParams["font.family"] = "sans-serif"
 
@@ -76,10 +76,6 @@ POOLING_METHODS = [
     "mean_image_last_caption",
 ]  # "last" | "mean_context" | "mean_image_last_caption" | "last_image_last_caption"
 
-# Backward-compatible runtime variable used by path helpers.
-# It is overwritten inside main() while iterating POOLING_METHODS.
-POOLING_METHOD = POOLING_METHODS[0]
-
 # Figure generation mode:
 #   "specific"   -> legacy per-stage figures only
 #   "aggregated" -> only one figure per pair averaged across all selected datasets
@@ -87,7 +83,7 @@ POOLING_METHOD = POOLING_METHODS[0]
 FIGURE_MODE = "aggregated"
 
 # Optional sub-directory label (e.g. "baseline", "unique_vs_default").
-# Empty string → plots land directly under PLOTS_DIR_BASE / POOLING_METHOD.
+# Empty string → plots land directly under PLOTS_DIR_BASE / pooling_method.
 EXPERIMENT_LABEL = ""
 
 # ── averaging ─────────────────────────────────────────────────────────────────
@@ -102,40 +98,67 @@ SHOW_AVERAGE = False
 #                   the same bounds; models not in any pair use "per_metric"
 COLORMAP_NORM = "cross_model"  # "none" | "per_metric" | "cross_model"
 
-# Used only when COLORMAP_NORM = "cross_model".
-# Each tuple = two model IDs whose colormap bounds are unified per metric.
-# Models not appearing in any pair fall back to per_metric normalization.
-# Comment out pairs to deactivate them.
-CROSS_MODEL_PAIRS: list[tuple[str, str]] = [
-    ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
-    ("llava_13b", "llava-v1.5-13b-pretrained-lbasile"),
-    ("InternVL2-8B", "InternVL2-8B-Pretrain"),
-    ("LLaVA-OneVision-1.5-8B-stage2-2600", "LLaVA-OneVision-1.5-8B-stage1"),
-    ("LLaVA-OneVision-1.5-8B-Instruct", "LLaVA-OneVision-1.5-8B-Base"),
+# ── model registry (single source of truth) ─────────────────────────────────
+# Tuple format:
+#   (finetuned_id, finetuned_label, pretrained_id, pretrained_label)
+MODEL_PAIRS: list[tuple[str, str, str, str]] = [
+    (
+        "llava_7b",
+        "LLaVA-7B (Finetuned)",
+        "llava-v1.5-7b-pretrained-lbasile",
+        "LLaVA-7B (Pretrained)",
+    ),
+    (
+        "llava_13b",
+        "LLaVA-13B (Finetuned)",
+        "llava-v1.5-13b-pretrained-lbasile",
+        "LLaVA-13B (Pretrained)",
+    ),
+    (
+        "InternVL2-8B",
+        "InternVL2-8B",
+        "InternVL2-8B-Pretrain",
+        "InternVL2-8B (Pretrained)",
+    ),
+    (
+        "LLaVA-OneVision-1.5-8B-stage2-2600",
+        "LLaVA-OneVision-8B (Finetuned)",
+        "LLaVA-OneVision-1.5-8B-stage1",
+        "LLaVA-OneVision-8B (Pretrained)",
+    ),
+    (
+        "LLaVA-OneVision-1.5-8B-Instruct",
+        "LLaVA-OneVision-8B (Instruct)",
+        "LLaVA-OneVision-1.5-8B-Base",
+        "LLaVA-OneVision-8B (Base)",
+    ),
 ]
 
-# ── models ────────────────────────────────────────────────────────────────────
+# Used only when COLORMAP_NORM = "cross_model".
+# Each tuple = (finetuned_model_id, pretrained_model_id).
+CROSS_MODEL_PAIRS: list[tuple[str, str]] = [
+    (finetuned_id, pretrained_id)
+    for finetuned_id, _finetuned_label, pretrained_id, _pretrained_label in MODEL_PAIRS
+]
+
 # key   = prefix in the safetensors filename
 # value = display name in the figure suptitle
-MODELS = OrderedDict(
-    [
-        ("InternVL2-8B", "InternVL2-8B"),
-        ("InternVL2-8B-Pretrain", "InternVL2-8B (Pretrained)"),
-        ("llava_7b", "LLaVA-7B (Finetuned)"),
-        ("llava-v1.5-7b-pretrained-lbasile", "LLaVA-7B (Pretrained)"),
-        ("llava_13b", "LLaVA-13B (Finetuned)"),
-        ("llava-v1.5-13b-pretrained-lbasile", "LLaVA-13B (Pretrained)"),
-        ("LLaVA-OneVision-1.5-8B-stage2-2600", "LLaVA-OneVision-8B (Finetuned)"),
-        ("LLaVA-OneVision-1.5-8B-stage1", "LLaVA-OneVision-8B (Pretrained)"),
-        ("LLaVA-OneVision-1.5-8B-Instruct", "LLaVA-OneVision-8B (Instruct)"),
-        ("LLaVA-OneVision-1.5-8B-Base", "LLaVA-OneVision-8B (Base)"),
-        # ("llava_7b_6_17",                 "LLaVA-7B (6→17)"),
-        # ("llava_7b_6_17_complementary",   "LLaVA-7B (6→17 Complementary)"),
-        # ("InternVL3_5-8B-Pretrained",     "InternVL3.5-8B (Pretrained)"),
-        # ("InternVL3_5-8B-Instruct",       "InternVL3.5-8B (Instruct)"),
-        # ("InternVL3_5-8B-MPO",            "InternVL3.5-8B (MPO)"),
-        # ("InternVL3_5-8B",                "InternVL3.5-8B"),
-    ]
+MODELS = OrderedDict()
+for finetuned_id, finetuned_label, pretrained_id, pretrained_label in MODEL_PAIRS:
+    MODELS[pretrained_id] = pretrained_label
+    MODELS[finetuned_id] = finetuned_label
+
+MODELS.update(
+    OrderedDict(
+        [
+            # ("llava_7b_6_17",               "LLaVA-7B (6→17)"),
+            # ("llava_7b_6_17_complementary", "LLaVA-7B (6→17 Complementary)"),
+            # ("InternVL3_5-8B-Pretrained",   "InternVL3.5-8B (Pretrained)"),
+            # ("InternVL3_5-8B-Instruct",     "InternVL3.5-8B (Instruct)"),
+            # ("InternVL3_5-8B-MPO",          "InternVL3.5-8B (MPO)"),
+            # ("InternVL3_5-8B",              "InternVL3.5-8B"),
+        ]
+    )
 )
 
 # ── stages ────────────────────────────────────────────────────────────────────
@@ -151,7 +174,7 @@ MODELS = OrderedDict(
 #
 # variant_tag: "" = base variant, "unique_images_mc" = unique-images variant
 #
-# Note: For POOLING_METHOD="mean_context", the base variant of the 4 benchmark
+# Note: For pooling_method="mean_context", the base variant of the 4 benchmark
 #       datasets (mmbench, mme, pope, seed) does not exist — those rows are
 #       silently skipped. Stage 3 (single_base) will produce N/A cells or be
 #       empty for those datasets.
@@ -297,44 +320,98 @@ for _sk, _sl, _ds in STAGES:
             _ALL_DATASETS.append(_entry)
 del _sk, _sl, _ds, _entry, _key, _seen
 
+EXPECTED_SOURCE_ORIENTATION = ("text", "image")
+DISPLAY_ORIENTATION = ("image", "text")
 
-def _make_plots_dir() -> Path:
-    d = PLOTS_DIR_BASE / POOLING_METHOD
+
+def _make_plots_dir(pooling_method: str) -> Path:
+    d = PLOTS_DIR_BASE / pooling_method
     if EXPERIMENT_LABEL:
         d = d / EXPERIMENT_LABEL
     return d
 
 
-def _make_similarities_dir(dataset_dir: str, variant_tag: str = "") -> Path:
-    """RESULTS_DIR / dataset_dir / POOLING_METHOD / [variant_tag/] similarities/"""
-    d = RESULTS_DIR / dataset_dir / POOLING_METHOD
+def _make_similarities_dir(
+    dataset_dir: str,
+    pooling_method: str,
+    variant_tag: str = "",
+) -> Path:
+    """RESULTS_DIR / dataset_dir / pooling_method / [variant_tag/] similarities/"""
+    d = RESULTS_DIR / dataset_dir / pooling_method
     if variant_tag:
         d = d / variant_tag
     return d / "similarities"
 
 
-def _load_matrix(model_id: str, metric: str, dataset_dir: str, variant_tag: str = ""):
+def _normalize_modality_label(value: str, fallback: str) -> str:
+    label = str(value).strip().lower()
+    if label not in {"text", "image"}:
+        return fallback
+    return label
+
+
+def _resolve_matrix_orientation(metadata: dict | None) -> tuple[str, str]:
+    if not metadata:
+        return EXPECTED_SOURCE_ORIENTATION
+
+    row_mod = _normalize_modality_label(
+        metadata.get("row_modality", EXPECTED_SOURCE_ORIENTATION[0]),
+        EXPECTED_SOURCE_ORIENTATION[0],
+    )
+    col_mod = _normalize_modality_label(
+        metadata.get("col_modality", EXPECTED_SOURCE_ORIENTATION[1]),
+        EXPECTED_SOURCE_ORIENTATION[1],
+    )
+
+    if row_mod == col_mod:
+        return EXPECTED_SOURCE_ORIENTATION
+
+    return (row_mod, col_mod)
+
+
+def _orient_for_display(
+    matrix: np.ndarray,
+    source_orientation: tuple[str, str],
+) -> np.ndarray:
+    if source_orientation == DISPLAY_ORIENTATION:
+        return matrix
+    if source_orientation == EXPECTED_SOURCE_ORIENTATION:
+        return matrix.T
+    return matrix.T
+
+
+def _load_matrix(
+    model_id: str,
+    metric: str,
+    dataset_dir: str,
+    pooling_method: str,
+    variant_tag: str = "",
+):
     """Load one matrix. Returns None when file or key is missing."""
     path = (
-        _make_similarities_dir(dataset_dir, variant_tag)
+        _make_similarities_dir(dataset_dir, pooling_method, variant_tag)
         / f"{model_id}_{metric}.safetensors"
     )
     if not path.exists():
         return None
     try:
-        raw = load_file(str(path))
+        with safe_open(path, framework="np", device="cpu") as f:
+            if metric not in f.keys():
+                return None
+            val = f.get_tensor(metric).copy()
+            source_orientation = _resolve_matrix_orientation(f.metadata())
     except Exception as exc:
         print(f"  ⚠  {path.name}: {exc}")
         return None
-    if metric not in raw:
-        return None
-    val = raw[metric].cpu().numpy()
+
+    val = _orient_for_display(val, source_orientation)
+
     if "information_imbalance" in metric:  # stored as distance → complement
         val = 1.0 - val
     return val
 
 
-def load_all_data() -> dict:
+def load_all_data(pooling_method: str) -> dict:
     """
     Walk MODELS × all datasets in STAGES × METRICS and load everything present.
 
@@ -349,7 +426,13 @@ def load_all_data() -> dict:
             key = (dataset_dir, variant_tag)
             ds: dict = {}
             for metric in METRICS:
-                arr = _load_matrix(model_id, metric, dataset_dir, variant_tag)
+                arr = _load_matrix(
+                    model_id,
+                    metric,
+                    dataset_dir,
+                    pooling_method,
+                    variant_tag,
+                )
                 if arr is not None:
                     ds[metric] = arr
             if ds:
@@ -456,8 +539,8 @@ def _draw_heatmap(ax, matrix, vmin=None, vmax=None):
     ticks = list(range(0, matrix.shape[0], TICK_STEP))
     ax.set_xticks(ticks)
     ax.set_yticks(ticks)
-    ax.set_xlabel("Image Layers", fontsize=FONT["axis_label"], labelpad=3)
-    ax.set_ylabel("Text Layers", fontsize=FONT["axis_label"], labelpad=3)
+    ax.set_xlabel("Text Layers", fontsize=FONT["axis_label"], labelpad=3)
+    ax.set_ylabel("Visual Layers", fontsize=FONT["axis_label"], labelpad=3)
     ax.tick_params(labelsize=FONT["tick"], length=3, direction="out")
     return im
 
@@ -726,17 +809,15 @@ def main():
     print(f"  mode={args.figure_mode} | {norm_info}{label_info}")
     print("=" * 72)
 
-    global POOLING_METHOD
     for pooling in args.pooling_methods:
-        POOLING_METHOD = pooling
-        plots_dir = _make_plots_dir()
+        plots_dir = _make_plots_dir(pooling)
 
         print("\n" + "-" * 72)
-        print(f"  pooling={POOLING_METHOD}")
+        print(f"  pooling={pooling}")
         print("-" * 72)
 
         print("\n  Loading data...")
-        data = load_all_data()
+        data = load_all_data(pooling)
         plots_dir.mkdir(parents=True, exist_ok=True)
 
         if args.figure_mode in {"specific", "both"}:

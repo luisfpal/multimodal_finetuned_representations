@@ -7,90 +7,79 @@ dependencies = [
     # ============================================================================
     # Core ML/DL Stack
     # ============================================================================
-    "torch==2.4.1",           
-    "torchvision==0.19.1",    
+    "torch==2.4.1",
+    "torchvision==0.19.1",
     "tokenizers==0.22.2",
-    "safetensors==0.5.3",     
+    "safetensors==0.5.3",
     "transformers==4.57.6",
-    "accelerate>=0.36.0",     
-    "datasets>=2.21.0",       
-
+    "accelerate>=0.36.0",
+    "datasets>=2.21.0",
     # ============================================================================
     # Build helpers & runtime tooling for CUDA extensions
     # ============================================================================
-    "ninja==1.11.1.4",        # Build system
-    "packaging==24.2",        # Version parsing
-    "setuptools==75.8.2",     # Build backend
-
+    "ninja==1.11.1.4", # Build system
+    "packaging==24.2", # Version parsing
+    "setuptools==75.8.2", # Build backend
     # ============================================================================
     # Training runtime (installs CUDA kernels compatible with torch 2.4 / CUDA 12.x)
     # ============================================================================
     "deepspeed==0.15.2",
-
     # ============================================================================
     # Scientific Computing & Data Analysis
     # ============================================================================
-    "numpy>=1.26.3",          
-    "scipy==1.11.4",          
-    "pandas==2.1.4",          
-    "scikit-learn==1.6.1",    
-    "matplotlib==3.8.2",      
-    "seaborn==0.13.1",        
-    "pyarrow==19.0.1",        
+    "numpy>=1.26.3",
+    "scipy==1.11.4",
+    "pandas==2.1.4",
+    "scikit-learn==1.6.1",
+    "matplotlib==3.8.2",
+    "seaborn==0.13.1",
+    "pyarrow==19.0.1",
     "polars==0.20.10",
-    "joblib==1.3.2",          
-
+    "joblib==1.3.2",
     # ============================================================================
     # Development & Jupyter
     # ============================================================================
-    "ipykernel",              # Jupyter kernel
-    "ipywidgets",             # Jupyter widgets
-
+    "ipykernel", # Jupyter kernel
+    "ipywidgets", # Jupyter widgets
     # ============================================================================
     # Representation Analysis Libraries
     # ============================================================================
-    "dadapy==0.3.3",          # Intrinsic dimension
-
+    "dadapy==0.3.3", # Intrinsic dimension
     # ============================================================================
     # Image Processing
     # ============================================================================
-    "pillow==10.2.0",         # Image processing
-
+    "pillow==10.2.0", # Image processing
     # ============================================================================
     # Data Storage & File Systems
     # ============================================================================
-    "fsspec==2024.12.0",      # Filesystem interface
+    "fsspec==2024.12.0", # Filesystem interface
     "huggingface-hub>=0.34.0,<1.0", # HuggingFace Hub
-
     # ============================================================================
     # Utilities & Helpers
     # ============================================================================
-    "tqdm==4.67.1",           # Progress bars
-    "rich==13.9.4",           # Terminal formatting
-    "shortuuid==1.0.13",      # UUID generation
-
+    "tqdm==4.67.1", # Progress bars
+    "rich==13.9.4", # Terminal formatting
+    "shortuuid==1.0.13", # UUID generation
     # ============================================================================
     # Core Infrastructure (transitive but explicit for stability)
     # ============================================================================
-    "filelock==3.18.0",       # File locking
+    "filelock==3.18.0", # File locking
     "typing_extensions==4.12.2", # Type hints
-    "requests==2.32.3",       # HTTP client
-    "certifi==2025.1.31",     # SSL certificates
-    "urllib3==2.3.0",         # HTTP client
-    "idna==3.10",             # International domains
-
+    "requests==2.32.3", # HTTP client
+    "certifi==2025.1.31", # SSL certificates
+    "urllib3==2.3.0", # HTTP client
+    "idna==3.10", # International domains
     # ============================================================================
     # FlashAttention 2 (CUDA extension - may need --no-build-isolation in some environments)
     # ============================================================================
     "flash-attn==2.8.3",
-
     # ============================================================================
     # LLMs and VLMs evaluation libraries
     # ============================================================================
     "lm-eval==0.4.9.2",
     "lmms-eval==0.4.0",
     "ms-vlmeval==0.0.19",
-    "latex2sympy2-extended>=1.11.0", # Required by vlmeval for math verification in HiPho dataset
+    "latex2sympy2-extended>=1.11.0",
 ]
 
 # ============================================================================
