@@ -9,6 +9,7 @@ from typing import Optional
 import torch
 from rich import print
 from lmms_eval.evaluator import simple_evaluate
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from utils import (
     LLaVA1_5_SYSTEM_INSTRUCTION,
@@ -17,6 +18,7 @@ from utils import (
 )
 from utils.patch_llava import patch as patch_llava
 from utils.patch_internvl import patch as patch_internvl
+from utils.patch_onevision import patch as patch_onevision
 
 try:
     from lmms_eval.models.chat.llava_hf import LlavaHf
@@ -32,6 +34,11 @@ try:
     from scripts.models_utils.internvl3_5 import InternVL3_5Custom
 except ImportError:
     InternVL3_5Custom = None
+
+try:
+    from lmms_eval.models.simple.llava_onevision import Llava_OneVision
+except ImportError:
+    Llava_OneVision = None
 
 # =============================================================================
 # CONSTANTS
@@ -70,7 +77,6 @@ LONG_ANSWER_TASKS = {
     "mmvet",
     "mmbench_en_dev",
     "mmbench_cn_dev",
-    "scienceqa_img",
 }
 
 
@@ -203,6 +209,8 @@ def run_evaluation(
     model_identifier = model_name.replace("/", "_")
     label = model_label or model_name
 
+    trust_remote_code = args.trust_remote_code or "onevision" in model_name.lower()
+
     print(f"[cyan]>>> {label}[/cyan]")
     start_time = time.time()
 
@@ -225,10 +233,21 @@ def run_evaluation(
     if num_gpus > 1:
         # Empty string signals to llava_hf that we're using accelerate distributed
         # The model will use accelerator.device for device placement
-        model_args = f"pretrained={model_name},device_map="
+        device_map_value = ""
     else:
         # Single GPU: use HF auto device mapping
-        model_args = f"pretrained={model_name},device_map=auto"
+        device_map_value = "auto"
+
+    model_args = f"pretrained={model_name},device_map={device_map_value}"
+
+    if args.lmms_eval_model in {"llava_hf", "llava_onevision"} and trust_remote_code:
+        original_from_pretrained = AutoConfig.from_pretrained
+
+        def _from_pretrained_with_trust(*cfg_args, **cfg_kwargs):
+            cfg_kwargs.setdefault("trust_remote_code", True)
+            return original_from_pretrained(*cfg_args, **cfg_kwargs)
+
+        AutoConfig.from_pretrained = _from_pretrained_with_trust
 
     # Resolve backend
     backend = args.lmms_eval_model
@@ -237,6 +256,30 @@ def run_evaluation(
     model_instance = backend  # Default to string for registry lookup
 
     if args.lmms_eval_model == "llava_hf":
+        try:
+            import lmms_eval.models.simple.llava_hf as llava_hf_simple
+
+            if (
+                "llavaonevision1_5" not in llava_hf_simple.model_map
+                and "llava_onevision" in llava_hf_simple.model_map
+            ):
+                llava_hf_simple.model_map["llavaonevision1_5"] = (
+                    llava_hf_simple.model_map["llava_onevision"]
+                )
+
+            if "onevision" in model_name.lower():
+                llava_hf_simple.model_map["llavaonevision1_5"] = AutoModelForCausalLM
+        except Exception:
+            pass
+
+        if "onevision" in model_name.lower():
+            try:
+                import transformers.modeling_flash_attention_utils as flash_utils
+
+                flash_utils.is_flash_attn_available = lambda: False
+            except Exception:
+                pass
+
         if LlavaHf is None:
             print(
                 "[yellow]⚠ LlavaHf class not importable, falling back to registry[/yellow]"
@@ -245,10 +288,12 @@ def run_evaluation(
             print(f"[cyan]Instantiating LlavaHf directly for {model_name}...[/cyan]")
             model_instance = LlavaHf(
                 pretrained=model_name,
-                device_map=model_args.split("device_map=")[1]
-                if "device_map=" in model_args
-                else "auto",
+                device_map=device_map_value,
                 batch_size=args.batch_size if args.batch_size else 1,
+                trust_remote_code=trust_remote_code,
+                attn_implementation="sdpa"
+                if "onevision" in model_name.lower()
+                else None,
             )
 
     elif args.lmms_eval_model == "internvl2":
@@ -265,9 +310,7 @@ def run_evaluation(
                 device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
                 if torch.cuda.is_available()
                 else "cpu",
-                device_map=model_args.split("device_map=")[1]
-                if "device_map=" in model_args
-                else "auto",
+                device_map=device_map_value,
                 batch_size=str(args.batch_size) if args.batch_size else "1",
                 cache_dir=args.model_cache_dir,
             )
@@ -286,14 +329,32 @@ def run_evaluation(
                 device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
                 if torch.cuda.is_available()
                 else "cpu",
-                device_map=model_args.split("device_map=")[1]
-                if "device_map=" in model_args
-                else "auto",
+                device_map=device_map_value,
                 batch_size=str(args.batch_size) if args.batch_size else "1",
                 cache_dir=args.model_cache_dir,
             )
+    elif args.lmms_eval_model == "llava_onevision":
+        if Llava_OneVision is None:
+            print(
+                "[yellow]⚠ Llava_OneVision class not importable, falling back to registry[/yellow]"
+            )
+        else:
+            print(
+                f"[cyan]Instantiating Llava_OneVision directly for {model_name}...[/cyan]"
+            )
+            model_instance = Llava_OneVision(
+                pretrained=model_name,
+                model_name=os.path.basename(model_name),
+                device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
+                if torch.cuda.is_available()
+                else "cpu",
+                device_map=device_map_value,
+                batch_size=args.batch_size if args.batch_size else 1,
+            )
     if args.no_image:
-        if args.lmms_eval_model == "llava_hf":
+        if args.lmms_eval_model == "llava_hf" and "onevision" in model_name.lower():
+            patch_onevision(model_instance.model, layers_to_skip=range(32))
+        elif args.lmms_eval_model == "llava_hf":
             patch_llava(layers_to_skip=range(32))
         elif args.lmms_eval_model == "internvl2":
             patch_internvl(model_instance._model, layers_to_skip=range(32))
@@ -305,9 +366,17 @@ def run_evaluation(
     else:
         system_instruction = LLaVA1_5_SYSTEM_INSTRUCTION
 
+    eval_model_args = model_args
+    if (
+        isinstance(model_instance, str)
+        and args.lmms_eval_model == "llava_hf"
+        and trust_remote_code
+    ):
+        eval_model_args += ",trust_remote_code=True"
+
     results = simple_evaluate(
         model=model_instance,
-        model_args=model_args if isinstance(model_instance, str) else None,
+        model_args=eval_model_args if isinstance(model_instance, str) else None,
         tasks=[args.task_name],
         num_fewshot=args.num_fewshot,
         batch_size=args.batch_size,
@@ -533,7 +602,7 @@ def main() -> None:
     parser.add_argument(
         "--lmms-eval-model",
         type=str,
-        default=None,
+        default=os.environ.get("LMMS_EVAL_MODEL"),
         help="Model backend (auto-inferred if not set): llava_hf, internvl2, internvl3.5",
     )
     parser.add_argument("--model-name-or-path", type=str, default=None)
@@ -546,8 +615,26 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--no-image", action="store_true")
+    parser.add_argument("--trust-remote-code", action="store_true")
 
     args = parser.parse_args()
+
+    # Auto-infer model backend from model name when not explicitly set
+    if args.lmms_eval_model is None and args.model_name_or_path:
+        name_lower = args.model_name_or_path.lower()
+        if "internvl3" in name_lower:
+            args.lmms_eval_model = "internvl3.5"
+        elif "internvl" in name_lower:
+            args.lmms_eval_model = "internvl2"
+        elif "onevision" in name_lower:
+            args.lmms_eval_model = "llava_hf"
+        elif "llava" in name_lower:
+            args.lmms_eval_model = "llava_hf"
+        else:
+            parser.error(
+                "Cannot infer --lmms-eval-model from model name. "
+                "Set it explicitly or via LMMS_EVAL_MODEL env var."
+            )
 
     # Run appropriate evaluation mode
     if args.collection_name:

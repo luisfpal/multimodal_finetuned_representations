@@ -7,6 +7,7 @@ from transformers import (
     LlavaForConditionalGeneration,
     LlavaNextProcessor,
     LlavaNextForConditionalGeneration,
+    AutoProcessor,
     AutoModelForCausalLM,
     AutoModel,
     AutoProcessor,
@@ -32,6 +33,15 @@ try:
     # Patch the modules that import it
     transformers.modeling_utils.torch_load_is_safe = lambda: None
     transformers.processing_utils.torch_load_is_safe = lambda: None
+except ImportError:
+    pass
+
+# Monkeypatch flash_attn_varlen_func for transformers > 4.36 compatibility with older custom models
+try:
+    import transformers.modeling_flash_attention_utils
+    import flash_attn
+    if not hasattr(transformers.modeling_flash_attention_utils, "flash_attn_varlen_func"):
+        transformers.modeling_flash_attention_utils.flash_attn_varlen_func = flash_attn.flash_attn_varlen_func
 except ImportError:
     pass
 
@@ -98,6 +108,8 @@ def _get_vl_model_classes(
     for key, classes in SUPPORTED_VL_MODELS.items():
         if key in model_name_lower:
             return classes["processor"], classes["model"]
+    if "onevision" in model_name_lower:
+        return AutoProcessor, AutoModelForCausalLM
     if "llava" in model_name_lower:
         return LlavaProcessor, LlavaForConditionalGeneration
     raise ValueError(

@@ -1,15 +1,15 @@
 #!/bin/bash
 
-PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 source "$PROJECT_ROOT/.venv/bin/activate"
 
-EXTRA_ARGS=""
-# EXTRA_ARGS="--no-image"
+# EXTRA_ARGS=""
+EXTRA_ARGS="--no-image"
 
 checkpoints=(
 #     "llava_7b_8_32"
-#     "llava_7b"
-    "llava_7b_frozen"
+    "internvl2"
+# "llava_7b_frozen"
 #     "llava_7b_0_2"
 #     "llava_7b_12_32"
 #     "llava_7b_0_6"
@@ -36,7 +36,7 @@ checkpoints=(
 # )
 
 # Create a logs directory for clean output management
-log_dir="$HOME/logs/logs_eval"
+log_dir="$PROJECT_ROOT/logs/logs_eval"
 mkdir -p "$log_dir"
 
 for ckpt in "${checkpoints[@]}"; do
@@ -48,5 +48,5 @@ for ckpt in "${checkpoints[@]}"; do
         --job-name="eval_${ckpt}" \
         --output="${log_dir}/eval_${ckpt}_%j.out" \
         --error="${log_dir}/eval_${ckpt}_%j.err" \
-        shell/eval/run_local_evaluation.sh "lbasile/$ckpt" "$EXTRA_ARGS"
+        shell/eval/run_local_evaluation.sh "OpenGVLab/InternVL2-8B" "$EXTRA_ARGS"
 done
