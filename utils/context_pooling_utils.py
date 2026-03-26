@@ -26,11 +26,21 @@ def resolve_image_token_ids(model: Any, processor: Optional[Any] = None) -> list
     image_token_index = getattr(
         getattr(model, "config", None), "image_token_index", None
     )
-    if isinstance(image_token_index, int) and image_token_index >= 0:
+    if isinstance(image_token_index, int):
         token_ids.add(image_token_index)
 
+    model_type = getattr(getattr(model, "config", None), "model_type", "")
+    if isinstance(model_type, str) and "cambrian" in model_type.lower():
+        try:
+            from cambrian.constants import IMAGE_TOKEN_INDEX as CAMBRIAN_IMAGE_TOKEN_INDEX
+
+            if isinstance(CAMBRIAN_IMAGE_TOKEN_INDEX, int):
+                token_ids.add(CAMBRIAN_IMAGE_TOKEN_INDEX)
+        except Exception:
+            pass
+
     img_context_token_id = getattr(model, "img_context_token_id", None)
-    if isinstance(img_context_token_id, int) and img_context_token_id >= 0:
+    if isinstance(img_context_token_id, int) and img_context_token_id != -1:
         token_ids.add(img_context_token_id)
 
     tokenizer = get_tokenizer_from_processor(processor)

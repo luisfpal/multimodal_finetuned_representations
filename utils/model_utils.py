@@ -9,6 +9,7 @@ from transformers import (
     LlavaNextForConditionalGeneration,
     AutoModelForCausalLM,
     AutoModel,
+    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     CLIPProcessor,
@@ -19,19 +20,24 @@ from transformers import (
 from huggingface_hub import snapshot_download
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from .constants import LLAVA_CHAT_TEMPLATE
+from .cambrian_bridge import load_cambrian_pretrained
 
-# Monkeypatch torch_load_is_safe to bypass CVE-2025-32434 check
-# when using older torch versions with trusted models.
+# Monkeypatch torch_load_is_safe / check_torch_load_is_safe to bypass
+# CVE-2025-32434 check when using older torch versions with trusted models.
 try:
     import transformers.modeling_utils
     import transformers.processing_utils
     import transformers.utils.import_utils
 
-    # Patch the definition source
-    transformers.utils.import_utils.torch_load_is_safe = lambda: None
-    # Patch the modules that import it
-    transformers.modeling_utils.torch_load_is_safe = lambda: None
-    transformers.processing_utils.torch_load_is_safe = lambda: None
+    _noop = lambda: None
+    for mod in (
+        transformers.utils.import_utils,
+        transformers.modeling_utils,
+        transformers.processing_utils,
+    ):
+        for attr in ("torch_load_is_safe", "check_torch_load_is_safe"):
+            if hasattr(mod, attr):
+                setattr(mod, attr, _noop)
 except ImportError:
     pass
 
@@ -59,6 +65,15 @@ SUPPORTED_VL_MODELS = {
     "internvl": {
         "processor": "dynamic:tokenization_internlm2.InternLM2Tokenizer",
         "model": "dynamic:modeling_internvl_chat.InternVLChatModel",
+    },
+    # PaliGemma and SmolVLM families are image-text-to-text models
+    "paligemma": {
+        "processor": AutoProcessor,
+        "model": AutoModelForImageTextToText,
+    },
+    "smolvlm": {
+        "processor": AutoProcessor,
+        "model": AutoModelForImageTextToText,
     },
 }
 
@@ -179,7 +194,7 @@ def _load_internvl2_model_and_tokenizer(
     code_source = code_repo if code_repo else model_name_or_path
 
     if not skip_processor:
-        print(f"\nLoading tokenizer (InternLM2Tokenizer)...")
+        print("\nLoading tokenizer (InternLM2Tokenizer)...")
         print(f"  Code from: {code_source}")
         print(
             f"  Weights from: {model_name_or_path}"
@@ -201,7 +216,7 @@ def _load_internvl2_model_and_tokenizer(
             tokenizer.pad_token = tokenizer.eos_token
 
     if not skip_model:
-        print(f"\nLoading model (InternVLChatModel)...")
+        print("\nLoading model (InternVLChatModel)...")
         print(f"  Code from: {code_source}")
         print(
             f"  Weights from: {model_name_or_path}"
@@ -234,6 +249,33 @@ def _load_internvl2_model_and_tokenizer(
         return model
 
     return model, tokenizer
+
+
+def _configure_padding(processor: ProcessorType, model: ModelType) -> None:
+    """Set left-padding and ensure a pad token exists."""
+    # Determine the tokenizer object (some processors wrap it under .tokenizer)
+    tokenizer = (
+        processor
+        if hasattr(processor, "padding_side")
+        else getattr(processor, "tokenizer", None)
+    )
+    if tokenizer is None or not hasattr(tokenizer, "padding_side"):
+        raise ValueError(
+            f"Cannot configure padding: {type(processor).__name__} has no "
+            "padding_side attribute."
+        )
+
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is not None:
+        return
+
+    tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    # Resize embeddings to account for the new token
+    for obj in (model, getattr(model, "language_model", None)):
+        resize_fn = getattr(obj, "resize_token_embeddings", None)
+        if callable(resize_fn):
+            resize_fn(len(tokenizer))
+            return
 
 
 def load_hf_model_and_processor_or_tokenizer(
@@ -286,6 +328,16 @@ def load_hf_model_and_processor_or_tokenizer(
 
     if skip_model and skip_processor:
         raise ValueError("Cannot not load both the model and the processor.")
+
+    if "cambrian" in model_name_or_path.lower() and not text_model:
+        return load_cambrian_pretrained(
+            model_name_or_path=model_name_or_path,
+            cache_dir=cache_dir,
+            device_map=device_map,
+            attn_implementation=attn_implementation,
+            skip_model=skip_model,
+            skip_processor=skip_processor,
+        )
 
     # Handle InternVL2 models specially - they require dynamic class loading
     # Exclude InternVL 3.5 which can be loaded via AutoModel (standard path)
@@ -394,21 +446,7 @@ def load_hf_model_and_processor_or_tokenizer(
     if "clip" in model_name_or_path.lower():
         return model.eval(), processor
 
-    if hasattr(processor, "padding_side"):
-        processor.padding_side = "left"
-        if processor.pad_token is None:
-            processor.add_special_tokens({"pad_token": "[PAD]"})
-            model.resize_token_embeddings(len(processor))
-    elif hasattr(processor, "tokenizer") and hasattr(model, "language_model"):
-        processor.tokenizer.padding_side = "left"
-        if processor.tokenizer.pad_token is None:
-            processor.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
-            model.language_model.resize_token_embeddings(len(processor.tokenizer))
-    else:
-        raise ValueError(
-            f"Processor/tokenizer {processor} has no padding_side attribute and model {model} has no language_model attribute."
-        )
-
+    _configure_padding(processor, model)
     return model.eval(), processor
 
 
@@ -645,16 +683,6 @@ def replace_multimodal_projector(
                         f"Shape mismatch: {new_key} — expected {target_param.bias.shape}, got {param_tensor.shape}"
                     )
                 target_param.bias.copy_(param_tensor)
-
-        # or simply
-        # projector_state_dict = {
-        #     projector_mapping[k]: v
-        #     for k, v in mm_state_dict.items()
-        #     if k in projector_mapping
-        # }
-
-        # # Load the weights into the model projector
-        # multimodal_model.multi_modal_projector.load_state_dict(projector_state_dict)
 
     print("Multi-modal projector successfully updated with pre-trained weights.\n")
     multimodal_model.to(device)

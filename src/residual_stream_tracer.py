@@ -12,6 +12,7 @@ from safetensors.torch import save_file, load_file
 from transformers.feature_extraction_utils import BatchFeature
 from torch.utils.data import DataLoader
 from utils import ModelType, ProcessorType, sample_image_and_text_positions
+from utils.cambrian_utils import is_cambrian_model
 from utils.context_pooling_utils import (
     get_image_token_indices,
     get_text_context_indices,
@@ -25,7 +26,11 @@ from utils.internvl_utils import (
 )
 
 # Constants for valid parameter values
-VALID_RESIDUAL_STREAM_TYPES = ["output_layer", "post_mlp", "heads_projection"]
+VALID_RESIDUAL_STREAM_TYPES = [
+    "output_layer",
+    "post_mlp",
+    "heads_projection",
+]
 VALID_TOKENS_POOLING_METHODS = [
     "mean",
     "last",
@@ -75,7 +80,7 @@ class ResidualStreamTracer(abc.ABC):
                 Expected keys: 'image_token_id', 'image_seq_length', 'pad_token_id', 'text_direction',
                 'skip_image_pos', 'skip_text_pos', 'generator'.
         """
-        self.model = model
+        self.model = model.eval()
         self.processor = processor
         self.tokenizer = get_tokenizer_from_processor(processor)
         self.image_token_ids = resolve_image_token_ids(model, processor)
@@ -236,6 +241,7 @@ class ResidualStreamTracer(abc.ABC):
                         tokenizer=self.tokenizer,
                     )
                 )
+                # keep this for "debugging"
                 # decoded_caption_text = self.tokenizer.decode(
                 #     current_input_ids[pooling_indices[-1]].tolist(),
                 #     skip_special_tokens=False,
@@ -274,7 +280,12 @@ class ResidualStreamTracer(abc.ABC):
                 **sampling_args,
             )
 
-        if self.tokens_pooling_method in ["mean_image", "last_image", "mean_text_context", "last_caption"]:
+        if self.tokens_pooling_method in [
+            "mean_image",
+            "last_image",
+            "mean_text_context",
+            "last_caption",
+        ]:
             source_input_ids = batch_input_ids
             if source_input_ids is None:
                 source_input_ids = getattr(batch_inputs, "input_ids", None)
@@ -301,7 +312,14 @@ class ResidualStreamTracer(abc.ABC):
             Pooled tensor or original tensor if no pooling
         """
         if (
-            self.tokens_pooling_method in ["sample", "mean_image", "last_image", "mean_text_context", "last_caption"]
+            self.tokens_pooling_method
+            in [
+                "sample",
+                "mean_image",
+                "last_image",
+                "mean_text_context",
+                "last_caption",
+            ]
             and pooling_indices is None
         ):
             raise ValueError(
@@ -1225,6 +1243,8 @@ def residual_stream_tracer(
     # Process batches
     for batch in processed_dataloader:
         batch_input_ids = None
+        cambrian_images = None
+        cambrian_image_sizes = None
 
         # Prepare batch_inputs for tracing (batch stays untouched)
         if isinstance(batch, (list, tuple)):
@@ -1256,6 +1276,20 @@ def residual_stream_tracer(
                     # Text-only mode: use input_ids directly
                     batch_inputs = batch[0]
                     batch_input_ids = batch_inputs["input_ids"]
+
+            elif is_cambrian_model(model=model):
+                # Cambrian batch format from collate functions:
+                #   Multimodal: (tokenized, image_tensors, image_sizes, prompts)
+                #   Text-only:  (tokenized, prompts)
+                tokenized = batch[0]
+                batch_input_ids = tokenized["input_ids"]
+                cambrian_images = None
+                cambrian_image_sizes = None
+                if len(batch) >= 4 and isinstance(batch[1], (list, torch.Tensor)):
+                    cambrian_images = batch[1]
+                    cambrian_image_sizes = batch[2]
+                batch_inputs = tokenized
+
             else:
                 batch_inputs = batch[0]
                 if "input_ids" in batch_inputs:
@@ -1266,6 +1300,19 @@ def residual_stream_tracer(
                 batch_input_ids = batch_inputs["input_ids"]
 
         batch_inputs = batch_inputs.to(model.device)
+
+        # Inject Cambrian vision data after .to() (list[Tensor] needs manual move)
+        if is_cambrian_model(model=model) and cambrian_images is not None:
+            if isinstance(cambrian_images, list):
+                batch_inputs["images"] = [
+                    t.to(device=model.device, dtype=torch.float16)
+                    for t in cambrian_images
+                ]
+            else:
+                batch_inputs["images"] = cambrian_images.to(
+                    device=model.device, dtype=torch.float16
+                )
+            batch_inputs["image_sizes"] = cambrian_image_sizes
 
         # ------------------------------------------------------------------
         # Debug: generate and print model responses
@@ -1303,6 +1350,37 @@ def residual_stream_tracer(
                     query = query.replace("<IMG_CONTEXT>", "")
                     query = query.replace("</img>", "").replace("<img>", "<image>")
                     print(f"Query: {query}\n   Response: {response}\n")
+                else:
+                    print(f"Response: {response}\n")
+                print("-" * 40)
+
+        if debug and is_cambrian_model(model=model):
+            # Cambrian debug: prompts are the last list element in the batch
+            prompts = None
+            if isinstance(batch, (list, tuple)) and isinstance(batch[-1], list):
+                prompts = batch[-1]
+
+            generate_kwargs = {
+                "inputs": batch_inputs["input_ids"],
+                "attention_mask": batch_inputs["attention_mask"],
+                "max_new_tokens": 50,
+                "do_sample": False,
+                "num_beams": 1,
+                "use_cache": False,
+            }
+            if "images" in batch_inputs:
+                generate_kwargs["images"] = batch_inputs["images"]
+                generate_kwargs["image_sizes"] = batch_inputs["image_sizes"]
+
+            with torch.inference_mode():
+                output_ids = model.generate(**generate_kwargs)
+
+            prompt_len = batch_inputs["input_ids"].shape[1]
+            for idx in range(output_ids.shape[0]):
+                generated = output_ids[idx, prompt_len:]
+                response = processor.decode(generated, skip_special_tokens=True).strip()
+                if prompts is not None:
+                    print(f"Prompt: {prompts[idx]}\n   Response: {response}\n")
                 else:
                     print(f"Response: {response}\n")
                 print("-" * 40)

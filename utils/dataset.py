@@ -13,8 +13,12 @@ import numpy as np
 from datasets import load_dataset, load_from_disk
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
-from transformers import PreTrainedModel
+from transformers import BatchEncoding, PreTrainedModel
 
+from .cambrian_utils import (
+    is_cambrian_model,
+    prepare_cambrian_batch_inputs,
+)
 from .constants import (
     MMBENCH_ANSWER_CHOICES,
     MME_ANSWER_CHOICES,
@@ -951,7 +955,22 @@ def collate_vqa_batch(
                 )
             processor_kwargs["text"] = queries
 
-        tokenized = processor(**processor_kwargs)
+        elif model and is_cambrian_model(model=model):
+            has_images = any(image is not None for image in images)
+            prepared = prepare_cambrian_batch_inputs(
+                model=model,
+                tokenizer=processor,
+                questions=questions,
+                images=images if has_images else None,
+                guide_text=guide_text,
+            )
+            tokenized = prepared["tokenized"]
+            prompts = prepared["prompts"]
+            image_tensors = prepared["image_tensors"]
+            image_sizes = prepared["image_sizes"]
+
+        if not (model and is_cambrian_model(model=model)):
+            tokenized = processor(**processor_kwargs)
 
         outputs = (tokenized,)
         if model and "intern" in model.__class__.__name__.lower():
@@ -959,6 +978,11 @@ def collate_vqa_batch(
                 outputs += (pixel_values, processor_kwargs["text"])
             else:
                 outputs += (processor_kwargs["text"],)
+        if model and is_cambrian_model(model=model):
+            if image_tensors is not None:
+                outputs += (image_tensors, image_sizes, prompts)
+            else:
+                outputs += (prompts,)
         if answer_letters_with_processed_batch:
             # !not so neat but it's a backward compatibility feature
             return outputs + (answer_letters,)
@@ -1016,11 +1040,27 @@ def collate_captioning_batch(
             )
             processor_kwargs["text"] = queries
 
-        tokenized = processor(**processor_kwargs)
+        elif model and is_cambrian_model(model=model):
+            prepared = prepare_cambrian_batch_inputs(
+                model=model,
+                tokenizer=processor,
+                questions=user_prompts,
+                images=images,
+            )
+            tokenized = prepared["tokenized"]
+            prompts = prepared["prompts"]
+            image_tensors = prepared["image_tensors"]
+            image_sizes = prepared["image_sizes"]
+
+        if not (model and is_cambrian_model(model=model)):
+            tokenized = processor(**processor_kwargs)
+
         # Build return tuple based on requested data
         result = [tokenized]
         if model and "intern" in model.__class__.__name__.lower():
             result.append(pixel_values)
+        if model and is_cambrian_model(model=model):
+            result.extend([image_tensors, image_sizes, prompts])
         if return_captions:
             result.append(captions)
         if return_image_ids:

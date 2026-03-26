@@ -35,6 +35,8 @@ from tqdm import tqdm
 # sys.path.insert(0, str(PROJECT_ROOT))
 
 from tasks.captioned.utils import format_multi_captions, format_single_caption
+from utils.cambrian_utils import generate_cambrian_batch
+from utils.cambrian_utils import is_cambrian_model
 from utils.internvl_utils import batch_generate as internvl_batch_generate
 from utils.internvl_utils import get_pixel_values
 from utils.model_utils import load_hf_model_and_processor_or_tokenizer
@@ -249,6 +251,30 @@ def generate_internvl_batch(
     return responses, prompts
 
 
+def generate_cambrian_batch_for_eval(
+    model,
+    tokenizer,
+    questions: list[str],
+    images: list[Image.Image] | None,
+    max_new_tokens: int,
+) -> tuple[list[str], list[str]]:
+    from utils.cambrian_utils import apply_chat_template
+
+    responses = generate_cambrian_batch(
+        model=model,
+        tokenizer=tokenizer,
+        questions=questions,
+        images=images,
+        max_new_tokens=max_new_tokens,
+    )
+    prompts = apply_chat_template(
+        model=model,
+        text=questions,
+        has_image=images is not None,
+    )
+    return responses, prompts
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SAVING
 # ═══════════════════════════════════════════════════════════════════════════
@@ -359,6 +385,10 @@ def main() -> None:
     )
     model.eval()
 
+    is_cambrian = is_cambrian_model(
+        model=model,
+        model_name_or_path=args.model_name_or_path,
+    )
     is_internvl = "intern" in model.__class__.__name__.lower()
     is_visual = args.mode == "visual"
     model_id = args.model_name_or_path.replace("/", "_")
@@ -391,7 +421,15 @@ def main() -> None:
             batch_images = [s["image"] for s in batch_samples]
 
         # Generate
-        if is_internvl:
+        if is_cambrian:
+            responses, prompts = generate_cambrian_batch_for_eval(
+                model,
+                proc_or_tok,
+                batch_questions,
+                batch_images,
+                args.max_new_tokens,
+            )
+        elif is_internvl:
             responses, prompts = generate_internvl_batch(
                 model, proc_or_tok, batch_questions, batch_images, args.max_new_tokens
             )
