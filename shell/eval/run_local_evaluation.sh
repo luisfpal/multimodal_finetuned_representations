@@ -24,13 +24,19 @@ set -e # Exit immediately if a command exits with a non-zero status.
 # =============================================================================
 
 # 1. Default model to evaluate if no command-line argument is provided.
-# DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
+DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B-Pretrained"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B-Instruct"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B-MPO"
-DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
-# DEFAULT_MODEL_NAME="lbasile/llava_13b"
+# DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
+# DEFAULT_MODEL_NAME="lbasile/llava_7b"
+
+# 2. Model class in the lmms-eval library
+#⚠️ADJUST FOR OTHER MODELS, see documentation⚠️
+LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl2}"
+# LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-internvl3.5}"
+# LMMS_EVAL_MODEL="${LMMS_EVAL_MODEL:-llava_hf}"
 
 # =============================================================================
 # SCRIPT SETUP & ARGUMENT PARSING
@@ -50,7 +56,7 @@ fi
 echo "▶️  Model to evaluate: $MODEL_TO_EVAL"
 
 # Get the absolute path of the project root (assuming the script is in a subdirectory)
-PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/lmms_evaluation.py"
 
 # Load environment variables from .env (if needed)
@@ -67,7 +73,7 @@ fi
 # List of benchmarks to evaluate against.
 TASKS=(
     # "scienceqa_img"
-    "mme"
+    # "mme"
     # "textvqa_val"
     # "pope"
     # "gqa"
@@ -78,6 +84,9 @@ TASKS=(
     # "vqav2_val"
     # "mmbench_cn_dev"
     # "docvqa_val"
+    "ai2d"
+    "coco2017_cap_val"
+    "flickr30k"
 )
 
 # =============================================================================
