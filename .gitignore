@@ -100,6 +100,21 @@ internal_docs/
 .git/
 
 # ============================================================================
+# THIRD-PARTY: keep only runtime-essential Cambrian source
+# ============================================================================
+third_party/cambrian/eval/
+third_party/cambrian/scripts/
+third_party/cambrian/dataengine/
+third_party/cambrian/docs/
+third_party/cambrian/images/
+third_party/cambrian/cambrian/serve/
+third_party/cambrian/cambrian/train/
+third_party/cambrian/inference.py
+third_party/cambrian/clear.py
+third_party/cambrian/CITATION.cff
+third_party/cambrian/fsdp_config.json
+
+# ============================================================================
 # EXTERNAL TOOLS & DOCUMENTATION
 # ============================================================================
 .github/
