@@ -19,6 +19,7 @@ from utils import (
 from utils.patch_llava import patch as patch_llava
 from utils.patch_internvl import patch as patch_internvl
 from utils.patch_onevision import patch as patch_onevision
+from utils.patch_cambrian import patch as patch_cambrian
 
 try:
     from lmms_eval.models.chat.llava_hf import LlavaHf
@@ -39,6 +40,11 @@ try:
     from lmms_eval.models.simple.llava_onevision import Llava_OneVision
 except ImportError:
     Llava_OneVision = None
+
+try:
+    from lmms_eval.models.simple.cambrian import Cambrian
+except ImportError:
+    Cambrian = None
 
 # =============================================================================
 # CONSTANTS
@@ -138,6 +144,19 @@ def format_elapsed_time(seconds: float) -> str:
     if h > 0:
         return f"{h}h {m}m {s}s"
     return f"{m}m {s}s" if m > 0 else f"{seconds:.1f}s"
+
+
+def get_num_layers(model_instance, backend: str) -> int:
+    """Get the number of transformer layers from a model instance."""
+    if backend == "llava_hf":
+        return model_instance.model.language_model.config.num_hidden_layers
+    elif backend == "internvl2" or backend == "internvl3.5":
+        return model_instance._model.language_model.config.num_hidden_layers
+    elif backend == "cambrian":
+        return model_instance._model.config.num_hidden_layers
+    elif backend == "llava_onevision":
+        return model_instance.model.language_model.config.num_hidden_layers
+    raise ValueError(f"Unknown backend: {backend}")
 
 
 def save_and_update_models_metrics(
@@ -351,13 +370,33 @@ def run_evaluation(
                 device_map=device_map_value,
                 batch_size=args.batch_size if args.batch_size else 1,
             )
+    elif args.lmms_eval_model == "cambrian":
+        if Cambrian is None:
+            print(
+                "[yellow]⚠ Cambrian class not importable, falling back to registry[/yellow]"
+            )
+        else:
+            print(
+                f"[cyan]Instantiating Cambrian directly for {model_name}...[/cyan]"
+            )
+            model_instance = Cambrian(
+                pretrained=model_name,
+                device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
+                if torch.cuda.is_available()
+                else "cpu",
+                device_map=device_map_value,
+                batch_size=args.batch_size if args.batch_size else 1,
+            )
     if args.no_image:
+        num_layers = get_num_layers(model_instance, args.lmms_eval_model)
         if args.lmms_eval_model == "llava_hf" and "onevision" in model_name.lower():
-            patch_onevision(model_instance.model, layers_to_skip=range(32))
+            patch_onevision(model_instance.model, layers_to_skip=range(num_layers))
         elif args.lmms_eval_model == "llava_hf":
-            patch_llava(layers_to_skip=range(32))
+            patch_llava(layers_to_skip=range(num_layers))
         elif args.lmms_eval_model == "internvl2":
-            patch_internvl(model_instance._model, layers_to_skip=range(32))
+            patch_internvl(model_instance._model, layers_to_skip=range(num_layers))
+        elif args.lmms_eval_model == "cambrian":
+            patch_cambrian(model_instance._model, layers_to_skip=range(num_layers))
     # Select system instruction
     if args.lmms_eval_model == "internvl2":
         system_instruction = INTERNVL2_SYSTEM_INSTRUCTION
@@ -603,7 +642,7 @@ def main() -> None:
         "--lmms-eval-model",
         type=str,
         default=os.environ.get("LMMS_EVAL_MODEL"),
-        help="Model backend (auto-inferred if not set): llava_hf, internvl2, internvl3.5",
+        help="Model backend (auto-inferred if not set): llava_hf, internvl2, internvl3.5, cambrian",
     )
     parser.add_argument("--model-name-or-path", type=str, default=None)
     parser.add_argument("--model-cache-dir", type=str, required=True)
@@ -626,6 +665,8 @@ def main() -> None:
             args.lmms_eval_model = "internvl3.5"
         elif "internvl" in name_lower:
             args.lmms_eval_model = "internvl2"
+        elif "cambrian" in name_lower:
+            args.lmms_eval_model = "cambrian"
         elif "onevision" in name_lower:
             args.lmms_eval_model = "llava_hf"
         elif "llava" in name_lower:
