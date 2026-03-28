@@ -1,21 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# HOW TO USE
-# =============================================================================
-# This script submits a SLURM job to evaluate ONE specific model against ALL
-# benchmarks defined in the `TASKS` array inside the script.
+# Submit a SLURM job to evaluate ONE model against ALL tasks.
+# Uses lmms_evaluation.sh as the worker (loops over tasks inside the job).
 #
-# It is designed for comprehensive, non-interactive evaluation runs on a
-# specific model checkpoint.
-#
-# Usage:
-# 1. Configure the SLURM settings below (e.g., NUM_GPUS, PARTITION).
-# 2. Set the `MODEL_TO_EVAL` variable to the Hugging Face model ID you want
-#    to evaluate.
-# 3. Run the script:
-#    bash shell/eval/launch_lmms_specific.sh
-
-# The model backend is now auto-inferred from the model name.
+# Usage: bash shell/eval/launch_lmms_specific.sh
 # =============================================================================
 
 # SLURM settings
@@ -34,15 +22,13 @@ EXCLUDE=""
 PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 SCRIPTS_DIR="$PROJECT_ROOT/shell/eval"
 LOG_DIR="$PROJECT_ROOT/logs"
-
-# Use the new DYNAMIC runner script
 SCRIPT_NAME="lmms_evaluation.sh"
 
 # =============================================================================
-# MODEL SELECTION
+# MODEL SELECTION (uncomment one)
 # =============================================================================
 
-# Uncomment the model you want to evaluate:
+# MODEL_TO_EVAL="lbasile/llava_7b"
 # MODEL_TO_EVAL="lbasile/llava_13b"
 # MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
 # MODEL_TO_EVAL="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
@@ -50,23 +36,22 @@ SCRIPT_NAME="lmms_evaluation.sh"
 # MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-Instruct"
 # MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-MPO"
 MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B"
+# MODEL_TO_EVAL="nyu-visionx/cambrian-8b"
+# MODEL_TO_EVAL="lbasile/cambrian-8b-pretrained"
+# MODEL_TO_EVAL="lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+# MODEL_TO_EVAL="lmms-lab/LLaVA-OneVision-1.5-8B-Base"
+# MODEL_TO_EVAL="lbasile/LLaVA-OneVision-1.5-8B-stage1"
+# MODEL_TO_EVAL="lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
 
-# Automatically extract the last part of the model path (equivalent to model.split('/')[-1] in Python)
 OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
-
 NO_IMAGE="false"
-
-# Resolve model-specific venv
 VENV="$PROJECT_ROOT/.venv"
 
 # =============================================================================
-# Job Execution Script
+# JOB SCRIPT (heredoc — runs inside SLURM)
 # =============================================================================
 
-read -r -d '' JOB_COMMANDS << JOB_EOF || true
-# =============================================================================
-# BENCHMARK CONFIGURATION
-# =============================================================================
+read -r -d '' JOB_COMMANDS << 'JOB_EOF' || true
 
 TASKS=(
     "scienceqa_img"
@@ -82,120 +67,81 @@ TASKS=(
     "seedbench"
 )
 
-# =============================================================================
-# ENVIRONMENT SETUP
-# =============================================================================
-
-# Robust CUDA configuration for both H100 (module) and A100 (manual)
+# CUDA setup
 setup_cuda() {
-    # 1. Try module load (standard on H100)
     if command -v module &> /dev/null; then
         module load cuda/12.1 2>/dev/null || true
     fi
-
-    # 2. If nvcc is missing/broken, try to find a valid existing installation
-    #    This often happens on A100 nodes where modules might differ
-    if ! command -v nvcc &> /dev/null || [ ! -x "\$(command -v nvcc)" ]; then
-        # List of potential CUDA paths to check (prefer 12.1, then 12.x, then default)
-        local candidates=("/usr/local/cuda-12.1" "/usr/local/cuda-12.2" "/usr/local/cuda-12" "/usr/local/cuda")
-
-        for path in "\${candidates[@]}"; do
-            if [ -x "\$path/bin/nvcc" ]; then
-                echo "🔧 Manually configuring CUDA from: \$path"
-                export CUDA_HOME="\$path"
-                export PATH="\$path/bin:\$PATH"
-                export LD_LIBRARY_PATH="\$path/lib64:\$LD_LIBRARY_PATH"
+    if ! command -v nvcc &> /dev/null; then
+        for path in /usr/local/cuda-12.1 /usr/local/cuda-12.2 /usr/local/cuda-12 /usr/local/cuda; do
+            if [ -x "$path/bin/nvcc" ]; then
+                export CUDA_HOME="$path"
+                export PATH="$path/bin:$PATH"
+                export LD_LIBRARY_PATH="$path/lib64:$LD_LIBRARY_PATH"
                 break
             fi
         done
     fi
-
-    # Verification and Enforcement
     if command -v nvcc &> /dev/null; then
-        local nvcc_path=\$(command -v nvcc)
-        # Resolve symlinks if possible, or assume standard structure
-        local cuda_root=\$(dirname \$(dirname "\$nvcc_path"))
-
-        echo "✓ CUDA active: \$nvcc_path"
-        echo "  → Enforcing CUDA_HOME=\$cuda_root"
-
-        export CUDA_HOME="\$cuda_root"
-        export PATH="\$cuda_root/bin:\$PATH"
-        export LD_LIBRARY_PATH="\$cuda_root/lib64:\$LD_LIBRARY_PATH"
-    else
-        echo "⚠️  WARNING: nvcc not found! Compilation may fail."
+        local cuda_root
+        cuda_root=$(dirname "$(dirname "$(command -v nvcc)")")
+        export CUDA_HOME="$cuda_root"
+        export PATH="$cuda_root/bin:$PATH"
+        export LD_LIBRARY_PATH="$cuda_root/lib64:$LD_LIBRARY_PATH"
     fi
 }
 setup_cuda
 
-# Load environment variables
+# Load env
 if [ -f "$PROJECT_ROOT/.env" ]; then
     set -a
     source "$PROJECT_ROOT/.env"
     set +a
 fi
 
-# Activate virtual environment
 source "$VENV/bin/activate"
 cd "$SCRIPTS_DIR"
 chmod +x "$SCRIPT_NAME"
 
 export TOKENIZERS_PARALLELISM=false
-export NUM_GPUS=$NUM_GPUS
-export NO_IMAGE=$NO_IMAGE
-export OUTPUT_MODEL_DIR=$OUTPUT_MODEL_DIR
+export NUM_GPUS
+export NO_IMAGE
+export OUTPUT_MODEL_DIR
 
-# =============================================================================
-# ORFEO LLM JWT AUTHENTICATION
-# =============================================================================
-if [ -n "\${ORFEO_AUTH_URL}" ] && [ -n "\${ORFEO_CLIENT_ID}" ]; then
-    echo "🔐 Generating JWT token for Orfeo LLM..."
-    JWT=\$(curl -s -X POST "\${ORFEO_AUTH_URL}" \\
-      -H "Content-Type: application/x-www-form-urlencoded" \\
-      -d "grant_type=password" \\
-      -d "client_id=\${ORFEO_CLIENT_ID}" \\
-      -d "username=\${ORFEO_USERNAME}" \\
-      -d "password=\${ORFEO_CLIENT_SECRET}" \\
+# Orfeo JWT (optional)
+if [ -n "${ORFEO_AUTH_URL:-}" ] && [ -n "${ORFEO_CLIENT_ID:-}" ]; then
+    JWT=$(curl -s -X POST "${ORFEO_AUTH_URL}" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "grant_type=password" \
+      -d "client_id=${ORFEO_CLIENT_ID}" \
+      -d "username=${ORFEO_USERNAME}" \
+      -d "password=${ORFEO_CLIENT_SECRET}" \
       -d "scope=profile" | jq -r '.access_token')
 
-    if [ -z "\$JWT" ] || [ "\$JWT" = "null" ]; then
-        echo "❌ Failed to get JWT token from Orfeo!"
-        exit 1
+    if [ -n "$JWT" ] && [ "$JWT" != "null" ]; then
+        export OPENAI_API_KEY="$JWT"
+        export OPENAI_API_URL="${ORFEO_LLM_URL}"
+        export MODEL_VERSION="${ORFEO_MODEL}"
     fi
-    # Export for Python/lmms-eval
-    export OPENAI_API_KEY="\$JWT"
-    export OPENAI_API_URL="\${ORFEO_LLM_URL}"
-    export MODEL_VERSION="\${ORFEO_MODEL}"
 fi
 
-# =============================================================================
-# RUN EVALUATION LOOP
-# =============================================================================
-
-# Export the single model to be picked up by the evaluation script
+# Run each task
 export SINGLE_MODEL="$MODEL_TO_EVAL"
 
-for TASK in "\${TASKS[@]}"; do
+for TASK in "${TASKS[@]}"; do
     echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "▶ STARTING EVALUATION: \$TASK"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    # Export task name for the dynamic script
-    export TASK_NAME="\$TASK"
-
-    # Run the dynamic evaluation script
-    ./"\$SCRIPT_NAME"
-
-    echo ""
-    echo "✓ COMPLETED: \$TASK"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "▶ $TASK"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    export TASK_NAME="$TASK"
+    ./"$SCRIPT_NAME"
+    echo "✓ $TASK"
 done
 JOB_EOF
 
 # =============================================================================
-# Generate SBATCH Script & Submit
+# SUBMIT
 # =============================================================================
-# (Simplified from original launch script)
 
 mkdir -p "$LOG_DIR"
 SBATCH_SCRIPT=$(mktemp /tmp/sbatch_experiment.XXXXXX.sh)
@@ -219,27 +165,26 @@ cat <<EOT >"$SBATCH_SCRIPT"
 #!/bin/bash
 $SBATCH_DIRECTIVES
 
-# Propagate variables from the launch script
 export PROJECT_ROOT="$PROJECT_ROOT"
 export SCRIPTS_DIR="$SCRIPTS_DIR"
 export SCRIPT_NAME="$SCRIPT_NAME"
 export MODEL_TO_EVAL="$MODEL_TO_EVAL"
 export NO_IMAGE="$NO_IMAGE"
 export OUTPUT_MODEL_DIR="$OUTPUT_MODEL_DIR"
+export NUM_GPUS="$NUM_GPUS"
+export VENV="$VENV"
 
 $JOB_COMMANDS
 EOT
 
-echo "🟢 Submitting job with model: $MODEL_TO_EVAL"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
+echo "Submitting: $MODEL_TO_EVAL"
 JOB_OUTPUT=$(sbatch "$SBATCH_SCRIPT" 2>&1)
 
 if [ $? -eq 0 ]; then
     JOB_ID=$(echo "$JOB_OUTPUT" | awk '{print $4}')
-    echo "✅ Job ID: $JOB_ID"
-    echo "📁 Output: $LOG_DIR/slurm-$JOB_ID.out"
+    echo "Job ID: $JOB_ID"
+    echo "Log: $LOG_DIR/slurm-$JOB_ID.out"
 else
-    echo "❌ Failed: $JOB_OUTPUT"
+    echo "Failed: $JOB_OUTPUT"
     exit 1
 fi

@@ -9,7 +9,6 @@ from typing import Optional
 import torch
 from rich import print
 from lmms_eval.evaluator import simple_evaluate
-from transformers import AutoConfig, AutoModelForCausalLM
 
 from utils import (
     LLaVA1_5_SYSTEM_INSTRUCTION,
@@ -36,24 +35,27 @@ except ImportError:
     InternVL3_5Custom = None
 
 try:
-    from lmms_eval.models.simple.llava_onevision import Llava_OneVision
+    from scripts.models_utils.llava_onevision1_5 import LlavaOneVision1_5Custom
 except ImportError:
-    Llava_OneVision = None
+    LlavaOneVision1_5Custom = None
+
+try:
+    from scripts.models_utils.cambrian import CambrianCustom
+except ImportError:
+    CambrianCustom = None
 
 # =============================================================================
 # CONSTANTS
 # =============================================================================
 
-# Reproducibility (all seeds = 42)
 RANDOM_SEED = NUMPY_RANDOM_SEED = TORCH_RANDOM_SEED = FEWSHOT_RANDOM_SEED = 42
 
-# Generation token limits
 DEFAULT_MAX_NEW_TOKENS = 128
 LONG_ANSWER_MAX_NEW_TOKENS = 1024
 
 # Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
 TASK_LIMITS = {
-    # "scienceqa_img": 25,  # 2018 samples
+    "scienceqa_img": 25,  # 2018 samples
     "mme": 5000,  # 2374 samples
     # "textvqa_val": 5000,  # 5000 samples
     "pope": 5000,  # 9000 samples
@@ -71,7 +73,6 @@ TASK_LIMITS = {
     # "llava_in_the_wild": 15,  # 60 samples, heavy post processing
 }
 
-# Tasks requiring longer outputs (reasoning, descriptions)
 LONG_ANSWER_TASKS = {
     "llava_in_the_wild",
     "mmvet",
@@ -79,24 +80,44 @@ LONG_ANSWER_TASKS = {
     "mmbench_cn_dev",
 }
 
-
-# Tasks requiring LLM judge (need API key)
 LLM_JUDGE_TASKS = {"mmvet", "mmbench_en_dev", "mmbench_cn_dev", "llava_in_the_wild"}
 
-# Traiing checkpoints
-MODELS_COLLECTION = {
-    "Llava1.5-7B-0-16": "lbasile/llava_0_16-",
-    "Llava1.5-7B-16-32": "lbasile/llava_16_32-",
-    # ...
+# Model name → backend mapping (order matters: more specific patterns first)
+MODEL_BACKEND_REGISTRY = [
+    ("internvl3", "internvl3.5"),
+    ("internvl", "internvl2"),
+    ("onevision", "llava_onevision1_5"),
+    ("cambrian", "cambrian"),
+    ("llava", "llava_hf"),
+]
+
+SYSTEM_INSTRUCTIONS = {
+    "internvl2": INTERNVL2_SYSTEM_INSTRUCTION,
+    "internvl3.5": INTERNVL3_5_SYSTEM_INSTRUCTION,
+    "cambrian": None,
+    "llava_onevision1_5": None,
+    "llava_hf": LLaVA1_5_SYSTEM_INSTRUCTION,
 }
 
+
+def infer_backend(model_name: str) -> str:
+    """Infer the lmms-eval backend from model name."""
+    name_lower = model_name.lower()
+    for pattern, backend in MODEL_BACKEND_REGISTRY:
+        if pattern in name_lower:
+            return backend
+    raise ValueError(
+        f"Cannot infer backend for '{model_name}'. "
+        f"Known patterns: {[p for p, _ in MODEL_BACKEND_REGISTRY]}"
+    )
+
+
 # =============================================================================
-# HELPER FUNCTIONS
+# HELPERS
 # =============================================================================
 
 
 def get_max_new_tokens(task_name: str, override: Optional[int] = None) -> int:
-    """Get max_new_tokens for a task (128 default, 1024 for long-answer tasks)."""
     if override is not None:
         return override
     return (
@@ -109,17 +130,14 @@ def get_max_new_tokens(task_name: str, override: Optional[int] = None) -> int:
 def build_gen_kwargs(
     task_name: str, max_new_tokens_override: Optional[int] = None
 ) -> str:
-    """Build generation kwargs string for simple_evaluate."""
     return f"max_new_tokens={get_max_new_tokens(task_name, max_new_tokens_override)}"
 
 
 def create_cli_args(output_path: str) -> argparse.Namespace:
-    """Create cli_args for tasks that generate submission files."""
     return argparse.Namespace(output_path=output_path, process_with_media=True)
 
 
 def validate_task_requirements(task_name: str) -> None:
-    """Validate environment variables for tasks requiring LLM judge."""
     if task_name in LLM_JUDGE_TASKS:
         if not os.environ.get("OPENAI_API_KEY"):
             print("[bold red]✗ ERROR: LLM judge API key missing![/bold red]")
@@ -132,7 +150,6 @@ def validate_task_requirements(task_name: str) -> None:
 
 
 def format_elapsed_time(seconds: float) -> str:
-    """Format elapsed time as Xh Ym Zs."""
     h, remainder = divmod(int(seconds), 3600)
     m, s = divmod(remainder, 60)
     if h > 0:
@@ -140,31 +157,28 @@ def format_elapsed_time(seconds: float) -> str:
     return f"{m}m {s}s" if m > 0 else f"{seconds:.1f}s"
 
 
-def save_and_update_models_metrics(
+def save_metrics(
     model_identifier: str,
-    dataset_dir: str,
+    output_dir: str,
     raw_results: dict,
-    prefix: str = "",
-    suffix: str = "",
     num_fewshot: Optional[int] = None,
     elapsed_time_sec: Optional[float] = None,
 ) -> None:
     """Append evaluation metrics to JSONL results file."""
-    dataset_dir_name = os.path.basename(dataset_dir)
-    filename = f"{dataset_dir_name}_results"
+    output_dir_name = os.path.basename(output_dir)
+    filename = f"{output_dir_name}_results"
     if num_fewshot is not None:
         filename += f"_fewshot{num_fewshot}"
 
-    full_identifier = f"{model_identifier}_{suffix}" if suffix else model_identifier
-    results = {"experiment_name": f"{prefix}/{full_identifier}", **raw_results}
+    results = {"model": model_identifier, **raw_results}
     if elapsed_time_sec is not None:
         results["elapsed_time"] = format_elapsed_time(elapsed_time_sec)
 
-    with open(os.path.join(dataset_dir, f"{filename}.jsonl"), "a") as f:
+    with open(os.path.join(output_dir, f"{filename}.jsonl"), "a") as f:
         f.write(json.dumps(results) + "\n")
 
 
-def save_model_responses(
+def save_responses(
     model_identifier: str,
     output_dir: str,
     samples: dict,
@@ -188,202 +202,130 @@ def save_model_responses(
 
 
 # =============================================================================
-# EVALUATION FUNCTIONS
+# EVALUATION
 # =============================================================================
 
 
-def run_evaluation(
-    model_name: str,
-    output_dir: str,
-    args: argparse.Namespace,
-    gen_kwargs: str,
-    model_label: Optional[str] = None,
-    prefix: str = "",
-    suffix: str = "",
-) -> float:
-    """
-    Run a single model evaluation and save results.
-
-    Returns elapsed time in seconds.
-    """
+def run_evaluation(args: argparse.Namespace) -> float:
+    """Run evaluation for a single model on a single task. Returns elapsed seconds."""
+    model_name = args.model_name_or_path
+    backend = args.backend
     model_identifier = model_name.replace("/", "_")
-    label = model_label or model_name
 
-    trust_remote_code = args.trust_remote_code or "onevision" in model_name.lower()
+    validate_task_requirements(args.task_name)
+    os.makedirs(args.output_dir, exist_ok=True)
+    gen_kwargs = build_gen_kwargs(args.task_name, args.max_new_tokens)
 
-    print(f"[cyan]>>> {label}[/cyan]")
+    print(f"[cyan]>>> {model_name} (backend: {backend})[/cyan]")
+    print(f"[cyan]Generation: {gen_kwargs}[/cyan]")
     start_time = time.time()
 
-    # --- Limit Logic ---
-    # 1. User-provided --limit takes highest priority.
-    # 2. If no override, check for a task-specific default limit.
-    # 3. Otherwise, no limit.
+    # Limit logic
     limit = args.limit
     if limit is None:
         limit = TASK_LIMITS.get(args.task_name)
-
     if limit:
-        print(f"[yellow]Applying sample limit: {limit}[/yellow]")
+        print(f"[yellow]Sample limit: {limit}[/yellow]")
 
-    # Device mapping logic (inferred from NUM_GPUS):
-    # - NUM_GPUS>1: device_map="" (empty) → accelerate distributed mode
-    # - NUM_GPUS=1: device_map=auto → plain python with HF auto-sharding
+    # Device mapping
     num_gpus = int(os.environ.get("NUM_GPUS", 1))
-
-    if num_gpus > 1:
-        # Empty string signals to llava_hf that we're using accelerate distributed
-        # The model will use accelerator.device for device placement
-        device_map_value = ""
-    else:
-        # Single GPU: use HF auto device mapping
-        device_map_value = "auto"
-
+    device_map_value = "" if num_gpus > 1 else "auto"
     model_args = f"pretrained={model_name},device_map={device_map_value}"
+    cuda_device = (
+        f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+    batch_size = args.batch_size if args.batch_size else 1
 
-    if args.lmms_eval_model in {"llava_hf", "llava_onevision"} and trust_remote_code:
-        original_from_pretrained = AutoConfig.from_pretrained
+    # Instantiate model
+    model_instance: object = backend  # fallback: string for registry lookup
 
-        def _from_pretrained_with_trust(*cfg_args, **cfg_kwargs):
-            cfg_kwargs.setdefault("trust_remote_code", True)
-            return original_from_pretrained(*cfg_args, **cfg_kwargs)
-
-        AutoConfig.from_pretrained = _from_pretrained_with_trust
-
-    # Resolve backend
-    backend = args.lmms_eval_model
-
-    # Instantiate model instance if needed
-    model_instance = backend  # Default to string for registry lookup
-
-    if args.lmms_eval_model == "llava_hf":
-        try:
-            import lmms_eval.models.simple.llava_hf as llava_hf_simple
-
-            if (
-                "llavaonevision1_5" not in llava_hf_simple.model_map
-                and "llava_onevision" in llava_hf_simple.model_map
-            ):
-                llava_hf_simple.model_map["llavaonevision1_5"] = (
-                    llava_hf_simple.model_map["llava_onevision"]
-                )
-
-            if "onevision" in model_name.lower():
-                llava_hf_simple.model_map["llavaonevision1_5"] = AutoModelForCausalLM
-        except Exception:
-            pass
-
-        if "onevision" in model_name.lower():
-            try:
-                import transformers.modeling_flash_attention_utils as flash_utils
-
-                flash_utils.is_flash_attn_available = lambda: False
-            except Exception:
-                pass
-
+    if backend == "llava_hf":
         if LlavaHf is None:
-            print(
-                "[yellow]⚠ LlavaHf class not importable, falling back to registry[/yellow]"
-            )
+            print("[yellow]LlavaHf not importable, falling back to registry[/yellow]")
         else:
-            print(f"[cyan]Instantiating LlavaHf directly for {model_name}...[/cyan]")
+            print(f"[cyan]Instantiating LlavaHf for {model_name}...[/cyan]")
             model_instance = LlavaHf(
                 pretrained=model_name,
                 device_map=device_map_value,
-                batch_size=args.batch_size if args.batch_size else 1,
-                trust_remote_code=trust_remote_code,
-                attn_implementation="sdpa"
-                if "onevision" in model_name.lower()
-                else None,
+                batch_size=batch_size,
+                trust_remote_code=args.trust_remote_code,
             )
 
-    elif args.lmms_eval_model == "internvl2":
+    elif backend == "internvl2":
         if InternVL2Custom is None:
-            print(
-                "[yellow]⚠ InternVL2Custom class not importable, falling back to registry[/yellow]"
-            )
+            print("[yellow]InternVL2Custom not importable, falling back to registry[/yellow]")
         else:
-            print(
-                f"[cyan]Instantiating InternVL2Custom directly for {model_name}...[/cyan]"
-            )
+            print(f"[cyan]Instantiating InternVL2Custom for {model_name}...[/cyan]")
             model_instance = InternVL2Custom(
                 pretrained=model_name,
-                device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
-                if torch.cuda.is_available()
-                else "cpu",
+                device=cuda_device,
                 device_map=device_map_value,
-                batch_size=str(args.batch_size) if args.batch_size else "1",
+                batch_size=str(batch_size),
                 cache_dir=args.model_cache_dir,
             )
 
-    elif args.lmms_eval_model == "internvl3.5":
+    elif backend == "internvl3.5":
         if InternVL3_5Custom is None:
-            print(
-                "[yellow]⚠ InternVL3_5Custom class not importable, falling back to registry[/yellow]"
-            )
+            print("[yellow]InternVL3_5Custom not importable, falling back to registry[/yellow]")
         else:
-            print(
-                f"[cyan]Instantiating InternVL3_5Custom directly for {model_name}...[/cyan]"
-            )
+            print(f"[cyan]Instantiating InternVL3_5Custom for {model_name}...[/cyan]")
             model_instance = InternVL3_5Custom(
                 pretrained=model_name,
-                device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
-                if torch.cuda.is_available()
-                else "cpu",
+                device=cuda_device,
                 device_map=device_map_value,
-                batch_size=str(args.batch_size) if args.batch_size else "1",
+                batch_size=str(batch_size),
                 cache_dir=args.model_cache_dir,
             )
-    elif args.lmms_eval_model == "llava_onevision":
-        if Llava_OneVision is None:
-            print(
-                "[yellow]⚠ Llava_OneVision class not importable, falling back to registry[/yellow]"
-            )
-        else:
-            print(
-                f"[cyan]Instantiating Llava_OneVision directly for {model_name}...[/cyan]"
-            )
-            model_instance = Llava_OneVision(
-                pretrained=model_name,
-                model_name=os.path.basename(model_name),
-                device=f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
-                if torch.cuda.is_available()
-                else "cpu",
-                device_map=device_map_value,
-                batch_size=args.batch_size if args.batch_size else 1,
-            )
-    if args.no_image:
-        if args.lmms_eval_model == "llava_hf" and "onevision" in model_name.lower():
-            patch_onevision(model_instance.model, layers_to_skip=range(32))
-        elif args.lmms_eval_model == "llava_hf":
-            patch_llava(layers_to_skip=range(32))
-        elif args.lmms_eval_model == "internvl2":
-            patch_internvl(model_instance._model, layers_to_skip=range(32))
-    # Select system instruction
-    if args.lmms_eval_model == "internvl2":
-        system_instruction = INTERNVL2_SYSTEM_INSTRUCTION
-    elif args.lmms_eval_model == "internvl3.5":
-        system_instruction = INTERNVL3_5_SYSTEM_INSTRUCTION
-    else:
-        system_instruction = LLaVA1_5_SYSTEM_INSTRUCTION
 
-    eval_model_args = model_args
-    if (
-        isinstance(model_instance, str)
-        and args.lmms_eval_model == "llava_hf"
-        and trust_remote_code
-    ):
-        eval_model_args += ",trust_remote_code=True"
+    elif backend == "llava_onevision1_5":
+        if LlavaOneVision1_5Custom is None:
+            print("[yellow]LlavaOneVision1_5Custom not importable[/yellow]")
+        else:
+            print(f"[cyan]Instantiating LlavaOneVision1_5Custom for {model_name}...[/cyan]")
+            model_instance = LlavaOneVision1_5Custom(
+                pretrained=model_name,
+                device=cuda_device,
+                device_map=device_map_value,
+                batch_size=batch_size,
+                cache_dir=args.model_cache_dir,
+            )
+
+    elif backend == "cambrian":
+        if CambrianCustom is None:
+            print("[yellow]CambrianCustom not importable, falling back to registry[/yellow]")
+        else:
+            print(f"[cyan]Instantiating CambrianCustom for {model_name}...[/cyan]")
+            model_instance = CambrianCustom(
+                pretrained=model_name,
+                device=cuda_device,
+                device_map=device_map_value,
+                batch_size=batch_size,
+                cache_dir=args.model_cache_dir,
+            )
+
+    # No-image patching (skip vision layers for text-only evaluation)
+    if args.no_image:
+        if backend == "llava_onevision1_5":
+            patch_onevision(model_instance.model, layers_to_skip=range(32))
+        elif backend == "llava_hf":
+            patch_llava(layers_to_skip=range(32))
+        elif backend == "internvl2":
+            patch_internvl(model_instance._model, layers_to_skip=range(32))
+
+    system_instruction = SYSTEM_INSTRUCTIONS.get(backend, LLaVA1_5_SYSTEM_INSTRUCTION)
 
     results = simple_evaluate(
         model=model_instance,
-        model_args=eval_model_args if isinstance(model_instance, str) else None,
+        model_args=model_args if isinstance(model_instance, str) else None,
         tasks=[args.task_name],
         num_fewshot=args.num_fewshot,
         batch_size=args.batch_size,
         log_samples=True,
         limit=limit,
         system_instruction=system_instruction,
-        cli_args=create_cli_args(output_dir),
+        cli_args=create_cli_args(args.output_dir),
         gen_kwargs=gen_kwargs,
         random_seed=RANDOM_SEED,
         numpy_random_seed=NUMPY_RANDOM_SEED,
@@ -391,10 +333,9 @@ def run_evaluation(
         fewshot_random_seed=FEWSHOT_RANDOM_SEED,
     )
     elapsed_sec = time.time() - start_time
-    print(f"[green]✓ {label}: {format_elapsed_time(elapsed_sec)}[/green]")
+    print(f"[green]✓ {model_name}: {format_elapsed_time(elapsed_sec)}[/green]")
 
-    # In distributed mode, only rank 0 should save results
-    # This prevents race conditions and duplicate saves
+    # In distributed mode, only rank 0 saves
     is_main_process = True
     if num_gpus > 1:
         try:
@@ -402,191 +343,55 @@ def run_evaluation(
 
             if dist.is_initialized():
                 is_main_process = dist.get_rank() == 0
-                if not is_main_process:
-                    print(
-                        "[dim]  (Rank {}: skipping save - main process handles it)[/dim]".format(
-                            dist.get_rank()
-                        )
-                    )
         except Exception:
-            pass  # Not in distributed mode
+            pass
 
-    # Only main process saves results
     if is_main_process:
-        # Save metrics (with defensive checks for NoneType)
         if results and "results" in results:
-            found_results = False
             for res_key, res_metrics in results["results"].items():
-                # Skip empty/dummy results often found in groups without aggregation
-                # e.g., {' ': ' '} or just key='alias' or keys like 'alias' and nothing else useful
                 if not res_metrics:
                     continue
                 if len(res_metrics) == 1 and " " in res_metrics:
                     continue
-
-                # Filter out entries that only contain metadata (like "alias") but no metrics
                 metric_keys = [
                     k
-                    for k in res_metrics.keys()
+                    for k in res_metrics
                     if k != "alias" and k != " " and not k.endswith("_stderr,none")
                 ]
                 if not metric_keys:
                     continue
 
-                found_results = True
-                # Construct suffix for valid tasks found (e.g., subtasks)
-                current_suffix = suffix
-                if res_key != args.task_name:
-                    current_suffix = f"{suffix}_{res_key}" if suffix else res_key
-
-                save_and_update_models_metrics(
-                    dataset_dir=args.output_dir,
+                save_metrics(
+                    output_dir=args.output_dir,
                     model_identifier=model_identifier,
-                    prefix=prefix,
-                    suffix=current_suffix,
                     raw_results=res_metrics,
                     num_fewshot=args.num_fewshot,
                     elapsed_time_sec=elapsed_sec,
                 )
-
-            if not found_results:
-                print(
-                    f"[yellow]⚠ Warning: No valid metrics found for {args.task_name}[/yellow]"
-                )
-
         else:
-            print(
-                f"[yellow]⚠ Warning: Incomplete results for {args.task_name}, skipping metrics save[/yellow]"
-            )
+            print(f"[yellow]⚠ No results for {args.task_name}[/yellow]")
 
-        # Save responses (with defensive check)
-        response_identifier = (
-            f"{model_identifier}_{suffix}" if suffix else model_identifier
-        )
         if results and "samples" in results:
-            save_model_responses(
-                model_identifier=response_identifier,
-                output_dir=output_dir,
+            save_responses(
+                model_identifier=model_identifier,
+                output_dir=args.output_dir,
                 samples=results["samples"],
                 task_name=args.task_name,
                 num_fewshot=args.num_fewshot,
             )
-        else:
-            print(
-                "[yellow]⚠ Warning: No samples found, skipping responses save[/yellow]"
-            )
 
-    # Memory cleanup WITHOUT barriers (barriers cause deadlock if one process errors)
+    # Cleanup
     del results
     gc.collect()
-
-    # Clear CUDA cache - no synchronization needed
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        # Per-device cleanup
         for device_id in range(torch.cuda.device_count()):
             with torch.cuda.device(device_id):
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
-
     gc.collect()
 
     return elapsed_sec
-
-
-def eval_single(args) -> None:
-    """Evaluate a single model."""
-    print("[bold magenta]=== Single Model ===[/bold magenta]")
-    print(f"[cyan]{args.model_name_or_path}[/cyan]")
-    validate_task_requirements(args.task_name)
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    gen_kwargs = build_gen_kwargs(args.task_name, args.max_new_tokens)
-    print(f"[cyan]Generation: {gen_kwargs}[/cyan]")
-    print()
-
-    run_evaluation(
-        model_name=args.model_name_or_path,
-        output_dir=args.output_dir,
-        args=args,
-        gen_kwargs=gen_kwargs,
-        prefix="single",
-        suffix="",
-    )
-
-    print()
-    print("[green]✓ Complete[/green]")
-    print(f"[cyan]  Saved to: {args.output_dir}[/cyan]")
-
-
-def eval_collection(args) -> None:
-    """Evaluate a collection of models across checkpoints."""
-    print("[bold magenta]=== Collection ===[/bold magenta]")
-    print(f"[cyan]{args.collection_name}[/cyan]")
-    validate_task_requirements(args.task_name)
-
-    if args.collection_name not in MODELS_COLLECTION:
-        print(f"[bold red]✗ Unknown collection: {args.collection_name}[/bold red]")
-        print(f"  Available: {list(MODELS_COLLECTION.keys())}")
-        return
-
-    model_prefix = MODELS_COLLECTION[args.collection_name]
-    checkpoints = list(range(1000, 10001, 1000))
-
-    os.makedirs(os.path.expanduser(args.output_dir), exist_ok=True)
-    effective_output_dir = os.path.join(
-        os.path.expanduser(args.output_dir), args.collection_name
-    )
-    os.makedirs(effective_output_dir, exist_ok=True)
-
-    gen_kwargs = build_gen_kwargs(args.task_name, args.max_new_tokens)
-    print(f"[cyan]Generation: {gen_kwargs}[/cyan]")
-    print()
-
-    collection_start_time = time.time()
-    for i, checkpoint in enumerate(checkpoints):
-        model_name = f"{model_prefix}{checkpoint}"
-        print(f"[cyan]Checkpoint {checkpoint} ({i + 1}/{len(checkpoints)})[/cyan]")
-
-        try:
-            run_evaluation(
-                model_name=model_name,
-                output_dir=effective_output_dir,
-                args=args,
-                gen_kwargs=gen_kwargs,
-                model_label=f"Checkpoint {checkpoint}",
-                prefix=args.collection_name,
-                suffix="",
-            )
-
-            # Memory cleanup after checkpoint (no barriers - prevents deadlock)
-            print("[dim]→ Cleaning up...[/dim]")
-
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-
-            gc.collect()
-
-            # NO barrier here - causes deadlock if one process errors
-            # Memory cleanup doesn't need perfect synchronization
-
-        except Exception as e:
-            print(f"[bold red]✗ Error: {model_name}[/bold red]")
-            print(f"  {str(e)[:200]}")  # Truncate long errors
-
-            # Cleanup on error (no barriers to prevent deadlock)
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-
-            continue
-        print()
-
-    print(
-        f"[green]✓ Complete in {format_elapsed_time(time.time() - collection_start_time)}[/green]"
-    )
-    print(f"[cyan]  Saved to: {effective_output_dir}[/cyan]")
 
 
 # =============================================================================
@@ -596,21 +401,13 @@ def eval_collection(args) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Evaluate LLaVA models using lmms-eval"
+        description="Evaluate vision-language models using lmms-eval"
     )
-
-    parser.add_argument(
-        "--lmms-eval-model",
-        type=str,
-        default=os.environ.get("LMMS_EVAL_MODEL"),
-        help="Model backend (auto-inferred if not set): llava_hf, internvl2, internvl3.5",
-    )
-    parser.add_argument("--model-name-or-path", type=str, default=None)
+    parser.add_argument("--model-name-or-path", type=str, required=True)
     parser.add_argument("--model-cache-dir", type=str, required=True)
-    parser.add_argument("--collection-name", type=str, default=None)
     parser.add_argument("--output-dir", type=str, required=True)
-    parser.add_argument("--batch-size", type=int, default=10)
-    parser.add_argument("--task-name", type=str, default="vqav2_test")
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--task-name", type=str, default="scienceqa_img")
     parser.add_argument("--num-fewshot", type=int, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)
@@ -618,31 +415,14 @@ def main() -> None:
     parser.add_argument("--trust-remote-code", action="store_true")
 
     args = parser.parse_args()
+    args.backend = infer_backend(args.model_name_or_path)
+    print(f"[cyan]Backend: {args.backend}[/cyan]")
 
-    # Auto-infer model backend from model name when not explicitly set
-    if args.lmms_eval_model is None and args.model_name_or_path:
-        name_lower = args.model_name_or_path.lower()
-        if "internvl3" in name_lower:
-            args.lmms_eval_model = "internvl3.5"
-        elif "internvl" in name_lower:
-            args.lmms_eval_model = "internvl2"
-        elif "onevision" in name_lower:
-            args.lmms_eval_model = "llava_hf"
-        elif "llava" in name_lower:
-            args.lmms_eval_model = "llava_hf"
-        else:
-            parser.error(
-                "Cannot infer --lmms-eval-model from model name. "
-                "Set it explicitly or via LMMS_EVAL_MODEL env var."
-            )
+    run_evaluation(args)
 
-    # Run appropriate evaluation mode
-    if args.collection_name:
-        eval_collection(args)
-    elif args.model_name_or_path:
-        eval_single(args)
-    else:
-        parser.error("Provide --collection-name or --model-name-or-path")
+    print()
+    print("[green]✓ Complete[/green]")
+    print(f"[cyan]  Results: {args.output_dir}[/cyan]")
 
 
 if __name__ == "__main__":

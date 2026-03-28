@@ -10,7 +10,7 @@ Benchmarks:
     Subtasks: VG-Relation, VG-Attribution, COCO-Order, Flickr30k-Order
   - BiVLC: Bidirectional compositionality (I2T + T2I + Group score)
 
-Supports: LLaVA 1.5/v1.6, LLaVA-OneVision, InternVL2, InternVL3.5
+Supports: LLaVA 1.5/v1.6, LLaVA-OneVision, InternVL2, InternVL3.5, Cambrian
 
 Setup:
   ARO data: Clone https://github.com/mertyg/vision-language-models-are-bows
@@ -35,6 +35,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import nltk
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
@@ -43,6 +44,19 @@ from rich import print
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+# ARO Order subtasks use nltk.word_tokenize (via TextShuffler) which needs punkt_tab.
+# Auto-download once; subsequent calls are no-ops.
+nltk.download("punkt_tab", quiet=True)
+
+from utils.cambrian_utils import (
+    is_cambrian_model,
+    apply_chat_template as apply_cambrian_chat_template,
+    generate_cambrian_batch,
+    preprocess_cambrian_images,
+    resolve_cambrian_conv_mode,
+    tokenize_cambrian_prompts,
+    get_cambrian_device,
+)
 from utils.constants import SYSTEM_ROLE
 from utils.dataset import _processor_has_default_system
 from utils.internvl_utils import (
@@ -97,6 +111,8 @@ MCQ_5WAY_PROMPT = (
 def detect_model_type(model_name_or_path: str) -> str:
     """Detect model family from model name/path string."""
     name_lower = model_name_or_path.lower()
+    if "cambrian" in name_lower:
+        return "cambrian"
     if "internvl3" in name_lower:
         return "internvl3"
     if "internvl" in name_lower:
@@ -161,7 +177,7 @@ def _compute_log_likelihood_llava(
     # Build prompt only (without caption)
     prompt_conv = _build_llava_conversation(caption, has_image, processor, include_caption=False)
     prompt_text = processor.apply_chat_template(
-        prompt_conv, tokenize=False, add_generation_prompt=True
+        prompt_conv, tokenize=False, add_generation_prompt=False
     )
 
     # Tokenize
@@ -319,6 +335,103 @@ def _compute_log_likelihood_internvl(
     return total_log_prob
 
 
+def _compute_log_likelihood_cambrian(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    image: Optional[Image.Image],
+    caption: str,
+    normalize_by_length: bool = True,
+) -> float:
+    """Compute log-likelihood of caption given image for Cambrian models."""
+    from utils.cambrian_bridge import _ensure_cambrian_importable
+
+    _ensure_cambrian_importable()
+    from cambrian.constants import IMAGE_TOKEN_INDEX
+    from cambrian.mm_utils import tokenizer_image_token_llama3
+
+    device = get_cambrian_device(model)
+    has_image = image is not None
+    conv_mode = resolve_cambrian_conv_mode(model)
+
+    # Build full conversation: user asks SCORING_PROMPT, assistant replies with caption
+    from cambrian.conversation import conv_templates
+
+    use_im_start_end = bool(getattr(model.config, "mm_use_im_start_end", False))
+
+    def _build_cambrian_prompt(question: str, response: Optional[str] = None) -> str:
+        from cambrian.constants import (
+            DEFAULT_IMAGE_TOKEN,
+            DEFAULT_IM_START_TOKEN,
+            DEFAULT_IM_END_TOKEN,
+        )
+
+        q = question
+        if has_image:
+            if use_im_start_end:
+                image_prefix = f"{DEFAULT_IM_START_TOKEN}{DEFAULT_IMAGE_TOKEN}{DEFAULT_IM_END_TOKEN}"
+            else:
+                image_prefix = DEFAULT_IMAGE_TOKEN
+            q = f"{image_prefix}\n{q}"
+
+        conv = conv_templates[conv_mode].copy()
+        conv.append_message(conv.roles[0], q)
+        conv.append_message(conv.roles[1], response)
+        return conv.get_prompt()
+
+    # Full prompt (with caption as assistant response)
+    full_text = _build_cambrian_prompt(SCORING_PROMPT, caption)
+    # Prompt only (without caption, for measuring prompt length)
+    prompt_text = _build_cambrian_prompt(SCORING_PROMPT, None)
+
+    # Tokenize using Cambrian's image-token-aware tokenizer
+    tokenize_fn = tokenizer_image_token_llama3 if conv_mode in {"llama_3", "llama_v3"} else None
+    if tokenize_fn is None:
+        from cambrian.mm_utils import tokenizer_image_token
+        tokenize_fn = tokenizer_image_token
+
+    full_ids = tokenize_fn(full_text, tokenizer, image_token_index=IMAGE_TOKEN_INDEX, return_tensors="pt")
+    prompt_ids = tokenize_fn(prompt_text, tokenizer, image_token_index=IMAGE_TOKEN_INDEX, return_tensors="pt")
+
+    if full_ids.dim() == 1:
+        full_ids = full_ids.unsqueeze(0)
+    if prompt_ids.dim() == 1:
+        prompt_ids = prompt_ids.unsqueeze(0)
+
+    full_ids = full_ids.to(device)
+    prompt_ids = prompt_ids.to(device)
+    prompt_len = prompt_ids.shape[1]
+
+    # Forward pass
+    forward_kwargs: dict[str, Any] = {
+        "input_ids": full_ids,
+        "attention_mask": torch.ones_like(full_ids),
+        "use_cache": False,
+    }
+    if has_image:
+        image_tensors = preprocess_cambrian_images(
+            [image], tokenizer.image_processor, model, device, torch.float16
+        )
+        forward_kwargs["images"] = image_tensors
+        forward_kwargs["image_sizes"] = [image.size]
+
+    with torch.no_grad():
+        outputs = model(**forward_kwargs)
+    logits = outputs.logits  # (1, seq_len, vocab_size)
+
+    # Extract caption token log-probs
+    caption_logits = logits[0, prompt_len - 1 : -1]
+    caption_token_ids = full_ids[0, prompt_len:]
+
+    log_probs = F.log_softmax(caption_logits, dim=-1)
+    token_log_probs = log_probs.gather(1, caption_token_ids.unsqueeze(1)).squeeze(1)
+    total_log_prob = token_log_probs.sum().item()
+
+    if normalize_by_length and len(caption_token_ids) > 0:
+        total_log_prob /= len(caption_token_ids)
+
+    return total_log_prob
+
+
 def compute_caption_log_likelihood(
     model: torch.nn.Module,
     processor_or_tokenizer: Any,
@@ -330,6 +443,10 @@ def compute_caption_log_likelihood(
 
     Dispatches to model-specific implementation based on model type.
     """
+    if is_cambrian_model(model):
+        return _compute_log_likelihood_cambrian(
+            model, processor_or_tokenizer, image, caption, normalize_by_length
+        )
     if is_internvl_model(model):
         return _compute_log_likelihood_internvl(
             model, processor_or_tokenizer, image, caption, normalize_by_length
@@ -434,6 +551,25 @@ def _generate_response_internvl(
     return responses[0]
 
 
+def _generate_response_cambrian(
+    model: torch.nn.Module,
+    tokenizer: Any,
+    image: Optional[Image.Image],
+    question: str,
+    max_new_tokens: int = 16,
+) -> str:
+    """Generate a text response from Cambrian model."""
+    images = [image] if image is not None else None
+    responses = generate_cambrian_batch(
+        model=model,
+        tokenizer=tokenizer,
+        questions=[question],
+        images=images,
+        max_new_tokens=max_new_tokens,
+    )
+    return responses[0]
+
+
 def generate_response(
     model: torch.nn.Module,
     processor_or_tokenizer: Any,
@@ -442,6 +578,10 @@ def generate_response(
     max_new_tokens: int = 16,
 ) -> str:
     """Generate response, dispatching to model-specific implementation."""
+    if is_cambrian_model(model):
+        return _generate_response_cambrian(
+            model, processor_or_tokenizer, image, question, max_new_tokens
+        )
     if is_internvl_model(model):
         return _generate_response_internvl(
             model, processor_or_tokenizer, image, question, max_new_tokens
@@ -564,9 +704,9 @@ class AROOrderDataset(Dataset):
         from dataset_zoo import COCO_Order, Flickr30k_Order
 
         DatasetClass = COCO_Order if subtask == "coco_order" else Flickr30k_Order
-        # Order datasets need image dirs; pass repo root and let them resolve
+        # Order datasets need split="test"; Flickr30k_Order requires it as positional arg
         self.dataset = DatasetClass(
-            image_preprocess=None, download=True, root_dir=aro_path
+            image_preprocess=None, split="test", download=True, root_dir=aro_path
         )
         self.limit = min(limit, len(self.dataset)) if limit else len(self.dataset)
 
@@ -594,6 +734,33 @@ def load_aro_dataset(
     if subtask in ("vg_relation", "vg_attribution"):
         return AROVGDataset(subtask, aro_repo_root, limit)
     return AROOrderDataset(subtask, aro_repo_root, limit)
+
+
+_ARO_ORDER_IMAGE_DIRS: dict[str, tuple[str, str]] = {
+    "coco_order": ("val2014", "COCO val2014"),
+    "flickr30k_order": ("flickr30k-images", "Flickr30k"),
+}
+
+
+def validate_aro_image_dirs(subtasks: list[str], aro_data_root: str) -> None:
+    """Fail-fast: verify image directories exist before loading model."""
+    aro_path = os.path.expanduser(aro_data_root)
+    missing = []
+    for st in subtasks:
+        if st in _ARO_ORDER_IMAGE_DIRS:
+            subdir, name = _ARO_ORDER_IMAGE_DIRS[st]
+            if not os.path.isdir(os.path.join(aro_path, subdir)):
+                missing.append((st, name, os.path.join(aro_path, subdir)))
+    if missing:
+        lines = ["Missing image directories for ARO order subtasks:"]
+        for st, name, path in missing:
+            lines.append(f"  - {st}: {name} images not found at {path}")
+        lines.append("")
+        lines.append("Download them with:")
+        lines.append(
+            f"  python scripts/data/download_aro_images.py --aro-data-root {aro_path}"
+        )
+        raise FileNotFoundError("\n".join(lines))
 
 
 # =============================================================================
@@ -632,13 +799,27 @@ def evaluate_aro_loglikelihood(
     total = 0
     per_sample: list = []
 
-    for idx in tqdm(range(len(dataset)), desc=f"ARO {subtask} (loglik)"):
-        item = dataset[idx]
+    n_samples = len(dataset)
+    update_every = max(1, int(0.1 * n_samples))
+    progress_bar = tqdm(total=n_samples, desc=f"ARO {subtask} (loglik)", unit="sample")
+    update_count = 0
+
+    skipped = 0
+    for idx in range(n_samples):
+        try:
+            item = dataset[idx]
+        except (FileNotFoundError, OSError):
+            skipped += 1
+            update_count += 1
+            if update_count >= update_every or idx == n_samples - 1:
+                progress_bar.update(update_count)
+                update_count = 0
+            continue
+
         image = item["image"]
         captions = item["caption_options"]
         correct_idx = item["correct_index"]
 
-        # Score each caption
         scores = []
         for caption in captions:
             try:
@@ -664,15 +845,23 @@ def evaluate_aro_loglikelihood(
             "is_correct": is_correct,
         })
 
-        # Periodic memory cleanup
-        if (idx + 1) % 100 == 0 and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        update_count += 1
+        if update_count >= update_every or idx == n_samples - 1:
+            progress_bar.update(update_count)
+            update_count = 0
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    progress_bar.close()
+    if skipped:
+        print(f"[yellow]  ⚠ Skipped {skipped}/{n_samples} samples (missing images)[/yellow]")
 
     accuracy = correct / total if total > 0 else 0.0
     return {
         "accuracy": accuracy,
         "num_correct": correct,
         "num_total": total,
+        "num_skipped": skipped,
         "per_sample": per_sample,
     }
 
@@ -694,7 +883,12 @@ def evaluate_bivlc_loglikelihood(
     per_type: Dict[str, Dict[str, int]] = {}
     per_sample: list = []
 
-    for idx in tqdm(range(len(dataset)), desc="BiVLC (loglik)"):
+    n_samples = len(dataset)
+    update_every = max(1, int(0.1 * n_samples))
+    progress_bar = tqdm(total=n_samples, desc="BiVLC (loglik)", unit="sample")
+    update_count = 0
+
+    for idx in range(n_samples):
         item = dataset[idx]
         image = item["image"]
         caption = item["caption"]
@@ -709,28 +903,32 @@ def evaluate_bivlc_loglikelihood(
             neg_image = neg_image.convert("RGB")
 
         try:
-            # I2T: score caption vs neg_caption conditioned on image
-            score_cap = compute_caption_log_likelihood(
+            score_pos_cap_pos_img = compute_caption_log_likelihood(
                 model, processor_or_tokenizer, image, caption, normalize_by_length
             )
-            score_neg_cap = compute_caption_log_likelihood(
-                model, processor_or_tokenizer, image, neg_caption, normalize_by_length
-            )
-            i2t_ok = score_cap > score_neg_cap
-
-            # T2I: score caption conditioned on image vs neg_image
-            score_img = score_cap  # already computed above
-            score_neg_img = compute_caption_log_likelihood(
+            score_pos_cap_neg_img = compute_caption_log_likelihood(
                 model, processor_or_tokenizer, neg_image, caption, normalize_by_length
             )
-            t2i_ok = score_img > score_neg_img
+            score_neg_cap_pos_img = compute_caption_log_likelihood(
+                model, processor_or_tokenizer, image, neg_caption, normalize_by_length
+            )
+            score_neg_cap_neg_img = compute_caption_log_likelihood(
+                model, processor_or_tokenizer, neg_image, neg_caption, normalize_by_length
+            )
+            Ipos2T = score_pos_cap_pos_img > score_neg_cap_pos_img
+            InegT = score_neg_cap_neg_img > score_pos_cap_neg_img
+            TposI = score_pos_cap_pos_img > score_pos_cap_neg_img
+            TnegI = score_neg_cap_neg_img > score_neg_cap_pos_img
+                        
+            i2t_ok = Ipos2T and InegT
+            t2i_ok = TposI and TnegI
 
             group_ok = i2t_ok and t2i_ok
 
         except Exception as e:
             print(f"[yellow]⚠ Error at sample {idx}: {e}[/yellow]")
             i2t_ok = t2i_ok = group_ok = False
-            score_cap = score_neg_cap = score_neg_img = float("nan")
+            score_pos_cap_pos_img = score_pos_cap_neg_img = score_neg_cap_pos_img = score_neg_cap_neg_img = float("nan")
 
         if i2t_ok:
             i2t_correct += 1
@@ -754,20 +952,29 @@ def evaluate_bivlc_loglikelihood(
 
         per_sample.append({
             "idx": idx,
+            "caption": caption,
+            'neg_caption': neg_caption,
             "i2t_correct": i2t_ok,
             "t2i_correct": t2i_ok,
             "group_correct": group_ok,
             "scores": {
-                "cap_given_img": score_cap,
-                "negcap_given_img": score_neg_cap,
-                "cap_given_negimg": score_neg_img,
+                "pos_cap_pos_img": score_pos_cap_pos_img,
+                "pos_cap_neg_img": score_pos_cap_neg_img,
+                "neg_cap_pos_img": score_neg_cap_pos_img,
+                "neg_cap_neg_img": score_neg_cap_neg_img,
             },
             "type": comp_type,
             "subtype": comp_subtype,
         })
 
-        if (idx + 1) % 100 == 0 and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        update_count += 1
+        if update_count >= update_every or idx == n_samples - 1:
+            progress_bar.update(update_count)
+            update_count = 0
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    progress_bar.close()
 
     # Compute per-type accuracies
     per_type_acc = {}
@@ -809,8 +1016,23 @@ def evaluate_aro_mcq(
     total = 0
     per_sample: list = []
 
-    for idx in tqdm(range(len(dataset)), desc=f"ARO {subtask} (mcq)"):
-        item = dataset[idx]
+    n_samples = len(dataset)
+    update_every = max(1, int(0.1 * n_samples))
+    progress_bar = tqdm(total=n_samples, desc=f"ARO {subtask} (mcq)", unit="sample")
+    update_count = 0
+
+    skipped = 0
+    for idx in range(n_samples):
+        try:
+            item = dataset[idx]
+        except (FileNotFoundError, OSError):
+            skipped += 1
+            update_count += 1
+            if update_count >= update_every or idx == n_samples - 1:
+                progress_bar.update(update_count)
+                update_count = 0
+            continue
+
         image = item["image"]
         captions = item["caption_options"]
         correct_idx = item["correct_index"]
@@ -861,14 +1083,23 @@ def evaluate_aro_mcq(
             "is_correct": is_correct,
         })
 
-        if (idx + 1) % 100 == 0 and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        update_count += 1
+        if update_count >= update_every or idx == n_samples - 1:
+            progress_bar.update(update_count)
+            update_count = 0
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    progress_bar.close()
+    if skipped:
+        print(f"[yellow]  ⚠ Skipped {skipped}/{n_samples} samples (missing images)[/yellow]")
 
     accuracy = correct / total if total > 0 else 0.0
     return {
         "accuracy": accuracy,
         "num_correct": correct,
         "num_total": total,
+        "num_skipped": skipped,
         "per_sample": per_sample,
     }
 
@@ -891,7 +1122,12 @@ def evaluate_bivlc_mcq(
     per_type: Dict[str, Dict[str, int]] = {}
     per_sample: list = []
 
-    for idx in tqdm(range(len(dataset)), desc="BiVLC I2T (mcq)"):
+    n_samples = len(dataset)
+    update_every = max(1, int(0.1 * n_samples))
+    progress_bar = tqdm(total=n_samples, desc="BiVLC I2T (mcq)", unit="sample")
+    update_count = 0
+
+    for idx in range(n_samples):
         item = dataset[idx]
         image = item["image"]
         caption = item["caption"]
@@ -947,8 +1183,14 @@ def evaluate_bivlc_mcq(
             "subtype": comp_subtype,
         })
 
-        if (idx + 1) % 100 == 0 and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        update_count += 1
+        if update_count >= update_every or idx == n_samples - 1:
+            progress_bar.update(update_count)
+            update_count = 0
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    progress_bar.close()
 
     per_type_acc = {}
     for key, counts in per_type.items():
@@ -1007,10 +1249,10 @@ def save_results(
         f.write(json.dumps(summary) + "\n")
     print(f"[green]  Metrics → {jsonl_path}[/green]")
 
-    # Save per-sample responses
+    # Save per-sample responses (include benchmark in filename to avoid overwrites)
     suffix = f"_{eval_method}" if eval_method != "loglikelihood" else ""
     json_path = os.path.join(
-        output_dir, f"{model_identifier}{suffix}_responses.json"
+        output_dir, f"{benchmark}_{model_identifier}{suffix}_responses.json"
     )
     with open(json_path, "w") as f:
         json.dump(per_sample, f, indent=2, default=str)
@@ -1212,10 +1454,6 @@ def main() -> None:
         "--no-normalize-by-length", action="store_false", dest="normalize_by_length",
         help="Disable length normalization",
     )
-    parser.add_argument(
-        "--batch-size", type=int, default=1,
-        help="Batch size (currently only batch_size=1 is supported)",
-    )
 
     args = parser.parse_args()
 
@@ -1230,10 +1468,16 @@ def main() -> None:
         print(f"[yellow]Limit:     {args.limit} samples[/yellow]")
     print()
 
+    # Validate data availability before expensive model load
+    if args.benchmark in ("aro", "all"):
+        validate_aro_image_dirs(args.aro_subtasks, args.aro_data_root)
+
     # Load model
     print("[dim]Loading model...[/dim]")
     model, processor_or_tokenizer = load_hf_model_and_processor_or_tokenizer(
         model_name_or_path=args.model_name_or_path,
+        # attn_implementation="sdpa",
+        # dtype=torch.float16,
     )
     model.eval()
     model_identifier = args.model_name_or_path.replace("/", "_")

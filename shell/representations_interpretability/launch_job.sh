@@ -5,15 +5,15 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="dssc"
+ACCOUNT="lade"
 JOB_NAME="experiment"
-PARTITION="DGX"
-GPU_TYPE="A100"
+PARTITION="H100"
+GPU_TYPE="H100"
 NUM_GPUS=1              # Number of GPUs (requires at least 1 for CUDA models)
 CPUS=8
 MEM="48GB"
-TIME="03:00:00"
-NODELIST=""             # Empty = any available node
+TIME="07:00:00"
+NODELIST="dgx003"             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
 # Project paths

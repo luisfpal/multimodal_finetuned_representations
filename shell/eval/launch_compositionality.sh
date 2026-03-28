@@ -6,22 +6,22 @@
 # log-likelihood scoring and MCQ prompting.
 #
 # Usage:
-#   1. Configure MODEL, BENCHMARK, and SLURM settings below.
+#   1. Configure MODELS, BENCHMARK, ARO_SUBTASKS, and SLURM settings below.
 #   2. Run:  bash shell/eval/launch_compositionality.sh
 # =============================================================================
 
 # =============================================================================
 # SLURM SETTINGS
 # =============================================================================
-ACCOUNT="dssc"
-JOB_NAME="compositionality"
-PARTITION="DGX"
-GPU_TYPE="A100"
+ACCOUNT="lade"
+JOB_NAME="experiment"
+PARTITION="H100"
+GPU_TYPE="H100"
 NUM_GPUS=1
-CPUS=16
-MEM="64GB"
-TIME="12:00:00"
-NODELIST=""
+CPUS=12
+MEM="48GB"
+TIME="10:00:00"
+NODELIST="dgx003"
 EXCLUDE=""
 
 # =============================================================================
@@ -30,40 +30,43 @@ EXCLUDE=""
 PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 LOG_DIR="$PROJECT_ROOT/logs"
 PYTHON_SCRIPT="scripts/eval/compositionality_evaluation.py"
+PYTHON_SCRIPT_PATH="$PROJECT_ROOT/$PYTHON_SCRIPT"
 
 # =============================================================================
-# MODEL SELECTION
+# MODEL SELECTION (loop over all uncommented models)
 # =============================================================================
-# Uncomment the model you want to evaluate:
-
-# --- LLaVA ---
-MODEL_TO_EVAL="lbasile/llava_7b"
-
-# --- InternVL2 ---
-# MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
-# MODEL_TO_EVAL="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
-
-# --- LLaVA OneVision ---
-# MODEL_TO_EVAL="lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
-
-# --- InternVL3.5 ---
-# MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B"
-
-# Automatically extract model short name for output directory
-OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
+MODELS=(
+    # "lbasile/llava_7b"
+    # "l11p/llava-v1.5-7b-pretrained-lbasile"
+    # "OpenGVLab/InternVL2-8B"
+    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+    "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+    "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
+    "nyu-visionx/cambrian-8b"
+    "lbasile/cambrian-8b-pretrained"
+)
 
 # =============================================================================
 # EVALUATION PARAMETERS
 # =============================================================================
 
 # Benchmark to evaluate: "aro", "bivlc", or "all"
-BENCHMARK="all"
+BENCHMARK="aro"
 
 # Evaluation method: "loglikelihood", "mcq", or "both"
-EVAL_METHOD="both"
+EVAL_METHOD="mcq"
 
 # Sample limit (empty = no limit, use for debugging)
 LIMIT=""
+
+# ARO subtasks to evaluate (comment out subtasks you want to skip)
+# Order subtasks require images — run: bash shell/data/download_aro_images.sh
+ARO_SUBTASKS=(
+    # "vg_relation"
+    # "vg_attribution"
+    # "coco_order"
+    "flickr30k_order"
+)
 
 # ARO data root (where ARO annotations and images are downloaded)
 ARO_DATA_ROOT="$HOME/scratch/datasets/vision-language-models-are-bows"
@@ -74,6 +77,16 @@ ARO_DATA_ROOT="$HOME/scratch/datasets/vision-language-models-are-bows"
 HF_HOME="$HOME/scratch/huggingface"
 MODEL_CACHE_DIR="$HF_HOME/hub"
 DATASETS_CACHE_DIR="$HF_HOME/datasets"
+
+# =============================================================================
+# SERIALIZE ARRAYS FOR SBATCH HEREDOC
+# =============================================================================
+# bash arrays cannot be exported into heredocs directly; inline them as strings
+_MODELS_STR=""
+for m in "${MODELS[@]}"; do _MODELS_STR+="\"$m\" "; done
+
+_ARO_SUBTASKS_STR=""
+for s in "${ARO_SUBTASKS[@]}"; do _ARO_SUBTASKS_STR+="\"$s\" "; done
 
 # =============================================================================
 # BUILD JOB COMMANDS
@@ -126,39 +139,53 @@ export TOKENIZERS_PARALLELISM=false
 source "$PROJECT_ROOT/.venv/bin/activate"
 cd "$PROJECT_ROOT"
 
+# ─── Reconstruct arrays from serialized strings ─────────────────────────────
+eval "MODELS=($_MODELS_STR)"
+eval "ARO_SUBTASKS=($_ARO_SUBTASKS_STR)"
+
 # ─── Run Evaluation ──────────────────────────────────────────────────────────
-OUTPUT_DIR="$PROJECT_ROOT/evals/$OUTPUT_MODEL_DIR/compositionality"
+for MODEL_TO_EVAL in "${MODELS[@]}"; do
+    OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
+    OUTPUT_DIR="$PROJECT_ROOT/evals/$OUTPUT_MODEL_DIR/compositionality"
 
-echo ""
-echo "================================================================"
-echo "  COMPOSITIONALITY EVALUATION"
-echo "  Model:     $MODEL_TO_EVAL"
-echo "  Benchmark: $BENCHMARK"
-echo "  Method:    $EVAL_METHOD"
-echo "================================================================"
+    echo ""
+    echo "================================================================"
+    echo "  COMPOSITIONALITY EVALUATION"
+    echo "  Model:     $MODEL_TO_EVAL"
+    echo "  Benchmark: $BENCHMARK"
+    echo "  Method:    $EVAL_METHOD"
+    echo "================================================================"
 
-args=(
-    --model-name-or-path "$MODEL_TO_EVAL"
-    --output-dir "$OUTPUT_DIR"
-    --benchmark "$BENCHMARK"
-    --eval-method "$EVAL_METHOD"
-    --datasets-cache-dir "$DATASETS_CACHE_DIR"
-    --aro-data-root "$ARO_DATA_ROOT"
-)
-[ -n "$LIMIT" ] && args+=(--limit "$LIMIT")
+    args=(
+        --model-name-or-path "$MODEL_TO_EVAL"
+        --output-dir "$OUTPUT_DIR"
+        --benchmark "$BENCHMARK"
+        --eval-method "$EVAL_METHOD"
+        --datasets-cache-dir "$DATASETS_CACHE_DIR"
+        --aro-data-root "$ARO_DATA_ROOT"
+    )
+    [ ${#ARO_SUBTASKS[@]} -gt 0 ] && args+=(--aro-subtasks "${ARO_SUBTASKS[@]}")
+    [ -n "$LIMIT" ] && args+=(--limit "$LIMIT")
 
-python "$PYTHON_SCRIPT" "${args[@]}"
+    python "$SNAPSHOT_PYTHON_SCRIPT" "${args[@]}"
 
-echo ""
-echo "================================================================"
-echo "  COMPLETE"
-echo "================================================================"
+    echo ""
+    echo "================================================================"
+    echo "  COMPLETE: $MODEL_TO_EVAL"
+    echo "================================================================"
+done
 JOB_EOF
 
 # =============================================================================
 # GENERATE SBATCH SCRIPT & SUBMIT
 # =============================================================================
 mkdir -p "$LOG_DIR"
+
+if [ ! -f "$PYTHON_SCRIPT_PATH" ]; then
+    echo "Python script not found: $PYTHON_SCRIPT_PATH"
+    exit 1
+fi
+
 SBATCH_SCRIPT=$(mktemp /tmp/sbatch_compositionality.XXXXXX.sh)
 
 SBATCH_DIRECTIVES="#SBATCH --account=$ACCOUNT
@@ -182,8 +209,6 @@ $SBATCH_DIRECTIVES
 
 # Propagate variables from the launch script
 export PROJECT_ROOT="$PROJECT_ROOT"
-export MODEL_TO_EVAL="$MODEL_TO_EVAL"
-export OUTPUT_MODEL_DIR="$OUTPUT_MODEL_DIR"
 export PYTHON_SCRIPT="$PYTHON_SCRIPT"
 export HF_HOME="$HF_HOME"
 export MODEL_CACHE_DIR="$MODEL_CACHE_DIR"
@@ -192,16 +217,32 @@ export BENCHMARK="$BENCHMARK"
 export EVAL_METHOD="$EVAL_METHOD"
 export LIMIT="$LIMIT"
 export ARO_DATA_ROOT="$ARO_DATA_ROOT"
+export _MODELS_STR="$_MODELS_STR"
+export _ARO_SUBTASKS_STR="$_ARO_SUBTASKS_STR"
+export SNAPSHOT_PYTHON_SCRIPT="/tmp/compositionality_evaluation_\${SLURM_JOB_ID}.py"
 
-$JOB_COMMANDS
+cat <<'PYTHON_SNAPSHOT_EOF' > "\$SNAPSHOT_PYTHON_SCRIPT"
 EOT
+
+cat "$PYTHON_SCRIPT_PATH" >> "$SBATCH_SCRIPT"
+
+cat <<'EOT' >>"$SBATCH_SCRIPT"
+PYTHON_SNAPSHOT_EOF
+
+chmod 600 "$SNAPSHOT_PYTHON_SCRIPT"
+trap 'rm -f "$SNAPSHOT_PYTHON_SCRIPT"' EXIT
+
+EOT
+
+printf "%s\n" "$JOB_COMMANDS" >>"$SBATCH_SCRIPT"
 
 echo ""
 echo "================================================================"
 echo "  COMPOSITIONALITY EVALUATION LAUNCHER"
-printf "  Model:     %s\n" "$MODEL_TO_EVAL"
+printf "  Models:    %s\n" "${MODELS[*]}"
 printf "  Benchmark: %s\n" "$BENCHMARK"
 printf "  Method:    %s\n" "$EVAL_METHOD"
+printf "  Snapshot:  %s\n" "$PYTHON_SCRIPT"
 printf "  GPUs:      %s x %s\n" "$NUM_GPUS" "$GPU_TYPE"
 echo "================================================================"
 echo ""

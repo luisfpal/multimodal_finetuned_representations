@@ -8,25 +8,25 @@ DATASETS=(
     # "l11p/POPE-test-captioned"
     # "l11p/MMBench_EN-dev-captioned"
     # "l11p/SEED-Bench-images-captioned"
-    "l11p/GQA-val-balanced-noyesno-captioned"
-    # "l11p/COCOQA-restval-ICQA"
-    # "l11p/VQAv2-COCO-restval-ICQ"
+    # "l11p/GQA-val-balanced-noyesno-captioned"
+    "l11p/COCOQA-restval-ICQA"
+    "l11p/VQAv2-COCO-restval-ICQ"
 )
 
 # Caption source: "human" or "synthetic" for COCOQA / VQAv2-ICQ (which have human captions),
 # "synthetic" for everything else. Always passed explicitly so path is deterministic.
-CAPTION_SOURCE="synthetic"
+CAPTION_SOURCE="human"
 
 # Analysis configuration
 TOKENS_POOLING_METHODS=(
     "last"
-    "mean_context"
+    # "mean_context"
     # "mean_image_last_caption"
     # "last_image_last_caption"
 )
-# SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
-SIMILARITY_MEASURES=""
-SIMILARITY_MEASURES="${SIMILARITY_MEASURES} linear_regression_r2 linear_regression_r2_reversed"
+SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
+# SIMILARITY_MEASURES="information_imbalance information_imbalance"
+# SIMILARITY_MEASURES="${SIMILARITY_MEASURES} linear_regression_r2 linear_regression_r2_reversed"
 
 # Processing parameters
 BATCH_SIZE="1" # 1 for MMBench
@@ -47,8 +47,10 @@ MODELS=(
     # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
     # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
-    "lbasile/LLaVA-OneVision-1.5-8B-stage1"
-    "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
+    # "lbasile/LLaVA-OneVision-1.5-8B-stage1"
+    # "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
+    "lbasile/cambrian-8b-pretrained"
+    # "nyu-visionx/cambrian-8b"
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
     # "OpenGVLab/InternVL3_5-8B-Pretrained"
@@ -59,7 +61,7 @@ MODELS=(
 )
 
 # Configuration from environment (set by launch_job.sh)
-FORCE_METRICS_ONLY="true"
+FORCE_METRICS_ONLY="false"
 DOWNSAMPLE_SIZE=""
 DATASET_SPLIT="split01"
 # REPEATED_IMAGES=true  → use raw benchmark with image repetitions (repeated_images/)

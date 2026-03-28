@@ -83,9 +83,16 @@ dependencies = [
     "ezcolorlog>=1.0.3",
     "open-clip-torch>=3.3.0",
     # ============================================================================
+    # NLP helpers (ARO order benchmarks use spacy + nltk for text perturbation)
+    # ============================================================================
+    "spacy>=3.7.0",
+    "en-core-web-sm>=3.8.0",
+    "nltk>=3.9.0",
+    # ============================================================================
     # Data download helpers
     # ============================================================================
     "gdown>=4.7.0",
+    "easydict>=1.13",
 ]
 
 # ============================================================================
@@ -105,6 +112,7 @@ url = "https://download.pytorch.org/whl/cu121"
 [tool.uv.sources]
 torch = { index = "pytorch-cu121" }
 torchvision = { index = "pytorch-cu121" }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [dependency-groups]
 dev = [

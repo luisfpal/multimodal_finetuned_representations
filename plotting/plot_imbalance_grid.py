@@ -44,7 +44,7 @@ DISPLAY_ORIENTATION = ("image", "text")
 # VISUAL CONSTANTS  (tuned to match reference single-plot)
 # ══════════════════════════════════════════════════════════════════════════════
 
-POOLING_METHODS = ["last", "mean_context", "mean_image_last_caption"]#, "last_image_last_caption"]
+POOLING_METHODS = ["last"]#, "mean_context", "mean_image_last_caption"]#, "last_image_last_caption"]
 VARIANT = "unique_images"
 FIGURE_MODE = "aggregated"  # "specific" | "aggregated" | "both"
 
@@ -64,25 +64,28 @@ MARKER_SIZE_SCALE = 0.63
 
 MODELS = OrderedDict(
     [
-        ("llava-v1.5-7b-pretrained-lbasile", "pretrained\n(LLaVA 7B)"),
-        ("llava_7b", "finetuned\n(LLaVA 7B)"),
-        ("llava-v1.5-13b-pretrained-lbasile", "pretrained\n(LLaVA 13B)"),
-        ("llava_13b", "finetuned\n(LLaVA 13B)"),
-        ("InternVL2-8B-Pretrain", "pretrained\n(InternVL2 8B)"),
-        ("InternVL2-8B", "finetuned\n(InternVL2 8B)"),
-        ("LLaVA-OneVision-1.5-8B-stage1", "pretrained\n(LLaVA-OneVision 8B)"),
-        ("LLaVA-OneVision-1.5-8B-stage2-2600", "finetuned\n(LLaVA-OneVision 8B)"),
-        ("LLaVA-OneVision-1.5-8B-Base", "pretrained\n(LLaVA-OneVision 8B)"),
-        ("LLaVA-OneVision-1.5-8B-Instruct", "finetuned\n(LLaVA-OneVision 8B)"),
+        # ("llava-v1.5-7b-pretrained-lbasile", "pretrained\n(LLaVA 7B)"),
+        # ("llava_7b", "finetuned\n(LLaVA 7B)"),
+        # ("llava-v1.5-13b-pretrained-lbasile", "pretrained\n(LLaVA 13B)"),
+        # ("llava_13b", "finetuned\n(LLaVA 13B)"),
+        # ("InternVL2-8B-Pretrain", "pretrained\n(InternVL2 8B)"),
+        # ("InternVL2-8B", "finetuned\n(InternVL2 8B)"),
+        # ("LLaVA-OneVision-1.5-8B-stage1", "pretrained\n(LLaVA-OneVision 8B)"),
+        # ("LLaVA-OneVision-1.5-8B-stage2-2600", "finetuned\n(LLaVA-OneVision 8B)"),
+        # ("LLaVA-OneVision-1.5-8B-Base", "pretrained\n(LLaVA-OneVision 8B)"),
+        # ("LLaVA-OneVision-1.5-8B-Instruct", "finetuned\n(LLaVA-OneVision 8B)"),
+        ("cambrian-8b-pretrained", "pretrained\n(Cambrian 8B)"),
+        ("cambrian-8b", "finetuned\n(Cambrian 8B)"),
     ]
 )
 
 CROSS_MODEL_PAIRS = [
-    ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
-    ("llava_13b", "llava-v1.5-13b-pretrained-lbasile"),
-    ("InternVL2-8B", "InternVL2-8B-Pretrain"),
-    ("LLaVA-OneVision-1.5-8B-stage2-2600", "LLaVA-OneVision-1.5-8B-stage1"),
-    ("LLaVA-OneVision-1.5-8B-Instruct", "LLaVA-OneVision-1.5-8B-Base"),
+    # ("llava_7b", "llava-v1.5-7b-pretrained-lbasile"),
+    # ("llava_13b", "llava-v1.5-13b-pretrained-lbasile"),
+    # ("InternVL2-8B", "InternVL2-8B-Pretrain"),
+    # ("LLaVA-OneVision-1.5-8B-stage2-2600", "LLaVA-OneVision-1.5-8B-stage1"),
+    # ("LLaVA-OneVision-1.5-8B-Instruct", "LLaVA-OneVision-1.5-8B-Base"),
+    ("cambrian-8b", "cambrian-8b-pretrained"),
 ]
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -173,22 +176,22 @@ STAGES = [
     #         ("seed_bench_images_captioned_synthetic", "unique_images", "SEED (Unique)"),
     #     ],
     # ),
-    (
-        "open_ended",
-        "Benchmarks (Open-Ended)",
-        [
-            (
-                "mmbench_en_dev_captioned_open_ended_synthetic",
-                "unique_images",
-                "MMBench (Open-Ended)",
-            ),
-            (
-                "seed_bench_images_captioned_open_ended_synthetic",
-                "unique_images",
-                "SEED (Open-Ended)",
-            ),
-        ],
-    ),
+    # (
+    #     "open_ended",
+    #     "Benchmarks (Open-Ended)",
+    #     [
+    #         (
+    #             "mmbench_en_dev_captioned_open_ended_synthetic",
+    #             "unique_images",
+    #             "MMBench (Open-Ended)",
+    #         ),
+    #         (
+    #             "seed_bench_images_captioned_open_ended_synthetic",
+    #             "unique_images",
+    #             "SEED (Open-Ended)",
+    #         ),
+    #     ],
+    # ),
 ]
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -576,7 +579,9 @@ def get_row_thresholds(row_data_items, stage_key, uniform_logic, n_points):
         q3 = float(np.percentile(combo, p3))
     else:
         # Standard open-ended quantiles
-        p1, p2, p3 = 20, 35, 50
+        # p1, p2, p3 = 20, 35, 50
+        p1, p2, p3 = 30, 50, 70
+        # p1, p2, p3 = 10, 50, 90
         q1 = float(np.percentile(combo, p1))
         q2 = float(np.percentile(combo, p2))
         q3 = float(np.percentile(combo, p3))

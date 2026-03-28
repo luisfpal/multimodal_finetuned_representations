@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from safetensors.torch import load_file, save_file
 
 from src.residual_stream_tracer import residual_stream_tracer
+from utils.cambrian_utils import is_cambrian_model
 from utils import (
     compute_cross_layers_residual_stream_similarities,
     get_dataloader,
@@ -404,6 +405,14 @@ def main():
             f"Valid options: {VALID_POOLING_METHODS}"
         )
 
+    if is_cambrian_model(model=None, model_name_or_path=args.model_name_or_path):
+        cambrian_non_last_pooling = [m for m in args.pooling_methods if m != "last"]
+        if cambrian_non_last_pooling:
+            parser.error(
+                "Cambrian currently supports only --pooling-methods last. "
+                f"Received unsupported methods: {cambrian_non_last_pooling}"
+            )
+
     if args.dry_run:
         print("\n🧪 DRY-RUN MODE — no caching, no saving, fresh computation only")
         if args.results_dir is None:
@@ -532,8 +541,12 @@ def main():
             dl_args["open_ended"] = True
         if args.dataset_split:
             dl_args["dataset_split"] = args.dataset_split
-        if "intern" in model.__class__.__name__.lower():
+        if "intern" in model.__class__.__name__.lower() or is_cambrian_model(
+            model=model
+        ):
             dl_args["model"] = model
+        if is_cambrian_model(model=model):
+            dl_args["num_workers"] = 0
 
         print(f"  - Loading {dataset_prefix}_txt...")
         dl_txt = get_dataloader(texts_qa=True, **dl_args)

@@ -13,7 +13,7 @@ import numpy as np
 from datasets import load_dataset, load_from_disk
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
-from transformers import BatchEncoding, PreTrainedModel
+from transformers import PreTrainedModel
 
 from .cambrian_utils import (
     is_cambrian_model,
@@ -1190,13 +1190,15 @@ def get_dataloader(
         model=model,
     )
 
+    pin_memory = not (model is not None and is_cambrian_model(model=model))
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
         num_workers=num_workers,
         shuffle=False,
         collate_fn=collate_fn,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
 
 

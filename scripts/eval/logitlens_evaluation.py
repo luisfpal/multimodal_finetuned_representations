@@ -13,6 +13,7 @@ from tqdm import tqdm
 from transformers.feature_extraction_utils import BatchFeature
 
 from src.residual_stream_tracer import residual_stream_tracer
+from utils.cambrian_utils import is_cambrian_model
 from utils.constants import (
     AI2D_ANSWER_CHOICES,
     MMBENCH_ANSWER_CHOICES,
@@ -309,6 +310,26 @@ def evaluate_logit_lens(
                 # logits: (num_layers, vocab_size)
                 logits = model.language_model.output(normalized_res)
 
+            elif is_cambrian_model(model=model):
+                normalized_res = (
+                    apply_rmsnorm_residual(
+                        sample_res.to(torch.float32),
+                        second_moment,
+                        model.model.norm.weight,
+                        model.model.norm.variance_epsilon,
+                    )
+                    .squeeze()
+                    .to(MODEL_DTYPE)
+                )
+
+                # logits: (num_layers, vocab_size)
+                logits = model.lm_head(normalized_res.to(model.lm_head.weight.dtype))
+            else:
+                raise ValueError(
+                    "Unsupported model architecture for logit-lens evaluation: "
+                    f"{model.__class__.__name__}"
+                )
+
             # --- Added Logic: Print Top 10 tokens and Generate ---
             try:
                 top_k_print = 10
@@ -566,8 +587,12 @@ def main():
             elif subset == "images_qa":
                 dl_args["texts_qa"] = False
                 dl_args["images_qa"] = True
-            if "intern" in model.__class__.__name__.lower():
+            if "intern" in model.__class__.__name__.lower() or is_cambrian_model(
+                model=model
+            ):
                 dl_args["model"] = model
+            if is_cambrian_model(model=model):
+                dl_args["num_workers"] = 0
 
             dataloader = get_dataloader(**dl_args)
 

@@ -1,52 +1,46 @@
 #!/bin/bash
+# =============================================================================
+# Submit SLURM jobs to evaluate one or more models.
+# Each model gets its own SLURM job running run_local_evaluation.sh.
+#
+# Usage: bash shell/eval/launch_lor.sh
+#
+# Configure models in the array below. Backend is auto-inferred.
+# =============================================================================
 
-PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
-source "$PROJECT_ROOT/.venv/bin/activate"
+PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
 
 # EXTRA_ARGS=""
 EXTRA_ARGS="--no-image"
 
-checkpoints=(
-#     "llava_7b_8_32"
-    "internvl2"
-# "llava_7b_frozen"
-#     "llava_7b_0_2"
-#     "llava_7b_12_32"
-#     "llava_7b_0_6"
-# "llava_7b_16spaced"
-# "llava_7b_8spaced"
-# "llava_7b"
-# "llava_7b_0_16"
-# "llava_7b_16_32"
-# "llava_7b_6_17"
-# "llava_7b_6_17_complementary"
-# "llava_13b_6_21_complementary"
-#     "llava_7b_0_12"
-#     "llava_7b_0_16"
-#     "llava_7b_0_24"
-#     "llava_7b_16_32"
-#     "llava_7b_24_32"
-#     "llava_7b_30_32"
+# Models to evaluate (one SLURM job per model)
+models=(
+    "OpenGVLab/InternVL2-8B"
+    # "lbasile/llava_7b"
+    # "nyu-visionx/cambrian-8b"
+    # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+    # "OpenGVLab/InternVL3_5-8B"
 )
-# checkpoints=(
-#     "llava_7b_28_32"
-#     "llava_7b_20_32"
-#     "llava_7b_26_32"
-#     "llava_7b"
-# )
 
-# Create a logs directory for clean output management
+# SLURM settings
+PARTITION="DGX"
+GPU_TYPE="A100"
+TIME="4:00:00"
+MEM="100G"
+CPUS=4
+
 log_dir="$PROJECT_ROOT/logs/logs_eval"
 mkdir -p "$log_dir"
 
-for ckpt in "${checkpoints[@]}"; do
-    echo "Submitting eval job for checkpoint: $ckpt"
-    
-    # Submit the job using sbatch with specified resources
+for model_name in "${models[@]}"; do
+    model_tag=$(basename "$model_name" | sed 's/[^a-zA-Z0-9._-]/_/g')
+    echo "Submitting: $model_name"
+
     sbatch \
-        -n1 -N1 -c4 -p H100 -A lade --mem=100G --time=4:0:0 --gres=gpu:H100:1 \
-        --job-name="eval_${ckpt}" \
-        --output="${log_dir}/eval_${ckpt}_%j.out" \
-        --error="${log_dir}/eval_${ckpt}_%j.err" \
-        shell/eval/run_local_evaluation.sh "OpenGVLab/InternVL2-8B" "$EXTRA_ARGS"
+        -n1 -N1 -c"$CPUS" -p "$PARTITION" -A dssc \
+        --mem="$MEM" --time="$TIME" --gres=gpu:"$GPU_TYPE":1 \
+        --job-name="eval_${model_tag}" \
+        --output="${log_dir}/eval_${model_tag}_%j.out" \
+        --error="${log_dir}/eval_${model_tag}_%j.err" \
+        "$PROJECT_ROOT/shell/eval/run_local_evaluation.sh" "$model_name" "$EXTRA_ARGS"
 done

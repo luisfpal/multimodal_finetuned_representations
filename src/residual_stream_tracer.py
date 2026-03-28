@@ -43,6 +43,31 @@ VALID_TOKENS_POOLING_METHODS = [
 ]
 
 
+def _resolve_decoder_config(model: ModelType):
+    """Resolve decoder config across supported VLM wrappers.
+
+    Supports:
+    - LLaVA/InternVL wrappers exposing ``model.language_model.config``
+    - Cambrian wrappers exposing ``model.model.config``
+    - Fallback to ``model.config`` when available
+    """
+    language_model = getattr(model, "language_model", None)
+    if language_model is not None and hasattr(language_model, "config"):
+        return language_model.config
+
+    decoder_model = getattr(model, "model", None)
+    if decoder_model is not None and hasattr(decoder_model, "config"):
+        return decoder_model.config
+
+    if hasattr(model, "config"):
+        return model.config
+
+    raise ValueError(
+        "Could not resolve decoder config for residual stream tracing. "
+        f"Model class: {model.__class__.__name__}"
+    )
+
+
 class ResidualStreamTracer(abc.ABC):
     """
     Base class for extracting residual streams from huggingface decoder-based multimodal models.
@@ -86,8 +111,9 @@ class ResidualStreamTracer(abc.ABC):
         self.image_token_ids = resolve_image_token_ids(model, processor)
         self.tokens_pooling_method = tokens_pooling_method
         self.embeddings_sampling_args = embeddings_sampling_args
-        self.num_layers = self.model.language_model.config.num_hidden_layers
-        self.hidden_size = self.model.language_model.config.hidden_size
+        decoder_config = _resolve_decoder_config(self.model)
+        self.num_layers = decoder_config.num_hidden_layers
+        self.hidden_size = decoder_config.hidden_size
         self.counter = 0
         self.return_dtype = return_dtype
         self.num_samples = num_samples
@@ -534,10 +560,11 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
             self.counter += batch_length
             if "intern" in self.model.__class__.__name__.lower():
                 _ = self.model.language_model(
-                    **batch_inputs
+                    **batch_inputs,
+                    use_cache=False,
                 )  # Forward pass to trigger hooks
             else:
-                _ = self.model(**batch_inputs)
+                _ = self.model(**batch_inputs, use_cache=False)
 
     def clear(self):
         """Clean up hooks and cached data."""
@@ -636,10 +663,16 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
         with torch.no_grad():
             if "intern" in self.model.__class__.__name__.lower():
                 outputs = self.model.language_model(
-                    **batch_inputs, output_hidden_states=True
+                    **batch_inputs,
+                    output_hidden_states=True,
+                    use_cache=False,
                 )
             else:
-                outputs = self.model(**batch_inputs, output_hidden_states=True)
+                outputs = self.model(
+                    **batch_inputs,
+                    output_hidden_states=True,
+                    use_cache=False,
+                )
             hidden_states = outputs.hidden_states[1:]
             # remove the first layer (the embedding layer)
             hidden_states = [
@@ -1178,6 +1211,13 @@ def residual_stream_tracer(
         raise ValueError(
             f"Invalid residual_stream_type '{residual_stream_type}'. "
             f"Must be one of: {VALID_RESIDUAL_STREAM_TYPES}"
+        )
+
+    if is_cambrian_model(model=model) and residual_stream_type != "output_layer":
+        raise ValueError(
+            "Cambrian residual stream tracing currently supports only "
+            "residual_stream_type='output_layer'. "
+            f"Received: '{residual_stream_type}'."
         )
 
     if tokens_pooling_method not in VALID_TOKENS_POOLING_METHODS:

@@ -132,6 +132,12 @@ MODEL_PAIRS: list[tuple[str, str, str, str]] = [
         "LLaVA-OneVision-1.5-8B-Base",
         "LLaVA-OneVision-8B (Base)",
     ),
+    (
+        "cambrian-8b",
+        "Cambrian-8B (Finetuned)",
+        "cambrian-8b-pretrained",
+        "Cambrian-8B (Pretrained)",
+    ),
 ]
 
 # Used only when COLORMAP_NORM = "cross_model".

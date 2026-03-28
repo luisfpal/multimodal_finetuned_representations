@@ -59,12 +59,20 @@ def resolve_cambrian_conv_mode(
 
 
 def get_cambrian_device(model: Any) -> torch.device:
-    """Get the primary compute device from a Cambrian model."""
-    if hasattr(model, "hf_device_map"):
-        for dev in model.hf_device_map.values():
-            if str(dev) not in {"cpu", "disk"}:
-                return torch.device(dev if isinstance(dev, str) else f"cuda:{dev}")
-    return torch.device(model.device)
+    """Get the primary compute device using a hierarchical lookup."""
+    # 1. Check the device map (common in multi-GPU/HF models)
+    device_map = getattr(model, "hf_device_map", {})
+    for dev in device_map.values():
+        if str(dev) not in {"cpu", "disk"}:
+            # torch.device handles ints (0), strings ("cuda:0"), and device objects
+            return torch.device(dev if isinstance(dev, (int, str)) else dev)
+
+    # 2. Fallback to model.device or the first parameter's device
+    device = getattr(model, "device", None)
+    if device:
+        return torch.device(device)
+        
+    return next(model.parameters()).device if list(model.parameters()) else torch.device("cpu")
 
 
 def apply_chat_template(
@@ -179,6 +187,11 @@ def preprocess_cambrian_images(
 ) -> Any:
     _ensure_cambrian_importable()
     from cambrian.mm_utils import process_images
+
+    # Ensure all images are RGB — Cambrian's expand2square assumes RGB
+    # for background_color (3-tuple from image_mean). Some HF dataset
+    # images may arrive in L/P/RGBA mode despite upstream conversion.
+    images = [img.convert("RGB") if img.mode != "RGB" else img for img in images]
 
     image_tensors = process_images(images, image_processor, model.config)
     if isinstance(image_tensors, list):
