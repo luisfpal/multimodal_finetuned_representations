@@ -56,7 +56,7 @@ LONG_ANSWER_MAX_NEW_TOKENS = 1024
 
 # Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
 TASK_LIMITS = {
-    "scienceqa_img": 25,  # 2018 samples
+    # "scienceqa_img": 25,  # 2018 samples
     "mme": 5000,  # 2374 samples
     # "textvqa_val": 5000,  # 5000 samples
     "pope": 5000,  # 9000 samples
@@ -328,7 +328,7 @@ def run_evaluation(args: argparse.Namespace) -> float:
             patch_llava(layers_to_skip=range(num_layers))
         elif backend == "internvl2":
             patch_internvl(model_instance._model, layers_to_skip=range(num_layers))
-        elif backend == "cambrian" and patch_cambrian is not None:
+        elif backend == "cambrian":
             patch_cambrian(model_instance._model, layers_to_skip=range(num_layers))
 
     system_instruction = SYSTEM_INSTRUCTIONS.get(backend, LLaVA1_5_SYSTEM_INSTRUCTION)

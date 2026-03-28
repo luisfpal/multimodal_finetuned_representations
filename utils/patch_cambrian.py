@@ -2,6 +2,11 @@ from typing import Optional, Union, List, Tuple
 from transformers.generation.utils import GenerateOutput
 from transformers import LlamaForCausalLM
 from transformers.modeling_outputs import BaseModelOutputWithPast
+
+from utils.cambrian_bridge import _ensure_cambrian_importable
+
+_ensure_cambrian_importable()
+
 from cambrian.utils import IS_XLA_AVAILABLE
 from cambrian.model.cambrian_arch import unpad_image
 from cambrian.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX
@@ -158,8 +163,18 @@ def llama_forward(
     if inputs_embeds is None:
         inputs_embeds = self.embed_tokens(input_ids)
 
-    self._use_flash_attention_2 = getattr(self, "_use_flash_attention_2", False)
-    self._use_sdpa = getattr(self, "_use_sdpa", True)
+    # Detect attention implementation (config-based for newer transformers,
+    # attribute-based for older versions)
+    attn_impl = getattr(self.config, "_attn_implementation", None)
+    use_flash = attn_impl == "flash_attention_2" or getattr(
+        self, "_use_flash_attention_2", False
+    )
+    use_sdpa = (
+        not use_flash
+        and (attn_impl == "sdpa" or getattr(self, "_use_sdpa", True))
+        and not output_attentions
+    )
+
     if attention_mask is None:
         attention_mask = torch.ones(
             (batch_size, seq_length + past_key_values_length),
@@ -177,16 +192,15 @@ def llama_forward(
             dim=-1,
         )
     image_mask = torch.logical_and(self.image_attention_mask, attention_mask)
-    if self._use_flash_attention_2:
-        # 2d mask is passed through the layers
+    if use_flash:
+        # Flash attention uses 2D masks: 1=attend, 0=ignore.
+        # image_mask already has 0s for image positions — use directly.
         attention_mask = (
             attention_mask
             if (attention_mask is not None and 0 in attention_mask)
             else None
         )
-    elif self._use_sdpa and not output_attentions:
-        # output_attentions=True can not be supported when using SDPA, and we fall back on
-        # the manual implementation that requires a 4D causal mask in all cases.
+    elif use_sdpa:
         attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
             attention_mask,
             (batch_size, seq_length),
@@ -216,6 +230,7 @@ def llama_forward(
     all_hidden_states = () if output_hidden_states else None
     all_self_attns = () if output_attentions else None
     next_decoder_cache = None
+    # For 4D masks (SDPA/manual), min_dtype is used to mask out positions
     min_dtype = (
         torch.finfo(image_mask.dtype).min
         if torch.is_floating_point(image_mask)
@@ -228,15 +243,19 @@ def llama_forward(
         if i in layers_to_skip and self.image_limits is not None:
             if i == layers_to_skip[0]:
                 stored_embeds = hidden_states
-            layer_mask = image_mask.clone()
-
-            for b, limit in enumerate(self.image_limits):
-                if limit is not None:
-                    start, end = limit
-                    if layer_mask.shape[2] > 1:
-                        layer_mask[b, :, end + 1 :, start : end + 1] = min_dtype
-                    else:
-                        layer_mask[b, :, :, start : end + 1] = min_dtype
+            if use_flash:
+                # Flash attention: 2D image_mask already has 0s for image positions
+                layer_mask = image_mask
+            else:
+                # SDPA/manual: 4D mask needs explicit min_dtype masking
+                layer_mask = image_mask.clone()
+                for b, limit in enumerate(self.image_limits):
+                    if limit is not None:
+                        start, end = limit
+                        if layer_mask.shape[2] > 1:
+                            layer_mask[b, :, end + 1 :, start : end + 1] = min_dtype
+                        else:
+                            layer_mask[b, :, :, start : end + 1] = min_dtype
         elif (
             len(layers_to_skip) > 0
             and i == (layers_to_skip[-1] + 1)
