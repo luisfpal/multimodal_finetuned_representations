@@ -18,6 +18,7 @@ from utils import (
 from utils.patch_llava import patch as patch_llava
 from utils.patch_internvl import patch as patch_internvl
 from utils.patch_onevision import patch as patch_onevision
+from utils.patch_cambrian import patch as patch_cambrian
 
 try:
     from lmms_eval.models.chat.llava_hf import LlavaHf
@@ -115,6 +116,19 @@ def infer_backend(model_name: str) -> str:
 # =============================================================================
 # HELPERS
 # =============================================================================
+
+
+def get_num_layers(model_instance, backend: str) -> int:
+    """Get the number of transformer layers from a model instance."""
+    if backend == "llava_hf":
+        return model_instance.model.language_model.config.num_hidden_layers
+    elif backend in ("internvl2", "internvl3.5"):
+        return model_instance._model.language_model.config.num_hidden_layers
+    elif backend == "cambrian":
+        return model_instance._model.config.num_hidden_layers
+    elif backend == "llava_onevision1_5":
+        return model_instance.model.language_model.config.num_hidden_layers
+    raise ValueError(f"Unknown backend: {backend}")
 
 
 def get_max_new_tokens(task_name: str, override: Optional[int] = None) -> int:
@@ -307,12 +321,15 @@ def run_evaluation(args: argparse.Namespace) -> float:
 
     # No-image patching (skip vision layers for text-only evaluation)
     if args.no_image:
+        num_layers = get_num_layers(model_instance, backend)
         if backend == "llava_onevision1_5":
-            patch_onevision(model_instance.model, layers_to_skip=range(32))
+            patch_onevision(model_instance.model, layers_to_skip=range(num_layers))
         elif backend == "llava_hf":
-            patch_llava(layers_to_skip=range(32))
+            patch_llava(layers_to_skip=range(num_layers))
         elif backend == "internvl2":
-            patch_internvl(model_instance._model, layers_to_skip=range(32))
+            patch_internvl(model_instance._model, layers_to_skip=range(num_layers))
+        elif backend == "cambrian" and patch_cambrian is not None:
+            patch_cambrian(model_instance._model, layers_to_skip=range(num_layers))
 
     system_instruction = SYSTEM_INSTRUCTIONS.get(backend, LLaVA1_5_SYSTEM_INSTRUCTION)
 

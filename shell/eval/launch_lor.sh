@@ -8,7 +8,8 @@
 # Configure models in the array below. Backend is auto-inferred.
 # =============================================================================
 
-PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+# PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 
 # EXTRA_ARGS=""
 EXTRA_ARGS="--no-image"
