@@ -7,14 +7,14 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="dssc"
+ACCOUNT="lade"
 JOB_NAME="experiment"
-PARTITION="DGX"
-GPU_TYPE="A100"
+PARTITION="H100"
+GPU_TYPE="H100"
 NUM_GPUS=1
 CPUS=16
 MEM="64GB"
-TIME="24:00:00"
+TIME="00:30:00"
 NODELIST=""
 EXCLUDE=""
 
@@ -30,12 +30,12 @@ SCRIPT_NAME="lmms_evaluation.sh"
 
 # MODEL_TO_EVAL="lbasile/llava_7b"
 # MODEL_TO_EVAL="lbasile/llava_13b"
-# MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
+MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
 # MODEL_TO_EVAL="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
 # MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-Pretrained"
 # MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-Instruct"
 # MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B-MPO"
-MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B"
+# MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B"
 # MODEL_TO_EVAL="nyu-visionx/cambrian-8b"
 # MODEL_TO_EVAL="lbasile/cambrian-8b-pretrained"
 # MODEL_TO_EVAL="lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
@@ -54,17 +54,18 @@ VENV="$PROJECT_ROOT/.venv"
 read -r -d '' JOB_COMMANDS << 'JOB_EOF' || true
 
 TASKS=(
-    "scienceqa_img"
-    "mme"
-    "mmbench_en_dev"
-    "textvqa_val"
-    "llava_in_the_wild"
-    "gqa"
-    "vizwiz_vqa_val"
-    "vqav2_val"
-    "mmbench_cn_dev"
-    "pope"
-    "seedbench"
+    # "scienceqa_img"
+    # "mme"
+    # "mmbench_en_dev"
+    # "textvqa_val"
+    # "llava_in_the_wild"
+    # "gqa"
+    # "vizwiz_vqa_val"
+    # "vqav2_val"
+    # "mmbench_cn_dev"
+    # "pope"
+    # "seedbench"
+    "mmmu_val"
 )
 
 # CUDA setup

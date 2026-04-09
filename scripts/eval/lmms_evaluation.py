@@ -10,11 +10,6 @@ import torch
 from rich import print
 from lmms_eval.evaluator import simple_evaluate
 
-from utils import (
-    LLaVA1_5_SYSTEM_INSTRUCTION,
-    INTERNVL2_SYSTEM_INSTRUCTION,
-    INTERNVL3_5_SYSTEM_INSTRUCTION,
-)
 from utils.patch_llava import patch as patch_llava
 from utils.patch_internvl import patch as patch_internvl
 from utils.patch_onevision import patch as patch_onevision
@@ -51,9 +46,6 @@ except ImportError:
 
 RANDOM_SEED = NUMPY_RANDOM_SEED = TORCH_RANDOM_SEED = FEWSHOT_RANDOM_SEED = 42
 
-DEFAULT_MAX_NEW_TOKENS = 128
-LONG_ANSWER_MAX_NEW_TOKENS = 1024
-
 # Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
 TASK_LIMITS = {
     # "scienceqa_img": 25,  # 2018 samples
@@ -69,16 +61,12 @@ TASK_LIMITS = {
     "vqav2_val": 5000,  # 214000 samples
     "ai2d": 5000,  # 500 samples
     # "cv_bench": 5000,  # 1000 samples
-    "flickr30k": 5000,  # 1000 samples (test)
-    "coco2017_cap_val": 5000,  # 5000 samples
+    # "flickr30k": 5000,  # 1000 samples (test)
+    # "coco2017_cap_val": 5000,  # 5000 samples
     # "llava_in_the_wild": 15,  # 60 samples, heavy post processing
-}
-
-LONG_ANSWER_TASKS = {
-    "llava_in_the_wild",
-    "mmvet",
-    "mmbench_en_dev",
-    "mmbench_cn_dev",
+    "flickr30k": 25,  # 1000 samples (test)
+    # "coco2017_cap_val": 25,  # 5000 samples
+    # "mmmu_val": 5000,
 }
 
 LLM_JUDGE_TASKS = {"mmvet", "mmbench_en_dev", "mmbench_cn_dev", "llava_in_the_wild"}
@@ -91,15 +79,6 @@ MODEL_BACKEND_REGISTRY = [
     ("cambrian", "cambrian"),
     ("llava", "llava_hf"),
 ]
-
-SYSTEM_INSTRUCTIONS = {
-    "internvl2": INTERNVL2_SYSTEM_INSTRUCTION,
-    "internvl3.5": INTERNVL3_5_SYSTEM_INSTRUCTION,
-    "cambrian": None,
-    "llava_onevision1_5": None,
-    "llava_hf": LLaVA1_5_SYSTEM_INSTRUCTION,
-}
-
 
 def infer_backend(model_name: str) -> str:
     """Infer the lmms-eval backend from model name."""
@@ -125,26 +104,10 @@ def get_num_layers(model_instance, backend: str) -> int:
     elif backend in ("internvl2", "internvl3.5"):
         return model_instance._model.language_model.config.num_hidden_layers
     elif backend == "cambrian":
-        return model_instance._model.config.num_hidden_layers
+        return model_instance.model.config.num_hidden_layers
     elif backend == "llava_onevision1_5":
         return model_instance.model.language_model.config.num_hidden_layers
     raise ValueError(f"Unknown backend: {backend}")
-
-
-def get_max_new_tokens(task_name: str, override: Optional[int] = None) -> int:
-    if override is not None:
-        return override
-    return (
-        LONG_ANSWER_MAX_NEW_TOKENS
-        if task_name in LONG_ANSWER_TASKS
-        else DEFAULT_MAX_NEW_TOKENS
-    )
-
-
-def build_gen_kwargs(
-    task_name: str, max_new_tokens_override: Optional[int] = None
-) -> str:
-    return f"max_new_tokens={get_max_new_tokens(task_name, max_new_tokens_override)}"
 
 
 def create_cli_args(output_path: str) -> argparse.Namespace:
@@ -228,10 +191,8 @@ def run_evaluation(args: argparse.Namespace) -> float:
 
     validate_task_requirements(args.task_name)
     os.makedirs(args.output_dir, exist_ok=True)
-    gen_kwargs = build_gen_kwargs(args.task_name, args.max_new_tokens)
 
     print(f"[cyan]>>> {model_name} (backend: {backend})[/cyan]")
-    print(f"[cyan]Generation: {gen_kwargs}[/cyan]")
     start_time = time.time()
 
     # Limit logic
@@ -331,8 +292,6 @@ def run_evaluation(args: argparse.Namespace) -> float:
         elif backend == "cambrian":
             patch_cambrian(model_instance._model, layers_to_skip=range(num_layers))
 
-    system_instruction = SYSTEM_INSTRUCTIONS.get(backend, LLaVA1_5_SYSTEM_INSTRUCTION)
-
     results = simple_evaluate(
         model=model_instance,
         model_args=model_args if isinstance(model_instance, str) else None,
@@ -341,9 +300,7 @@ def run_evaluation(args: argparse.Namespace) -> float:
         batch_size=args.batch_size,
         log_samples=True,
         limit=limit,
-        system_instruction=system_instruction,
         cli_args=create_cli_args(args.output_dir),
-        gen_kwargs=gen_kwargs,
         random_seed=RANDOM_SEED,
         numpy_random_seed=NUMPY_RANDOM_SEED,
         torch_random_seed=TORCH_RANDOM_SEED,
@@ -427,7 +384,6 @@ def main() -> None:
     parser.add_argument("--task-name", type=str, default="scienceqa_img")
     parser.add_argument("--num-fewshot", type=int, default=None)
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--no-image", action="store_true")
     parser.add_argument("--trust-remote-code", action="store_true")
 

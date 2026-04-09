@@ -18,12 +18,15 @@ set -e
 
 # Default model (override via first argument)
 # DEFAULT_MODEL_NAME="lbasile/cambrian-8b-pretrained"
-DEFAULT_MODEL_NAME="nyu-visionx/cambrian-8b"
+# DEFAULT_MODEL_NAME="nyu-visionx/cambrian-8b"
+# DEFAULT_MODEL_NAME="lbasile/llava_7b"
+DEFAULT_MODEL_NAME="lbasile/llava_13b"
 # DEFAULT_MODEL_NAME="lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+# DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
 
 # Tasks to evaluate (uncomment to enable)
 TASKS=(
-    "scienceqa_img"
+    # "scienceqa_img"
     # "mme"
     # "textvqa_val"
     # "pope"
@@ -36,6 +39,7 @@ TASKS=(
     # "mmbench_cn_dev"
     # "docvqa_val"
     # "ai2d"
+    "mmmu_val"
     # "coco2017_cap_val"
     # "flickr30k"
 )
@@ -46,6 +50,7 @@ TASKS=(
 
 MODEL_TO_EVAL="${1:-$DEFAULT_MODEL_NAME}"
 EXTRA_ARGS="${2:-}"
+# EXTRA_ARGS="${2:---no-image}"
 
 echo "Model: $MODEL_TO_EVAL"
 

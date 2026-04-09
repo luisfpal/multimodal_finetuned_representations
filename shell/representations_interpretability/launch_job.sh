@@ -5,15 +5,15 @@
 # =============================================================================
 
 # SLURM settings
-ACCOUNT="lade"
+ACCOUNT="dssc"
 JOB_NAME="experiment"
-PARTITION="H100"
-GPU_TYPE="H100"
+PARTITION="DGX"
+GPU_TYPE="A100"
 NUM_GPUS=1              # Number of GPUs (requires at least 1 for CUDA models)
 CPUS=8
 MEM="48GB"
-TIME="07:00:00"
-NODELIST="dgx003"             # Empty = any available node
+TIME="05:00:00"
+NODELIST="dgx002"             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
 # Project paths
@@ -24,6 +24,8 @@ LOG_DIR="$PROJECT_ROOT/logs"
 # Script selection
 # SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
 SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
+# SCRIPT_NAME="similarity_encoder_decoder.sh"  # For encoder-decoder CKA analysis
+# SCRIPT_NAME="representations_classification.sh"  # For representations classification metrics
 
 # Job Execution Script
 # =============================================================================

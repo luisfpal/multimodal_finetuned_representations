@@ -12,9 +12,12 @@ This module provides ``CambrianCustom`` which:
 """
 
 import logging
+from datetime import timedelta
 from typing import Any, List, Optional, Tuple, Union
 
 import torch
+from accelerate import Accelerator, DistributedType
+from accelerate.utils import InitProcessGroupKwargs
 from PIL import Image
 from tqdm import tqdm
 
@@ -24,11 +27,7 @@ from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 
 from utils.cambrian_bridge import _ensure_cambrian_importable, load_cambrian_pretrained
-from utils.cambrian_utils import (
-    get_cambrian_device,
-    preprocess_cambrian_images,
-    resolve_cambrian_conv_mode,
-)
+from utils.cambrian_utils import resolve_cambrian_conv_mode
 
 eval_logger = logging.getLogger("eval_logger")
 
@@ -48,6 +47,17 @@ class CambrianCustom(lmms):
     ) -> None:
         super().__init__()
 
+        # Accelerator for distributed evaluation
+        accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
+        accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
+        self.accelerator = accelerator
+
+        if accelerator.num_processes > 1:
+            self._device = torch.device(f"cuda:{accelerator.local_process_index}")
+            device_map = f"cuda:{accelerator.local_process_index}"
+        else:
+            self._device = torch.device(device)
+
         model, tokenizer = load_cambrian_pretrained(
             pretrained, cache_dir=cache_dir, device_map=device_map
         )
@@ -61,15 +71,34 @@ class CambrianCustom(lmms):
             model=model, model_name_or_path=pretrained
         )
         self.model_name = pretrained.rstrip("/").split("/")[-1]
-
         self.batch_size_per_gpu = int(batch_size)
-        self.use_cache = False
-        self._device = get_cambrian_device(model)
-        self._rank = 0
-        self._world_size = 1
+
+        # Accelerator wrapping for multi-GPU
+        if accelerator.num_processes > 1:
+            assert accelerator.distributed_type in [
+                DistributedType.FSDP,
+                DistributedType.MULTI_GPU,
+            ], "Unsupported distributed type. Only DDP and FSDP are supported."
+            if accelerator.distributed_type == DistributedType.FSDP:
+                self._model = accelerator.prepare(self.model)
+            else:
+                self._model = accelerator.prepare_model(
+                    self.model, evaluation_mode=True
+                )
+            if self.accelerator.is_local_main_process:
+                eval_logger.info(
+                    f"Using {accelerator.num_processes} devices with data parallelism"
+                )
+            self._rank = self.accelerator.local_process_index
+            self._world_size = self.accelerator.num_processes
+        else:
+            self._rank = 0
+            self._world_size = 1
 
     @property
     def model(self):
+        if hasattr(self, "accelerator"):
+            return self.accelerator.unwrap_model(self._model)
         return self._model
 
     @property
@@ -108,7 +137,7 @@ class CambrianCustom(lmms):
         from cambrian.mm_utils import process_images, tokenizer_image_token, tokenizer_image_token_llama3
 
         use_im_start_end = bool(
-            getattr(self._model.config, "mm_use_im_start_end", False)
+            getattr(self.model.config, "mm_use_im_start_end", False)
         )
         tokenize_fn = (
             tokenizer_image_token_llama3
@@ -166,7 +195,7 @@ class CambrianCustom(lmms):
                 qs = f"{img_prefix}\n{question}"
 
                 image_tensor = process_images(
-                    [image], self.image_processor, self._model.config
+                    [image], self.image_processor, self.model.config
                 )
                 if isinstance(image_tensor, list):
                     image_tensor = [
@@ -202,7 +231,7 @@ class CambrianCustom(lmms):
                 "max_new_tokens": max_new_tokens,
                 "do_sample": temperature > 0,
                 "num_beams": num_beams,
-                "use_cache": False,
+                "use_cache": True,
             }
             if temperature > 0:
                 generate_kwargs["temperature"] = temperature
@@ -211,7 +240,7 @@ class CambrianCustom(lmms):
                 generate_kwargs["image_sizes"] = image_sizes
 
             with torch.inference_mode():
-                output_ids = self._model.generate(**generate_kwargs)
+                output_ids = self.model.generate(**generate_kwargs)
 
             text_output = self._tokenizer.batch_decode(
                 output_ids, skip_special_tokens=True
@@ -244,7 +273,7 @@ class CambrianCustom(lmms):
         from cambrian.mm_utils import process_images, tokenizer_image_token, tokenizer_image_token_llama3
 
         use_im_start_end = bool(
-            getattr(self._model.config, "mm_use_im_start_end", False)
+            getattr(self.model.config, "mm_use_im_start_end", False)
         )
         tokenize_fn = (
             tokenizer_image_token_llama3
@@ -285,7 +314,7 @@ class CambrianCustom(lmms):
                 qs = f"{img_prefix}\n{question}"
 
                 image_tensor = process_images(
-                    [image], self.image_processor, self._model.config
+                    [image], self.image_processor, self.model.config
                 )
                 if isinstance(image_tensor, list):
                     image_tensor = [
@@ -306,13 +335,13 @@ class CambrianCustom(lmms):
             conv_full.append_message(conv_full.roles[0], qs)
             conv_full.append_message(conv_full.roles[1], continuation)
             full_prompt = conv_full.get_prompt()
-
+            
             # Context-only conversation (no assistant response)
             conv_ctx = conv_templates[self.conv_mode].copy()
             conv_ctx.append_message(conv_ctx.roles[0], qs)
             conv_ctx.append_message(conv_ctx.roles[1], None)
             ctx_prompt = conv_ctx.get_prompt()
-
+            
             full_ids = tokenize_fn(
                 full_prompt, self._tokenizer,
                 image_token_index=IMAGE_TOKEN_INDEX, return_tensors="pt"
@@ -345,7 +374,7 @@ class CambrianCustom(lmms):
                 forward_kwargs["image_sizes"] = image_sizes
 
             with torch.inference_mode():
-                outputs = self._model(**forward_kwargs)
+                outputs = self.model(**forward_kwargs)
 
             loss = outputs.loss
             logits = outputs.logits

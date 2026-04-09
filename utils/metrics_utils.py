@@ -586,7 +586,8 @@ def compute_linear_regression_r2_score(
     alphas: Union[np.ndarray, list, None] = None,
     fit_intercept: bool = True,
     random_state: int = 42,
-) -> float:
+    return_train_score: bool = False,
+) -> "float | tuple[float, float]":
     """
     Compute test R² using a single 80/20 train-test split.
 
@@ -605,9 +606,10 @@ def compute_linear_regression_r2_score(
         alphas: Optional list/array of alpha values to grid-search (ridge/lasso only)
         fit_intercept: Whether to include bias term
         random_state: For reproducible train/test split
+        return_train_score: If True, return (train_r2, test_r2) tuple; otherwise return test_r2 only
 
     Returns:
-        Test set R² (uniform average over output dimensions)
+        test_r2 (float) when return_train_score=False, or (train_r2, test_r2) tuple when True
     """
 
     def score_uniform_average(y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
@@ -682,7 +684,7 @@ def compute_linear_regression_r2_score(
     if regression_type not in {"ols", "ridge", "lasso"}:
         raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
 
-    if regression_type in {"ols", "ridge"} and n_samples <= n_features:
+    if regression_type == "ridge" and n_samples <= n_features:
         raise ValueError(
             f"Require N > d for {regression_type}: got N={n_samples}, d={n_features}"
         )
@@ -697,7 +699,7 @@ def compute_linear_regression_r2_score(
     X_train, X_test = X[train_idx], X[test_idx]
     Y_train, Y_test = Y[train_idx], Y[test_idx]
 
-    if regression_type in {"ols", "ridge"} and len(train_idx) <= n_features:
+    if regression_type == "ridge" and len(train_idx) <= n_features:
         raise ValueError(
             "Require N > d in train split for "
             f"{regression_type}: got N_train={len(train_idx)}, d={n_features}"
@@ -725,8 +727,11 @@ def compute_linear_regression_r2_score(
                 X_test_fit = X_test_scaled
 
             beta, *_ = torch.linalg.lstsq(X_train_fit, Y_train_scaled, rcond=None)
-            y_pred = X_test_fit @ beta
-            return score_uniform_average(Y_test_scaled, y_pred)
+            test_r2 = score_uniform_average(Y_test_scaled, X_test_fit @ beta)
+            if return_train_score:
+                train_r2 = score_uniform_average(Y_train_scaled, X_train_fit @ beta)
+                return train_r2, test_r2
+            return test_r2
 
     train_count = X_train_scaled.shape[0]
     val_count = max(1, int(0.2 * train_count))
@@ -793,8 +798,11 @@ def compute_linear_regression_r2_score(
                 X_train_fit.T @ X_train_fit + best_alpha * eye_train,
                 X_train_fit.T @ Y_train_scaled,
             )
-            y_pred = X_test_fit @ beta
-            return score_uniform_average(Y_test_scaled, y_pred)
+            test_r2 = score_uniform_average(Y_test_scaled, X_test_fit @ beta)
+            if return_train_score:
+                train_r2 = score_uniform_average(Y_train_scaled, X_train_fit @ beta)
+                return train_r2, test_r2
+            return test_r2
 
     if regression_type == "lasso":
         alpha_grid = (
@@ -832,8 +840,11 @@ def compute_linear_regression_r2_score(
                 max_iter=5000,
                 tol=1e-6,
             )
-            y_pred = X_test_fit @ best_beta
-            return score_uniform_average(Y_test_scaled, y_pred)
+            test_r2 = score_uniform_average(Y_test_scaled, X_test_fit @ best_beta)
+            if return_train_score:
+                train_r2 = score_uniform_average(Y_train_scaled, X_train_fit @ best_beta)
+                return train_r2, test_r2
+            return test_r2
 
     raise ValueError("regression_type must be 'ols', 'ridge', or 'lasso'")
 

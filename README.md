@@ -19,7 +19,7 @@ Key techniques: residual stream tracing, layer patching (transplantation), intri
 ### Requirements
 
 - **Python 3.12** — Flash Attention 2.8.3 only provides pre-built wheels for this version
-- **CUDA** >= 12.1 (tested on A100, H100)
+- **NVIDIA driver** compatible with CUDA 12.6+ wheels (tested on A100, H100)
 - **[uv](https://github.com/astral-sh/uv)** package manager
 
 ### Quick Start
@@ -32,6 +32,12 @@ source .venv/bin/activate
 ```
 
 That's it. The pre-built Flash Attention wheels install without compilation.
+
+Current pinned stack in `pyproject.toml`:
+
+- `torch==2.9.0` (`+cu126` wheel)
+- `torchvision==0.24.0` (`+cu126` wheel)
+- `flash-attn==2.8.3` via a pinned `v2.8.3` prebuilt wheel matching `torch2.9` and `cp312`
 
 ### Local CUDA Installation (HPC / No Root Access)
 
@@ -58,13 +64,21 @@ bash scripts/setup/install_local_cuda.sh --help
 bash scripts/setup/install_local_cuda.sh --install-dir "$HOME/scratch/cuda-12.2" --arch-list "8.0"
 ```
 
+If using a non-default CUDA version (`--cuda-version`), pass an explicit runfile URL:
+
+```bash
+bash scripts/setup/install_local_cuda.sh \
+  --cuda-version 12.6.0 \
+  --runfile-url "<NVIDIA CUDA runfile URL>"
+```
+
 ### Troubleshooting
 
-If `uv sync` still fails on Flash Attention:
+If `uv sync` fails on Flash Attention, verify that:
 
-1. Remove `flash-attn` from `pyproject.toml`
-2. Run `uv sync`
-3. Install manually: `uv pip install flash-attn==2.8.3 --no-build-isolation`
+1. You are using Python 3.12
+2. `pyproject.toml` still has the pinned flash-attn wheel source override
+3. You re-ran `uv lock` after dependency edits
 
 ## Repository Structure
 

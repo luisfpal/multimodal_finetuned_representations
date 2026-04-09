@@ -273,7 +273,7 @@ class InternVL2Custom(lmms):
                         "cache_dir"
                     ),  # Will fallback to env var if None
                     device_map=self.device_map,
-                    attn_implementation="sdpa",
+                    attn_implementation="flash_attention_2",
                     skip_processor=False,
                 )
                 # Safety patch in case pre-instantiation missed it
@@ -292,7 +292,7 @@ class InternVL2Custom(lmms):
                     low_cpu_mem_usage=True,
                     trust_remote_code=True,
                     device_map=self.device_map,
-                    attn_implementation="sdpa",
+                    attn_implementation="flash_attention_2",
                 ).eval()
                 self._tokenizer = AutoTokenizer.from_pretrained(
                     self.path, trust_remote_code=True, device_map=self.device_map
@@ -435,6 +435,7 @@ class InternVL2Custom(lmms):
                 else:
                     pixel_values = None
                     num_patches_list = None
+                    
                 response, history = self.model.chat(
                     self.tokenizer,
                     pixel_values,
@@ -444,6 +445,7 @@ class InternVL2Custom(lmms):
                     history=None,
                     return_history=True,
                 )
+                
             elif self.modality == "video":
                 assert len(visuals) == 1, (
                     f"Only one video is supported, but got {len(visuals)} videos."

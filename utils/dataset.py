@@ -216,7 +216,7 @@ class MultipleChoiceDatasetBenchmark(Dataset):
             print(
                 f"Filtered {initial_len - len(dataset)} samples (from {initial_len} to {len(dataset)})"
             )
-
+            
         # Apply downsampling if requested and if dataset is larger than requested size
         if downsample_size and downsample_size < len(dataset):
             print(
@@ -376,7 +376,7 @@ class MultipleChoiceDatasetBenchmark(Dataset):
                         range(ord("A"), ord("Z") + 1), choices_list
                     ):
                         separator = (
-                            "." if "scienceqa" not in self.dataset_path_or_name else ":"
+                            ". " if "scienceqa" not in self.dataset_path_or_name else ": "
                         )
                         full_question_prompt += f"{chr(letter_ord)}{separator}{choice_text}"
                         full_question_prompt += "\n" if choice_text != last_choice else ""

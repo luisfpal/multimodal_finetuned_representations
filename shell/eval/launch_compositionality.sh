@@ -13,15 +13,15 @@
 # =============================================================================
 # SLURM SETTINGS
 # =============================================================================
-ACCOUNT="lade"
+ACCOUNT="dssc"
 JOB_NAME="experiment"
-PARTITION="H100"
-GPU_TYPE="H100"
+PARTITION="DGX"
+GPU_TYPE="A100"
 NUM_GPUS=1
 CPUS=12
 MEM="48GB"
-TIME="10:00:00"
-NODELIST="dgx003"
+TIME="03:00:00"
+NODELIST="dgx002"
 EXCLUDE=""
 
 # =============================================================================
@@ -38,23 +38,32 @@ PYTHON_SCRIPT_PATH="$PROJECT_ROOT/$PYTHON_SCRIPT"
 MODELS=(
     # "lbasile/llava_7b"
     # "l11p/llava-v1.5-7b-pretrained-lbasile"
+    # "lbasile/llava_7b_frozen"
+    # "lbasile/llava_7b_0_16"
+    # "lbasile/llava_7b_16_32"
+    # "lbasile/llava_7b_6_16"
+    # "lbasile/llava_7b_6_17_complementary"
+    # "lbasile/llava_13b_6_21"
+    # "lbasile/llava_13b_6_21_complementary"
+    # "lbasile/llava_13b"
+    # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "OpenGVLab/InternVL2-8B"
-    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+    "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
     "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
     "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
-    "nyu-visionx/cambrian-8b"
-    "lbasile/cambrian-8b-pretrained"
+    # "nyu-visionx/cambrian-8b"
+    # "lbasile/cambrian-8b-pretrained"
 )
 
 # =============================================================================
 # EVALUATION PARAMETERS
 # =============================================================================
 
-# Benchmark to evaluate: "aro", "bivlc", or "all"
-BENCHMARK="aro"
+# Benchmark to evaluate: "aro", "bivlc", "sugarcrepe" or "all"
+BENCHMARK="sugarcrepe"
 
-# Evaluation method: "loglikelihood", "mcq", or "both"
-EVAL_METHOD="mcq"
+# Evaluation method: "loglikelihood", "mcq", "mcq_logits", or "all"
+EVAL_METHOD="mcq_logits"
 
 # Sample limit (empty = no limit, use for debugging)
 LIMIT=""
@@ -62,14 +71,29 @@ LIMIT=""
 # ARO subtasks to evaluate (comment out subtasks you want to skip)
 # Order subtasks require images — run: bash shell/data/download_aro_images.sh
 ARO_SUBTASKS=(
-    # "vg_relation"
-    # "vg_attribution"
-    # "coco_order"
     "flickr30k_order"
+    "coco_order"
+    "vg_relation"
+    "vg_attribution"
 )
 
 # ARO data root (where ARO annotations and images are downloaded)
 ARO_DATA_ROOT="$HOME/scratch/datasets/vision-language-models-are-bows"
+
+# SugarCrepe data root (must contain data/*.json and val2017/)
+# Run: bash shell/data/download_sugarcrepe.sh to set up
+SUGARCREPE_DATA_ROOT="$HOME/scratch/datasets/sugar-crepe"
+
+# SugarCrepe categories to evaluate (comment out any to skip)
+SUGARCREPE_CATEGORIES=(
+    "add_obj"
+    "add_att"
+    "replace_obj"
+    "replace_att"
+    "replace_rel"
+    "swap_obj"
+    "swap_att"
+)
 
 # =============================================================================
 # CACHE DIRECTORIES
@@ -87,6 +111,9 @@ for m in "${MODELS[@]}"; do _MODELS_STR+="\"$m\" "; done
 
 _ARO_SUBTASKS_STR=""
 for s in "${ARO_SUBTASKS[@]}"; do _ARO_SUBTASKS_STR+="\"$s\" "; done
+
+_SUGARCREPE_CATEGORIES_STR=""
+for c in "${SUGARCREPE_CATEGORIES[@]}"; do _SUGARCREPE_CATEGORIES_STR+="\"$c\" "; done
 
 # =============================================================================
 # BUILD JOB COMMANDS
@@ -142,6 +169,7 @@ cd "$PROJECT_ROOT"
 # ─── Reconstruct arrays from serialized strings ─────────────────────────────
 eval "MODELS=($_MODELS_STR)"
 eval "ARO_SUBTASKS=($_ARO_SUBTASKS_STR)"
+eval "SUGARCREPE_CATEGORIES=($_SUGARCREPE_CATEGORIES_STR)"
 
 # ─── Run Evaluation ──────────────────────────────────────────────────────────
 for MODEL_TO_EVAL in "${MODELS[@]}"; do
@@ -165,6 +193,8 @@ for MODEL_TO_EVAL in "${MODELS[@]}"; do
         --aro-data-root "$ARO_DATA_ROOT"
     )
     [ ${#ARO_SUBTASKS[@]} -gt 0 ] && args+=(--aro-subtasks "${ARO_SUBTASKS[@]}")
+    [ ${#SUGARCREPE_CATEGORIES[@]} -gt 0 ] && args+=(--sugarcrepe-categories "${SUGARCREPE_CATEGORIES[@]}")
+    [ -n "$SUGARCREPE_DATA_ROOT" ] && args+=(--sugarcrepe-data-root "$SUGARCREPE_DATA_ROOT")
     [ -n "$LIMIT" ] && args+=(--limit "$LIMIT")
 
     python "$SNAPSHOT_PYTHON_SCRIPT" "${args[@]}"
@@ -217,8 +247,10 @@ export BENCHMARK="$BENCHMARK"
 export EVAL_METHOD="$EVAL_METHOD"
 export LIMIT="$LIMIT"
 export ARO_DATA_ROOT="$ARO_DATA_ROOT"
+export SUGARCREPE_DATA_ROOT="$SUGARCREPE_DATA_ROOT"
 export _MODELS_STR="$_MODELS_STR"
 export _ARO_SUBTASKS_STR="$_ARO_SUBTASKS_STR"
+export _SUGARCREPE_CATEGORIES_STR="$_SUGARCREPE_CATEGORIES_STR"
 export SNAPSHOT_PYTHON_SCRIPT="/tmp/compositionality_evaluation_\${SLURM_JOB_ID}.py"
 
 cat <<'PYTHON_SNAPSHOT_EOF' > "\$SNAPSHOT_PYTHON_SCRIPT"
@@ -257,3 +289,5 @@ else
     echo "Submission failed: $JOB_OUTPUT"
     exit 1
 fi
+
+

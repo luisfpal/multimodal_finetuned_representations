@@ -24,8 +24,8 @@ TOKENS_POOLING_METHODS=(
     # "mean_image_last_caption"
     # "last_image_last_caption"
 )
-SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
-# SIMILARITY_MEASURES="information_imbalance information_imbalance"
+# SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
+SIMILARITY_MEASURES="information_imbalance information_imbalance"
 # SIMILARITY_MEASURES="${SIMILARITY_MEASURES} linear_regression_r2 linear_regression_r2_reversed"
 
 # Processing parameters
@@ -49,7 +49,9 @@ MODELS=(
     # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
     # "lbasile/LLaVA-OneVision-1.5-8B-stage1"
     # "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
-    "lbasile/cambrian-8b-pretrained"
+    "lmms-lab/LLaVA-OneVision-1.5-4B-Base"
+    "lmms-lab/LLaVA-OneVision-1.5-4B-Instruct"
+    # "lbasile/cambrian-8b-pretrained"
     # "nyu-visionx/cambrian-8b"
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"

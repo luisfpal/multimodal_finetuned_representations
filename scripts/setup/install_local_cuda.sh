@@ -4,21 +4,24 @@ set -euo pipefail
 # Installs a user-local CUDA toolkit (no root), configures ~/.bashrc,
 # and prepares environment so `uv sync` can build/use flash-attn.
 
-CUDA_VERSION="${CUDA_VERSION:-12.2.2}"
-CUDA_RUNFILE_URL="${CUDA_RUNFILE_URL:-https://developer.download.nvidia.com/compute/cuda/${CUDA_VERSION}/local_installers/cuda_${CUDA_VERSION}_535.104.05_linux.run}"
-CUDA_INSTALL_DIR="${CUDA_INSTALL_DIR:-$HOME/.local/cuda-12.2}"
+DEFAULT_CUDA_VERSION="12.2.2"
+DEFAULT_CUDA_RUNFILE_URL="https://developer.download.nvidia.com/compute/cuda/${DEFAULT_CUDA_VERSION}/local_installers/cuda_${DEFAULT_CUDA_VERSION}_535.104.05_linux.run"
+
+CUDA_VERSION="${CUDA_VERSION:-$DEFAULT_CUDA_VERSION}"
+CUDA_RUNFILE_URL="${CUDA_RUNFILE_URL:-}"
+CUDA_INSTALL_DIR="${CUDA_INSTALL_DIR:-}"
 TORCH_CUDA_ARCH_LIST_VALUE="${TORCH_CUDA_ARCH_LIST_VALUE:-8.0}"
 BASHRC_PATH="${BASHRC_PATH:-$HOME/.bashrc}"
-RUNFILE_PATH="${RUNFILE_PATH:-$HOME/.cache/cuda_${CUDA_VERSION}.run}"
+RUNFILE_PATH="${RUNFILE_PATH:-}"
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
 Options:
-  --cuda-version <v>      CUDA version for runfile URL (default: ${CUDA_VERSION})
-  --runfile-url <url>     Full NVIDIA runfile URL
-  --install-dir <path>    Local CUDA install path (default: ${CUDA_INSTALL_DIR})
+    --cuda-version <v>      CUDA version (default: ${DEFAULT_CUDA_VERSION})
+    --runfile-url <url>     Full NVIDIA runfile URL (required for non-default CUDA versions)
+    --install-dir <path>    Local CUDA install path (default: \$HOME/.local/cuda-\${CUDA_VERSION%.*})
   --arch-list <list>      TORCH_CUDA_ARCH_LIST value (default: ${TORCH_CUDA_ARCH_LIST_VALUE})
   --bashrc <path>         Bashrc path to patch (default: ${BASHRC_PATH})
   -h, --help              Show this help
@@ -62,6 +65,24 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "$CUDA_INSTALL_DIR" ]]; then
+    CUDA_INSTALL_DIR="$HOME/.local/cuda-${CUDA_VERSION%.*}"
+fi
+
+if [[ -z "$RUNFILE_PATH" ]]; then
+    RUNFILE_PATH="$HOME/.cache/cuda_${CUDA_VERSION}.run"
+fi
+
+if [[ -z "$CUDA_RUNFILE_URL" ]]; then
+    if [[ "$CUDA_VERSION" == "$DEFAULT_CUDA_VERSION" ]]; then
+        CUDA_RUNFILE_URL="$DEFAULT_CUDA_RUNFILE_URL"
+    else
+        echo "No CUDA runfile URL configured for CUDA version: $CUDA_VERSION" >&2
+        echo "Pass --runfile-url <url> (or set CUDA_RUNFILE_URL) for non-default versions." >&2
+        exit 1
+    fi
+fi
 
 mkdir -p "$(dirname "$RUNFILE_PATH")"
 mkdir -p "$CUDA_INSTALL_DIR"
