@@ -27,8 +27,9 @@ MODELS=(
 )
 
 DATASETS=(
-    # "derek-thomas/ScienceQA"
-    "lmms-lab/MMMU"
+    # "derek-thomas/ScienceQA"           # split: test
+    # "lmms-lab/MMMU"                    # split: test
+    "timm/mini-imagenet"                  # split: validation (10k, 100 cls × 100 imgs)
 )
 
 TOKENS_POOLING_METHODS=(
@@ -44,8 +45,11 @@ METRICS=(
     "homogeneity"
 )
 
-SPLIT="test"
+# Set split to match the dataset: "test" for ScienceQA/MMMU, "validation" for mini-imagenet
+SPLIT="validation"
 MAX_SAMPLES=""
+# For mini-imagenet: guide text is auto-cleared in the Python script (captioning, not MCQ)
+# For ScienceQA/MMMU: use "Answer with the option's letter from the given choices directly."
 GUIDE_TEXT="Answer with the option's letter from the given choices directly."
 SAVE_REPRESENTATIONS="true"
 FORCE_RECOMPUTE="true"

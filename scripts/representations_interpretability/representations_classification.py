@@ -161,10 +161,14 @@ class ClassificationDataset(Dataset):
                         in valid_subfields,
                         num_proc=8,
                     )
+        elif "mini-imagenet" in self.dataset_name_lower:
+            lf = dataset.features["label"]
+            self._class_names: list[str] | None = lf.names if hasattr(lf, "names") else None
+            self.dataset = dataset
         else:
             raise ValueError(
                 "Unsupported dataset for classification pipeline: "
-                f"{dataset_name}. Supported: ScienceQA, MMMU"
+                f"{dataset_name}. Supported: ScienceQA, MMMU, timm/mini-imagenet"
             )
 
         if max_samples is not None:
@@ -194,11 +198,7 @@ class ClassificationDataset(Dataset):
         }
 
     def _extract_image(self, instance: dict) -> Image.Image | None:
-        if "scienceqa" in self.dataset_name_lower:
-            image = instance["image"]
-        else:
-            image = instance.get("image_1")
-
+        image = instance.get("image_1") if "mmmu" in self.dataset_name_lower else instance["image"]
         if isinstance(image, Image.Image):
             return image.convert("RGB")
         return image
@@ -210,6 +210,9 @@ class ClassificationDataset(Dataset):
     def _extract_label(self, instance: dict) -> str:
         if "scienceqa" in self.dataset_name_lower:
             return instance["topic"]
+        if "mini-imagenet" in self.dataset_name_lower:
+            names = getattr(self, "_class_names", None)
+            return names[instance["label"]] if names is not None else str(instance["label"])
         if self.label_granularity == "detailed":
             return str(instance.get("subfield", "")).strip()
         return self._extract_mmmu_subject(instance["id"])
@@ -239,6 +242,9 @@ class ClassificationDataset(Dataset):
                     prompt += f"{chr(letter_ord)}. {choice_text}"
                     prompt += "\n" if choice_text != last_choice else ""
             return prompt
+
+        if "mini-imagenet" in self.dataset_name_lower:
+            return "Describe this image in detail."
 
         return _format_mmmu_question(instance)
 
@@ -634,6 +640,10 @@ def get_representations_and_labels(
             print(
                 "Cached representations mismatch (shape/metadata/signature). Recomputing..."
             )
+
+    # Captioning datasets don't use MCQ guide text
+    if "mini-imagenet" in dataset_name.lower():
+        guide_text = ""
 
     # Load dev shots before model (no GPU needed; fail fast if unavailable)
     shots_pool: dict[str, list[dict]] | None = None
