@@ -1,5 +1,10 @@
 import argparse
+import ast
+import gc
+import hashlib
 import math
+import os
+import re
 import time
 import warnings
 from collections import Counter
@@ -10,35 +15,54 @@ from typing import Union
 import numpy as np
 import torch
 import torch.nn.functional as F
+from dadapy import Data
 from datasets import load_dataset
 from PIL import Image
+from safetensors import safe_open
 from safetensors.torch import save_file
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
+from sklearn.metrics import (
+    adjusted_rand_score,
+    f1_score,
+    homogeneity_completeness_v_measure,
+    matthews_corrcoef,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+from src.residual_stream_tracer import residual_stream_tracer
 from utils import load_hf_model_and_processor_or_tokenizer, seed_all
-from utils.dataset import _build_llava_prompts
+from utils.cambrian_utils import prepare_cambrian_batch_inputs, resolve_cambrian_conv_mode
+from utils.constants import SYSTEM_ROLE
+from utils.dataset import _build_llava_prompts, _processor_has_default_system
+from utils.internvl_utils import (
+    IMG_CONTEXT_TOKEN,
+    IMG_END_TOKEN,
+    IMG_START_TOKEN,
+    apply_chat_template as internvl_apply_chat_template,
+    get_pixel_values,
+)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MODEL_DTYPE = torch.bfloat16 if DEVICE.type == "cuda" else torch.float32
 ATTN_IMPLEMENTATION = "flash_attention_2" if DEVICE.type == "cuda" else "sdpa"
-POOLING_METHOD = "last"
 HOME_DIR = Path.home()
 RESULTS_BASE = HOME_DIR / "multimodal_finetuned_representations" / "results"
+REPRESENTATIONS_BASE = HOME_DIR / "scratch"
 MIN_TOPIC_SAMPLES = 70
+MMMU_IMAGE_COLUMNS = [f"image_{index}" for index in range(1, 8)]
+RESIDUAL_STREAM_TYPE = "output_layer"
 
-SUPPORTED_METRICS = ("logistic_regression", "knn", "label_overlap")
-METRIC_TO_KEY = {
-    "logistic_regression": "f1_weighted",
-    "knn": "knn_f1_weighted",
-    "label_overlap": "label_overlap",
+SUPPORTED_METRICS = ("logistic_regression", "knn", "label_overlap", "homogeneity")
+METRIC_TO_KEYS: dict[str, list[str]] = {
+    "logistic_regression": ["f1_weighted", "mcc"],
+    "knn": ["knn_f1_weighted", "knn_mcc"],
+    "label_overlap": ["label_overlap"],
+    "homogeneity": ["homogeneity_score", "adjusted_rand_score", "n_clusters_ratio"],
 }
 
 
@@ -87,105 +111,468 @@ class ClassificationDataset(Dataset):
         dataset_name: str = "derek-thomas/ScienceQA",
         split: str = "test",
         max_samples: int | None = None,
+        label_granularity: str = "intermediate",
     ) -> None:
         dataset = load_dataset(dataset_name, split=split)
+        self.dataset_name_lower = dataset_name.lower()
+        self.label_granularity = label_granularity
 
-        topics_counts = Counter(dataset["topic"])
+        if "scienceqa" in self.dataset_name_lower:
+            topics_counts = Counter(dataset["topic"])
 
-        def filter_min_counts_and_image(example):
-            return (
-                topics_counts[example["topic"]] >= MIN_TOPIC_SAMPLES
-                and example["image"] is not None
+            def filter_min_counts_and_image(example):
+                return (
+                    topics_counts[example["topic"]] >= MIN_TOPIC_SAMPLES
+                    and example["image"] is not None
+                )
+
+            filtered_dataset = dataset.filter(filter_min_counts_and_image, num_proc=8)
+            topics_counts_filtered = Counter(filtered_dataset["topic"])
+
+            def filter_min_counts(example):
+                return topics_counts_filtered[example["topic"]] >= MIN_TOPIC_SAMPLES
+
+            self.dataset = filtered_dataset.filter(filter_min_counts, num_proc=8)
+        elif "mmmu" in self.dataset_name_lower:
+            # Layer 1: remove instances with >1 image
+            self.dataset = dataset.filter(
+                lambda example: sum(
+                    example.get(column) is not None for column in MMMU_IMAGE_COLUMNS
+                ) <= 1,
+                num_proc=8,
             )
-
-        filtered_dataset = dataset.filter(filter_min_counts_and_image)
-        topics_counts_filtered = Counter(filtered_dataset["topic"])
-
-        def filter_min_counts(example):
-            return topics_counts_filtered[example["topic"]] >= MIN_TOPIC_SAMPLES
-
-        self.dataset = filtered_dataset.filter(filter_min_counts)
+            # Layer 2: keep only multiple-choice
+            self.dataset = self.dataset.filter(
+                lambda example: str(example.get("question_type", "")).strip().lower()
+                == "multiple-choice",
+                num_proc=8,
+            )
+            # Layer 3 (detailed): keep only subfields with count >= mean count
+            if label_granularity == "detailed":
+                all_subfields = [str(sf).strip() for sf in self.dataset["subfield"]]
+                subfield_counts = Counter(sf for sf in all_subfields if sf)
+                if subfield_counts:
+                    mean_count = sum(subfield_counts.values()) / len(subfield_counts)
+                    valid_subfields = {
+                        sf for sf, cnt in subfield_counts.items() if cnt >= mean_count
+                    }
+                    self.dataset = self.dataset.filter(
+                        lambda example: str(example.get("subfield", "")).strip()
+                        in valid_subfields,
+                        num_proc=8,
+                    )
+        else:
+            raise ValueError(
+                "Unsupported dataset for classification pipeline: "
+                f"{dataset_name}. Supported: ScienceQA, MMMU"
+            )
 
         if max_samples is not None:
             self.dataset = self.dataset.select(
                 range(min(max_samples, len(self.dataset)))
             )
 
+        self.labels = [self._extract_label(instance) for instance in self.dataset]
+        self.sample_ids = [
+            self._extract_sample_id(index=idx, instance=instance)
+            for idx, instance in enumerate(self.dataset)
+        ]
+
     def __len__(self) -> int:
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> dict[str, str | Image.Image]:
         instance = self.dataset[idx]
-        context_text = instance.get("hint", None)
-        context_text = "" if context_text == "nan" else context_text
-        choices_list = instance["choices"]
-        image = instance["image"]
-        if isinstance(image, Image.Image):
-            image = image.convert("RGB")
-
-        prompt = ""
-        if context_text:
-            prompt += f"Context: {context_text} "
-        if choices_list is not None:
-            last_choice = choices_list[-1]
-            for letter_ord, choice_text in zip(
-                range(ord("A"), ord("Z") + 1), choices_list
-            ):
-                prompt += f"{chr(letter_ord)}. {choice_text}"
-                prompt += "\n" if choice_text != last_choice else ""
+        image = self._extract_image(instance)
+        prompt = self._build_prompt(instance)
 
         return {
             "question": prompt,
             "image": image,
-            "label": instance["topic"],
+            "label": self._extract_label(instance),
+            "_raw": dict(instance),  # needed for ICL collator
         }
 
+    def _extract_image(self, instance: dict) -> Image.Image | None:
+        if "scienceqa" in self.dataset_name_lower:
+            image = instance["image"]
+        else:
+            image = instance.get("image_1")
 
-def get_dataloader(
-    dataset_name: str,
-    split: str,
-    guide_text: str,
-    processor,
-    max_samples: int | None = None,
-) -> DataLoader:
-    def collator_fn(batch, processor, guide_text):
-        questions = [item["question"] for item in batch]
-        images = [item["image"] for item in batch]
-        labels = [item["label"] for item in batch]
-        processor_kwargs = {
-            "return_tensors": "pt",
-            "text": _build_llava_prompts(
-                questions=questions,
-                images=images,
-                processor=processor,
-                guide_text=guide_text,
-            ),
-            "images": images,
-        }
-        tokenized = processor(**processor_kwargs)
-        return tokenized, labels
+        if isinstance(image, Image.Image):
+            return image.convert("RGB")
+        return image
 
-    collate_fn = partial(collator_fn, processor=processor, guide_text=guide_text)
-    dataset = ClassificationDataset(dataset_name, split, max_samples=max_samples)
-    return DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
+    @staticmethod
+    def _extract_mmmu_subject(example_id: str) -> str:
+        return "_".join(example_id.split("_")[1:-1])
+
+    def _extract_label(self, instance: dict) -> str:
+        if "scienceqa" in self.dataset_name_lower:
+            return instance["topic"]
+        if self.label_granularity == "detailed":
+            return str(instance.get("subfield", "")).strip()
+        return self._extract_mmmu_subject(instance["id"])
+
+    def _extract_sample_id(self, index: int, instance: dict) -> str:
+        if "id" in instance:
+            return str(instance["id"])
+        if "pid" in instance:
+            return str(instance["pid"])
+        question = str(instance.get("question", ""))
+        label = self._extract_label(instance)
+        return f"{self.dataset_name_lower}:{index}:{label}:{question}"
+
+    def _build_prompt(self, instance: dict) -> str:
+        if "scienceqa" in self.dataset_name_lower:
+            context_text = instance.get("hint", None)
+            context_text = "" if context_text == "nan" else context_text
+            choices_list = instance["choices"]
+            prompt = ""
+            if context_text:
+                prompt += f"Context: {context_text} "
+            if choices_list is not None:
+                last_choice = choices_list[-1]
+                for letter_ord, choice_text in zip(
+                    range(ord("A"), ord("Z") + 1), choices_list
+                ):
+                    prompt += f"{chr(letter_ord)}. {choice_text}"
+                    prompt += "\n" if choice_text != last_choice else ""
+            return prompt
+
+        return _format_mmmu_question(instance)
 
 
-def _resolve_decoder_config(model):
-    language_model = getattr(model, "language_model", None)
-    if language_model is not None and hasattr(language_model, "config"):
-        return language_model.config
+# ---------------------------------------------------------------------------
+# In-context learning helpers (MMMU only)
+# ---------------------------------------------------------------------------
 
-    decoder_model = getattr(model, "model", None)
-    if decoder_model is not None and hasattr(decoder_model, "config"):
-        return decoder_model.config
+def _format_mmmu_question(instance: dict) -> str:
+    """Format an MMMU instance as 'question\\nA. opt\\n...' with image tags stripped."""
+    question_text = re.sub(r"<image[^>]*>", " ", str(instance["question"]))
+    question_text = re.sub(r"\s+", " ", question_text).strip()
+    raw_options = instance.get("options", [])
+    if isinstance(raw_options, str):
+        try:
+            options = ast.literal_eval(raw_options)
+        except (ValueError, SyntaxError):
+            options = []
+    else:
+        options = list(raw_options) if raw_options is not None else []
+    choices_lines = []
+    for letter_ord, choice_text in zip(range(ord("A"), ord("Z") + 1), options):
+        normalized = re.sub(r"<image[^>]*>", " ", str(choice_text))
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        choices_lines.append(f"{chr(letter_ord)}. {normalized}")
+    if choices_lines:
+        return f"{question_text}\n" + "\n".join(choices_lines)
+    return question_text
 
-    if hasattr(model, "config"):
-        return model.config
 
-    raise ValueError(
-        "Could not resolve decoder config for residual stream tracing. "
-        f"Model class: {model.__class__.__name__}"
+def _load_mmmu_dev_pool(label_granularity: str) -> dict[str, list[dict]]:
+    """Load MMMU dev split, filter to single-image MC instances, group by category key.
+
+    Groups by subject (intermediate) or subfield (detailed) — the same key used
+    as the classification label — so shots always come from the same category
+    as the test instance.
+    """
+    dev = load_dataset("lmms-lab/MMMU", split="dev")
+    dev = dev.filter(
+        lambda ex: (
+            sum(ex.get(col) is not None for col in MMMU_IMAGE_COLUMNS) == 1
+            and str(ex.get("question_type", "")).strip().lower() == "multiple-choice"
+        ),
+        num_proc=4,
     )
+    pool: dict[str, list[dict]] = {}
+    for instance in dev:
+        if label_granularity == "detailed":
+            key = str(instance.get("subfield", "")).strip()
+        else:
+            parts = str(instance["id"]).split("_")
+            key = "_".join(parts[1:-1]) if len(parts) >= 3 else ""
+        if key:
+            pool.setdefault(key, []).append(dict(instance))
+    return pool
+
+
+def _build_icl_conversation(
+    shots: list[dict],
+    test_instance: dict,
+    processor,
+) -> tuple[list[dict], list[Image.Image]]:
+    """Build a single-user-turn ICL conversation: N shots then the test query.
+
+    Each shot contributes an image block + 'question\\nAnswer: X' text block.
+    The test instance ends with '\\nAnswer:' so the model predicts the letter.
+    """
+    content: list[dict] = []
+    images: list[Image.Image] = []
+
+    for shot in shots:
+        img = shot.get("image_1")
+        if isinstance(img, Image.Image):
+            img = img.convert("RGB")
+        content.append({"type": "image"})
+        content.append({
+            "type": "text",
+            "text": f"{_format_mmmu_question(shot)}\nAnswer: {shot['answer']}\n\n",
+        })
+        images.append(img)
+
+    test_img = test_instance.get("image_1")
+    if isinstance(test_img, Image.Image):
+        test_img = test_img.convert("RGB")
+    content.append({"type": "image"})
+    content.append({"type": "text", "text": f"{_format_mmmu_question(test_instance)}\nAnswer:"})
+    images.append(test_img)
+
+    conv: list[dict] = [{"role": "user", "content": content}]
+    if not _processor_has_default_system(processor):
+        conv.insert(0, SYSTEM_ROLE)
+
+    return conv, images
+
+
+def _icl_collate_fn(
+    batch: list[dict],
+    processor,
+    shots_pool: dict[str, list[dict]],
+    n_shots: int,
+    guide_text: str,
+    label_granularity: str,
+) -> tuple:
+    """Collator for ICL: builds multi-image conversation from dev shots + test instance.
+
+    Falls back to zero-shot for instances whose category has no dev shots.
+    """
+    item = batch[0]  # batch_size=1 always
+    label = item["label"]
+    test_instance = item["_raw"]
+
+    # Determine category key (must match the label used for classification)
+    if label_granularity == "detailed":
+        key = str(test_instance.get("subfield", "")).strip()
+    else:
+        parts = str(test_instance["id"]).split("_")
+        key = "_".join(parts[1:-1]) if len(parts) >= 3 else ""
+
+    shots = shots_pool.get(key, [])[:n_shots]
+
+    if shots:
+        conv, images = _build_icl_conversation(shots, test_instance, processor)
+        text = processor.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
+        tokenized = processor(text=text, images=images, return_tensors="pt")
+    else:
+        # Zero-shot fallback for categories with no dev examples
+        text = _build_llava_prompts(
+            questions=[item["question"]],
+            images=[item["image"]],
+            processor=processor,
+            guide_text=guide_text,
+        )
+        tokenized = processor(text=text, images=[item["image"]], return_tensors="pt")
+
+    return tokenized, [label]
+
+
+# ---------------------------------------------------------------------------
+# Model-type detection
+# ---------------------------------------------------------------------------
+
+
+def _is_internvl(model_name: str) -> bool:
+    return "intern" in model_name.lower()
+
+
+def _is_cambrian(model_name: str) -> bool:
+    return "cambrian" in model_name.lower()
+
+
+# ---------------------------------------------------------------------------
+# InternVL2 collate functions
+# ---------------------------------------------------------------------------
+
+
+def _build_internvl_icl_query(
+    shots: list[dict],
+    test: dict,
+    model,
+    tokenizer,
+) -> tuple[dict, torch.Tensor]:
+    """Build InternVL2 multi-image ICL prompt.
+
+    Each shot and the test instance each get one <image> placeholder, which is
+    replaced with its specific image tokens (patch count varies per image).
+
+    Returns (tokenized_dict, pixel_values) for the tracer InternVL batch format:
+    (tokenized, pixel_values, labels).
+    """
+    import copy as _copy
+
+    all_images: list[Image.Image] = []
+    for s in shots:
+        img = s.get("image_1")
+        all_images.append(img.convert("RGB") if isinstance(img, Image.Image) else img)
+    test_img = test.get("image_1")
+    all_images.append(test_img.convert("RGB") if isinstance(test_img, Image.Image) else test_img)
+
+    pixel_values, num_patches_list = get_pixel_values(all_images)
+
+    parts: list[str] = []
+    for s in shots:
+        parts.append(f"<image>\n{_format_mmmu_question(s)}\nAnswer: {s['answer']}\n\n")
+    parts.append(f"<image>\n{_format_mmmu_question(test)}\nAnswer:")
+    full_text = "".join(parts)
+
+    template = _copy.deepcopy(model.conv_template)
+    template.system_message = model.system_message
+    template.messages = []
+    template.append_message(template.roles[0], full_text)
+    template.append_message(template.roles[1], None)
+    query = template.get_prompt()
+
+    for n_patches in num_patches_list:
+        image_tokens = (
+            IMG_START_TOKEN
+            + IMG_CONTEXT_TOKEN * model.num_image_token * n_patches
+            + IMG_END_TOKEN
+        )
+        query = query.replace("<image>", image_tokens, 1)
+
+    tokenized = tokenizer(query, return_tensors="pt", padding=False)
+    return tokenized, pixel_values
+
+
+def _internvl_zero_shot_collate_fn(
+    batch: list[dict],
+    model,
+    tokenizer,
+    guide_text: str,
+) -> tuple:
+    item = batch[0]
+    img = item["image"]
+    pixel_values, num_patches_list = get_pixel_values([img])
+    query = internvl_apply_chat_template(model, [item["question"]], num_patches_list, guide_text)[0]
+    tokenized = tokenizer(query, return_tensors="pt", padding=False)
+    return tokenized, pixel_values, [item["label"]]
+
+
+def _internvl_icl_collate_fn(
+    batch: list[dict],
+    model,
+    tokenizer,
+    shots_pool: dict[str, list[dict]],
+    n_shots: int,
+    label_granularity: str,
+) -> tuple:
+    item = batch[0]
+    label = item["label"]
+    test_instance = item["_raw"]
+
+    if label_granularity == "detailed":
+        key = str(test_instance.get("subfield", "")).strip()
+    else:
+        parts = str(test_instance["id"]).split("_")
+        key = "_".join(parts[1:-1]) if len(parts) >= 3 else ""
+
+    shots = shots_pool.get(key, [])[:n_shots]
+
+    if shots:
+        tokenized, pixel_values = _build_internvl_icl_query(shots, test_instance, model, tokenizer)
+    else:
+        # Zero-shot fallback
+        img = item["image"]
+        pixel_values, num_patches_list = get_pixel_values([img])
+        query = internvl_apply_chat_template(model, [item["question"]], num_patches_list)[0]
+        tokenized = tokenizer(query, return_tensors="pt", padding=False)
+
+    return tokenized, pixel_values, [label]
+
+
+# ---------------------------------------------------------------------------
+# Cambrian collate functions
+# ---------------------------------------------------------------------------
+
+
+def _cambrian_zero_shot_collate_fn(
+    batch: list[dict],
+    model,
+    tokenizer,
+    guide_text: str,
+) -> tuple:
+    item = batch[0]
+    prepared = prepare_cambrian_batch_inputs(
+        model=model,
+        tokenizer=tokenizer,
+        questions=[item["question"]],
+        images=[item["image"]],
+        guide_text=guide_text,
+    )
+    return (
+        prepared["tokenized"],
+        prepared["image_tensors"],
+        prepared["image_sizes"],
+        prepared["prompts"],
+        [item["label"]],
+    )
+
+
+def _cambrian_icl_collate_fn(
+    batch: list[dict],
+    model,
+    tokenizer,
+    shots_pool: dict[str, list[dict]],
+    n_shots: int,
+    label_granularity: str,
+    guide_text: str,
+) -> tuple:
+    """Cambrian ICL is NOT SUPPORTED — SVA is hardwired to single-image position.
+
+    Cambrian's Spatial Vision Aggregator (SVA) cross-attention layer reads image
+    features from a hardcoded position (config.image_position=91) at every 3rd
+    decoder layer. This is by architectural design, not a bug.
+
+    For proper ICL, we would need:
+    1. N image tokens at variable positions
+    2. SVA to track which position has the actual image
+    3. Residual stream to reflect N separate visual inputs
+
+    None of these are true. SVA always looks at position 91, regardless of where
+    the image actually is. Text-only shots + single test image at position 91 is
+    not true ICL — it's zero-shot with label context in text.
+
+    Fallback: always use zero-shot, regardless of shots_pool.
+    """
+    item = batch[0]
+    label = item["label"]
+
+    # Always zero-shot, ignoring shots_pool for Cambrian
+    prepared = prepare_cambrian_batch_inputs(
+        model=model,
+        tokenizer=tokenizer,
+        questions=[item["question"]],
+        images=[item["image"]],
+        guide_text=guide_text,
+    )
+    return (
+        prepared["tokenized"],
+        prepared["image_tensors"],
+        prepared["image_sizes"],
+        prepared["prompts"],
+        [label],
+    )
+
+
+def _build_sample_signature(sample_ids: list[str], labels: np.ndarray) -> str:
+    if len(sample_ids) != len(labels):
+        raise ValueError(
+            f"Sample IDs and labels length mismatch: {len(sample_ids)} vs {len(labels)}"
+        )
+    joined = "\n".join(
+        f"{sample_id}\t{label}" for sample_id, label in zip(sample_ids, labels)
+    )
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 def get_representations_and_labels(
@@ -193,8 +580,69 @@ def get_representations_and_labels(
     dataset_name: str,
     split: str,
     guide_text: str,
+    tokens_pooling_method: str,
+    representation_cache_path: Path | None,
+    force_recompute_representations: bool,
+    save_representations: bool,
+    sample_set_tag: str,
+    label_granularity: str = "intermediate",
     max_samples: int | None = None,
+    n_shots: int = 0,
 ) -> tuple[torch.Tensor, np.ndarray]:
+    dataset = ClassificationDataset(
+        dataset_name=dataset_name,
+        split=split,
+        max_samples=max_samples,
+        label_granularity=label_granularity,
+    )
+    labels = np.array(dataset.labels)
+    sample_ids = list(dataset.sample_ids)
+    sample_signature = _build_sample_signature(sample_ids=sample_ids, labels=labels)
+
+    if (
+        representation_cache_path is not None
+        and representation_cache_path.exists()
+        and not force_recompute_representations
+    ):
+        print(f"Loading cached representations: {representation_cache_path}")
+        cached_representations: torch.Tensor | None = None
+        metadata = {}
+        with safe_open(str(representation_cache_path), framework="pt") as handle:
+            metadata = handle.metadata() or {}
+            if "residual_stream" in handle.keys():
+                cached_representations = handle.get_tensor("residual_stream")
+
+        if cached_representations is not None:
+            cache_signature = metadata.get("sample_signature", "")
+            cache_num_samples = metadata.get("num_samples", "")
+            cache_pooling = metadata.get("tokens_pooling_method", "")
+            cache_split = metadata.get("split", "")
+            cache_sample_set = metadata.get("sample_set_tag", "")
+
+            is_valid_cache = (
+                cached_representations.shape[1] == len(labels)
+                and cache_num_samples == str(len(labels))
+                and cache_signature == sample_signature
+                and cache_pooling == tokens_pooling_method
+                and cache_split == split
+                and cache_sample_set == sample_set_tag
+            )
+
+            if is_valid_cache:
+                return cached_representations, labels
+
+            print(
+                "Cached representations mismatch (shape/metadata/signature). Recomputing..."
+            )
+
+    # Load dev shots before model (no GPU needed; fail fast if unavailable)
+    shots_pool: dict[str, list[dict]] | None = None
+    if n_shots > 0 and "mmmu" in dataset_name.lower():
+        print(f"Loading MMMU dev pool for {n_shots}-shot ICL ...")
+        shots_pool = _load_mmmu_dev_pool(label_granularity)
+        print(f"  Dev pool: {len(shots_pool)} categories, "
+              f"{sum(len(v) for v in shots_pool.values())} instances.")
+
     model, processor = load_hf_model_and_processor_or_tokenizer(
         model_name_or_path=model_name,
         dtype=MODEL_DTYPE,
@@ -202,59 +650,131 @@ def get_representations_and_labels(
         device_map=DEVICE,
     )
 
-    decoder_config = _resolve_decoder_config(model)
-    num_layers = decoder_config.num_hidden_layers
-    hidden_size = decoder_config.hidden_size
-
-    dataloader = get_dataloader(
-        dataset_name, split, guide_text, processor, max_samples=max_samples
-    )
-    num_samples = len(dataloader.dataset)
-
-    hidden_states = torch.zeros(
-        num_layers, num_samples, hidden_size, device="cpu", dtype=torch.float32
-    )
-    labels = [None] * num_samples
-
-    update_every = max(1, int(0.1 * num_samples))
-    updates_pending = 0
-    with tqdm(total=num_samples, desc="Extracting representations", unit="sample") as pbar:
-        for idx, (inputs, label) in enumerate(dataloader):
-            inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
-            with torch.no_grad():
-                outputs = model(**inputs, output_hidden_states=True, use_cache=False)
-
-            stacked = torch.stack(
-                [h[0, -1, :].detach().float() for h in outputs.hidden_states[1:]]
+    if _is_internvl(model_name):
+        if shots_pool is not None:
+            collate_fn = partial(
+                _internvl_icl_collate_fn,
+                model=model,
+                tokenizer=processor,
+                shots_pool=shots_pool,
+                n_shots=n_shots,
+                label_granularity=label_granularity,
             )
-            hidden_states[:, idx, :] = stacked.cpu()
-            labels[idx] = label[0]
-            updates_pending += 1
-            if (idx + 1) % update_every == 0 or (idx + 1) == num_samples:
-                pbar.update(updates_pending)
-                updates_pending = 0
-
-    return hidden_states, np.array(labels)
-
-
-def preprocess_data_label_overlap(
-    data: Union[np.ndarray, torch.Tensor],
-    labels: Union[np.ndarray, torch.Tensor],
-) -> tuple[np.ndarray, np.ndarray]:
-    if isinstance(data, torch.Tensor):
-        np_data = data.detach().cpu().to(torch.float32).numpy()
+        else:
+            collate_fn = partial(
+                _internvl_zero_shot_collate_fn,
+                model=model,
+                tokenizer=processor,
+                guide_text=guide_text,
+            )
+    elif _is_cambrian(model_name):
+        if shots_pool is not None:
+            collate_fn = partial(
+                _cambrian_icl_collate_fn,
+                model=model,
+                tokenizer=processor,
+                shots_pool=shots_pool,
+                n_shots=n_shots,
+                label_granularity=label_granularity,
+                guide_text=guide_text,
+            )
+        else:
+            collate_fn = partial(
+                _cambrian_zero_shot_collate_fn,
+                model=model,
+                tokenizer=processor,
+                guide_text=guide_text,
+            )
+    elif shots_pool is not None:
+        collate_fn = partial(
+            _icl_collate_fn,
+            processor=processor,
+            shots_pool=shots_pool,
+            n_shots=n_shots,
+            guide_text=guide_text,
+            label_granularity=label_granularity,
+        )
     else:
-        np_data = np.asarray(data, dtype=np.float32)
+        collate_fn = partial(
+            lambda batch, processor, guide_text: (
+                processor(
+                    return_tensors="pt",
+                    text=_build_llava_prompts(
+                        questions=[item["question"] for item in batch],
+                        images=[item["image"] for item in batch],
+                        processor=processor,
+                        guide_text=guide_text,
+                    ),
+                    images=[item["image"] for item in batch],
+                ),
+                [item["label"] for item in batch],
+            ),
+            processor=processor,
+            guide_text=guide_text,
+        )
 
-    if isinstance(labels, torch.Tensor):
-        np_labels = labels.detach().cpu().numpy()
-    else:
-        np_labels = np.asarray(labels)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=1,
+        shuffle=False,
+        collate_fn=collate_fn,
+    )
 
+    representations = residual_stream_tracer(
+        model=model,
+        processed_dataloader=dataloader,
+        processor=processor,
+        return_dtype=torch.float32,
+        tokens_pooling_method=tokens_pooling_method,
+        residual_stream_type="output_layer",
+        return_deepcopy=True,
+        save_representations=False,
+    )
+
+    if not isinstance(representations, torch.Tensor):
+        raise ValueError(
+            "Expected tensor representations from residual_stream_tracer. "
+            f"Got: {type(representations)}"
+        )
+
+    if representation_cache_path is not None and save_representations:
+        os.makedirs(representation_cache_path.parent, exist_ok=True)
+        save_file(
+            {"residual_stream": representations.cpu().to(torch.float32)},
+            str(representation_cache_path),
+            metadata={
+                "model_name": model_name,
+                "dataset_name": dataset_name,
+                "split": split,
+                "tokens_pooling_method": tokens_pooling_method,
+                "num_samples": str(len(labels)),
+                "sample_signature": sample_signature,
+                "sample_set_tag": sample_set_tag,
+            },
+        )
+        print(f"Saved representations cache: {representation_cache_path}")
+
+    result = representations.cpu().to(torch.float32)
+    del model, processor
+    gc.collect()
+    torch.cuda.empty_cache()
+    return result, labels
+
+
+def _remove_duplicate_rows(
+    data: torch.Tensor,
+    labels: np.ndarray,
+) -> tuple[torch.Tensor, np.ndarray]:
+    """Remove exact duplicate representation vectors before k-NN based metrics.
+
+    Duplicate rows have zero pairwise distance, making them trivial nearest
+    neighbours of each other. This inflates label-overlap scores in early layers
+    where many token representations are identical (no attention mixing yet).
+    """
+    np_data = data.detach().cpu().to(torch.float32).numpy()
     _, unique_indices = np.unique(np_data, axis=0, return_index=True)
-    unique_data = np_data[unique_indices]
-    filtered_labels = np_labels[unique_indices]
-    return unique_data, filtered_labels
+    unique_indices = np.sort(unique_indices)  # preserve original order
+    return data[unique_indices], labels[unique_indices]
 
 
 def compute_label_overlap(
@@ -263,7 +783,7 @@ def compute_label_overlap(
     maxk: int = 30,
     use_dadapy: bool = True,
     metric: str = "euclidean",
-    class_fraction: float | None = 0.2,
+    class_fraction: float | None = 0.1,
     weighted: bool = True,
 ) -> float:
     if isinstance(data, torch.Tensor):
@@ -315,8 +835,6 @@ def compute_label_overlap(
         k_per_sample_np = np.full((n_samples,), effective_k, dtype=np.int64)
 
     if use_dadapy:
-        from dadapy import Data
-
         with torch.no_grad():
             if metric == "cosine":
                 normed = F.normalize(data_t, p=2, dim=1)
@@ -399,10 +917,10 @@ def classify_per_layer_knn(
     representations: torch.Tensor,
     y: np.ndarray,
     n_neighbors: int = 30,
-) -> dict[int, float]:
+) -> dict[int, dict[str, float]]:
     num_layers, num_samples, _ = representations.shape
     use_stratify = bool(np.all(np.bincount(y) >= 2))
-    layer_results: dict[int, float] = {}
+    layer_results: dict[int, dict[str, float]] = {}
 
     indices = np.arange(num_samples)
     train_idx, test_idx = train_test_split(
@@ -425,11 +943,11 @@ def classify_per_layer_knn(
                 dtype=torch.float32,
             )
 
-            X_train_norm = F.normalize(X_train_gpu, p=2, dim=1)
-            X_test_norm = F.normalize(X_test_gpu, p=2, dim=1)
+            X_train_gpu = F.normalize(X_train_gpu, p=2, dim=1)
+            X_test_gpu = F.normalize(X_test_gpu, p=2, dim=1)
 
-            train_sim = torch.mm(X_train_norm, X_train_norm.t())
-            test_sim = torch.mm(X_test_norm, X_train_norm.t())
+            train_sim = torch.mm(X_train_gpu, X_train_gpu.t())
+            test_sim = torch.mm(X_test_gpu, X_train_gpu.t())
 
             D_train = torch.clamp(1.0 - train_sim, min=0.0, max=2.0).cpu().numpy()
             D_test = torch.clamp(1.0 - test_sim, min=0.0, max=2.0).cpu().numpy()
@@ -446,10 +964,14 @@ def classify_per_layer_knn(
             )
             knn.fit(D_train, y[train_idx])
             y_pred = knn.predict(D_test)
+            y_true = y[test_idx]
 
-            layer_results[layer_idx] = float(
-                f1_score(y[test_idx], y_pred, average="weighted", zero_division=0)
-            )
+            layer_results[layer_idx] = {
+                "knn_f1_weighted": float(
+                    f1_score(y_true, y_pred, average="weighted", zero_division=0)
+                ),
+                "knn_mcc": float(matthews_corrcoef(y_true, y_pred)),
+            }
 
             updates_pending += 1
             if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
@@ -464,23 +986,23 @@ def classify_per_layer_label_overlap(
     representations: torch.Tensor,
     y: np.ndarray,
     maxk: int = 30,
-) -> dict[int, float]:
+) -> dict[int, dict[str, float]]:
     num_layers = representations.shape[0]
-    layer_results: dict[int, float] = {}
+    layer_results: dict[int, dict[str, float]] = {}
 
     update_every = max(1, int(0.1 * num_layers))
     updates_pending = 0
     with tqdm(total=num_layers, desc="Metric label_overlap", unit="layer") as pbar:
         for layer_idx in range(num_layers):
-            layer_data = representations[layer_idx]
+            layer_data, y_dedup = _remove_duplicate_rows(representations[layer_idx], y)
             overlap = compute_label_overlap(
                 data=layer_data,
-                labels=y,
+                labels=y_dedup,
                 maxk=maxk,
                 use_dadapy=True,
-                metric="cosine",
+                metric="euclidean",
             )
-            layer_results[layer_idx] = float(overlap)
+            layer_results[layer_idx] = {"label_overlap": float(overlap)}
 
             updates_pending += 1
             if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
@@ -490,68 +1012,14 @@ def classify_per_layer_label_overlap(
     return layer_results
 
 
-def _torch_logistic_regression_l1(
-    X_train: torch.Tensor,
-    y_train: torch.Tensor,
-    X_test: torch.Tensor,
-    num_classes: int,
-    C: float = 0.5,
-    max_iter: int = 1000,
-    lr: float = 1.0,
-) -> np.ndarray:
-    n_samples, hidden_size = X_train.shape
-    lam = 1.0 / (C * n_samples)
-
-    class_counts = torch.bincount(y_train, minlength=num_classes).float()
-    class_weights = n_samples / (num_classes * class_counts.clamp(min=1))
-    sample_weights = class_weights[y_train].unsqueeze(1)
-
-    W = torch.zeros(num_classes, hidden_size, device=X_train.device)
-    b = torch.zeros(num_classes, device=X_train.device)
-
-    W_y, b_y = W.clone(), b.clone()
-    t = 1.0
-
-    for _ in range(max_iter):
-        logits = X_train @ W_y.T + b_y
-        probs = F.softmax(logits, dim=1)
-        targets_one_hot = F.one_hot(y_train, num_classes=num_classes).float()
-
-        grad_logits = (probs - targets_one_hot) * sample_weights
-        grad_W = grad_logits.T @ X_train / n_samples
-        grad_b = grad_logits.sum(dim=0) / n_samples
-
-        W_next = W_y - lr * grad_W
-        b_next = b_y - lr * grad_b
-
-        threshold = lr * lam
-        W_next = torch.sign(W_next) * torch.clamp(W_next.abs() - threshold, min=0.0)
-
-        t_next = (1.0 + math.sqrt(1.0 + 4.0 * t * t)) / 2.0
-        momentum = (t - 1.0) / t_next
-
-        W_y = W_next + momentum * (W_next - W)
-        b_y = b_next + momentum * (b_next - b)
-
-        W, b, t = W_next, b_next, t_next
-
-    with torch.no_grad():
-        logits_test = X_test @ W.T + b
-        y_pred = logits_test.argmax(dim=1)
-
-    return y_pred.cpu().numpy()
-
-
 @timed_metric("logistic_regression")
 def classify_per_layer_logistic_regression(
     representations: torch.Tensor,
     y: np.ndarray,
-    backend: str,
-) -> dict[int, float]:
+) -> dict[int, dict[str, float]]:
     num_layers, num_samples, _ = representations.shape
     use_stratify = bool(np.all(np.bincount(y) >= 2))
-    num_classes = int(y.max()) + 1
-    layer_results: dict[int, float] = {}
+    layer_results: dict[int, dict[str, float]] = {}
 
     indices = np.arange(num_samples)
     train_idx, test_idx = train_test_split(
@@ -561,71 +1029,125 @@ def classify_per_layer_logistic_regression(
         stratify=y if use_stratify else None,
     )
 
-    if backend == "pytorch":
-        y_train_t = torch.tensor(y[train_idx], dtype=torch.long, device=DEVICE)
-        update_every = max(1, int(0.1 * num_layers))
-        updates_pending = 0
-        with tqdm(total=num_layers, desc="Metric logistic_regression", unit="layer") as pbar:
-            for layer_idx in range(num_layers):
-                X_train = representations[layer_idx, train_idx].to(DEVICE)
-                X_test = representations[layer_idx, test_idx].to(DEVICE)
+    if np.unique(y[train_idx]).shape[0] < 2:
+        warnings.warn(
+            "Logistic regression requires at least 2 classes in train split.",
+            stacklevel=2,
+        )
+        return {i: {"f1_weighted": 0.0, "mcc": 0.0} for i in range(num_layers)}
 
-                y_pred = _torch_logistic_regression_l1(
-                    X_train,
-                    y_train_t,
-                    X_test,
-                    num_classes,
+    update_every = max(1, int(0.1 * num_layers))
+    updates_pending = 0
+    with tqdm(total=num_layers, desc="Metric logistic_regression", unit="layer") as pbar:
+        for layer_idx in range(num_layers):
+            X = representations[layer_idx].numpy()
+            X_train, X_test = X[train_idx], X[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+
+            n_train_samples, n_features = X_train.shape
+            # Underdetermined (n_train < n_features): L1 + liblinear promotes sparsity.
+            # Overdetermined (n_train >= n_features): L2 + lbfgs, fast multinomial solver.
+            if n_train_samples < n_features:
+                classifier = LogisticRegression(
+                    penalty="l1",
+                    solver="liblinear",
                     C=0.1,
-                    max_iter=5000,
+                    tol=1e-2,
+                    max_iter=2000,
+                    class_weight="balanced",
+                    random_state=42,
                 )
-                layer_results[layer_idx] = float(
-                    f1_score(y[test_idx], y_pred, average="weighted", zero_division=0)
-                )
-
-                updates_pending += 1
-                if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
-                    pbar.update(updates_pending)
-                    updates_pending = 0
-    else:
-        warnings.filterwarnings("ignore", category=UserWarning)
-        update_every = max(1, int(0.1 * num_layers))
-        updates_pending = 0
-        with tqdm(total=num_layers, desc="Metric logistic_regression", unit="layer") as pbar:
-            for layer_idx in range(num_layers):
-                X = representations[layer_idx].numpy()
-                X_train, X_test = X[train_idx], X[test_idx]
-                y_train, y_test = y[train_idx], y[test_idx]
-                model = Pipeline(
-                    [
-                        (
-                            "classifier",
-                            LogisticRegression(
-                                penalty="l1",
-                                solver="liblinear",
-                                C=0.1,
-                                max_iter=2000,
-                                class_weight="balanced",
-                                random_state=42,
-                            ),
-                        ),
-                    ]
+            else:
+                classifier = LogisticRegression(
+                    penalty=None,
+                    solver="lbfgs",
+                    max_iter=2000,
+                    class_weight="balanced",
+                    random_state=42,
                 )
 
-                with warnings.catch_warnings(record=True) as captured:
-                    warnings.simplefilter("always", ConvergenceWarning)
-                    model.fit(X_train, y_train)
-                    if captured:
-                        print(f"Warning: Layer {layer_idx} failed to converge.")
+            with warnings.catch_warnings(record=True) as captured:
+                warnings.simplefilter("always", ConvergenceWarning)
+                classifier.fit(X_train, y_train)
+                if captured:
+                    print(f"Warning: Layer {layer_idx} failed to converge.")
 
-                y_pred = model.predict(X_test)
-                layer_results[layer_idx] = float(
+            y_pred = classifier.predict(X_test)
+            layer_results[layer_idx] = {
+                "f1_weighted": float(
                     f1_score(y_test, y_pred, average="weighted", zero_division=0)
-                )
+                ),
+                "mcc": float(matthews_corrcoef(y_test, y_pred)),
+            }
 
-                updates_pending += 1
-                if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
-                    pbar.update(updates_pending)
-                    updates_pending = 0
+            updates_pending += 1
+            if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
+                pbar.update(updates_pending)
+                updates_pending = 0
+
+    return layer_results
+
+
+@timed_metric("homogeneity")
+def homogeneity_score_per_layer(
+    representations: torch.Tensor,
+    y: np.ndarray,
+    K: int = 16,
+    Z: float = 1.65,
+) -> dict[int, dict[str, float]]:
+    num_layers, n_samples, _ = representations.shape
+    layer_results: dict[int, dict[str, float]] = {}
+
+    if n_samples <= K:
+        warnings.warn(
+            f"n_samples ({n_samples}) <= K ({K}). Returning 0.0 for all layers.",
+            stacklevel=2,
+        )
+        return {
+            layer_idx: {"homogeneity_score": 0.0, "adjusted_rand_score": 0.0, "n_clusters_ratio": 0.0}
+            for layer_idx in range(num_layers)
+        }
+
+    n_labels = len(np.unique(y))
+    # id_index=4 is valid: default range_max=64 → id_list has int(log2(64))=6 elements (0-5)
+    id_index = int(math.log2(K))  # = 4 for K=16
+
+    update_every = max(1, int(0.1 * num_layers))
+    updates_pending = 0
+    with tqdm(total=num_layers, desc="Metric homogeneity", unit="layer") as pbar:
+        for layer_idx in range(num_layers):
+            try:
+                layer_data = F.normalize(
+                    representations[layer_idx].to(DEVICE, dtype=torch.float32), p=2, dim=1
+                )
+                with torch.no_grad():
+                    distances = torch.cdist(layer_data, layer_data).cpu().numpy().astype(np.float64)
+
+                d = Data(distances=distances)
+                d.distances = d.remove_zero_dists(d.distances)
+                id_list, _, _ = d.return_id_scaling_gride()
+                d.set_id(id_list[id_index])
+                d.compute_density_kNN(k=K)
+                cluster_labels = d.compute_clustering_ADP(Z=Z)
+
+                score, _, _ = homogeneity_completeness_v_measure(y, cluster_labels)
+                layer_results[layer_idx] = {
+                    "homogeneity_score": float(score),
+                    "adjusted_rand_score": float(adjusted_rand_score(y, cluster_labels)),
+                    "n_clusters_ratio": float(d.N_clusters / n_labels),
+                }
+            except Exception as exc:
+                print(f"Warning: Homogeneity failed at layer {layer_idx}: {exc}")
+                layer_results[layer_idx] = {
+                    "homogeneity_score": 0.0,
+                    "adjusted_rand_score": 0.0,
+                    "n_clusters_ratio": 0.0,
+                }
+
+            updates_pending += 1
+            if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
+                pbar.update(updates_pending)
+                updates_pending = 0
 
     return layer_results
 
@@ -650,17 +1172,25 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--max-samples",
-        type=int,
-        default=None,
-        help="Cap number of samples for quick debug runs. Omit for full dataset.",
+        "--representations-dir",
+        type=str,
+        default=str(REPRESENTATIONS_BASE),
+    )
+    parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument(
+        "--tokens-pooling-method",
+        type=str,
+        default="last",
+        choices=["last", "mean_image"],
     )
     parser.add_argument(
-        "--backend",
-        type=str,
-        default="sklearn",
-        choices=["pytorch", "sklearn"],
-        help="Backend used only by logistic_regression.",
+        "--save-representations",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--force-recompute-representations",
+        action="store_true",
     )
     parser.add_argument(
         "--metrics",
@@ -668,7 +1198,27 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=["logistic_regression"],
         choices=list(SUPPORTED_METRICS),
-        help="Metrics to compute.",
+    )
+    parser.add_argument(
+        "--mmmu-label-granularity",
+        type=str,
+        default="intermediate",
+        choices=["intermediate", "detailed"],
+        help=(
+            "Label granularity for MMMU. "
+            "'intermediate': subjects (~30 classes, default). "
+            "'detailed': subfields with count >= mean count."
+        ),
+    )
+    parser.add_argument(
+        "--n-shots",
+        type=int,
+        default=0,
+        help=(
+            "Number of in-context learning shots from the MMMU dev split. "
+            "0 = zero-shot (default). Shots are matched by subject/subfield. "
+            "Results and representations are saved with a _{n}shot suffix."
+        ),
     )
     return parser.parse_args()
 
@@ -687,8 +1237,9 @@ def _build_output_path(
     model_name: str,
     pooling_method: str,
     metric_name: str,
+    suffix: str = "",
 ) -> Path:
-    dataset_slug = Path(dataset_name).name
+    dataset_slug = dataset_name.split("/")[-1].replace("-", "_").lower()
     model_slug = Path(model_name).name
     out_dir = (
         results_base
@@ -699,49 +1250,95 @@ def _build_output_path(
         / pooling_method
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir / f"{metric_name}.safetensors"
+    return out_dir / f"{metric_name}{suffix}.safetensors"
+
+
+def _build_representation_cache_path(
+    *,
+    representations_base: Path,
+    dataset_name: str,
+    model_name: str,
+    pooling_method: str,
+    sample_set_tag: str,
+) -> Path:
+    dataset_slug = dataset_name.split("/")[-1].replace("-", "_").lower()
+    model_slug = model_name.split("/")[-1]
+    out_dir = (
+        representations_base
+        / "representations"
+        / model_slug
+        / dataset_slug
+        / RESIDUAL_STREAM_TYPE
+        / pooling_method
+        / sample_set_tag
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / "representations.safetensors"
 
 
 def _save_metric_results(
     *,
     out_path: Path,
     metric_name: str,
-    layer_results: dict[int, float],
+    layer_results: dict[int, dict[str, float]],
     num_layers: int,
     args: argparse.Namespace,
     num_samples: int,
     label_classes: np.ndarray,
 ) -> None:
-    metric_key = METRIC_TO_KEY[metric_name]
-    metric_tensor = torch.tensor(
-        [layer_results[i] for i in range(num_layers)], dtype=torch.float32
-    )
-
+    keys = METRIC_TO_KEYS[metric_name]
+    tensors = {
+        key: torch.tensor(
+            [layer_results[i][key] for i in range(num_layers)], dtype=torch.float32
+        )
+        for key in keys
+    }
     metadata = {
         "model_name": args.model_name,
         "dataset_name": args.dataset_name,
         "split": args.split,
-        "pooling_method": POOLING_METHOD,
+        "pooling_method": args.tokens_pooling_method,
         "guide_text": args.guide_text,
         "num_samples": str(num_samples),
-        "classes": ", ".join(label_classes),
+        "classes": ", ".join(str(c) for c in label_classes),
         "metric": metric_name,
-        "metric_key": metric_key,
-        "backend": args.backend if metric_name == "logistic_regression" else "n/a",
+        "metric_keys": ", ".join(keys),
     }
-    save_file({metric_key: metric_tensor}, str(out_path), metadata=metadata)
+    save_file(tensors, str(out_path), metadata=metadata)
     print(f"Saved {metric_name}: {out_path}")
 
 
 def main() -> None:
     args = parse_args()
+    results_base = _resolve_results_base(args.results_dir)
+    representations_base = Path(args.representations_dir).expanduser().resolve()
+
+    # ICL suffix differentiates n-shot runs from zero-shot without touching any
+    # zero-shot paths.  Both cache path and metric filenames carry the suffix.
+    icl_suffix = f"_{args.n_shots}shot" if args.n_shots > 0 else ""
+    sample_set_tag = f"unique_images{icl_suffix}"
+
+    representation_cache_path = _build_representation_cache_path(
+        representations_base=representations_base,
+        dataset_name=args.dataset_name,
+        model_name=args.model_name,
+        pooling_method=args.tokens_pooling_method,
+        sample_set_tag=sample_set_tag,
+    )
 
     representations, labels = get_representations_and_labels(
         model_name=args.model_name,
         dataset_name=args.dataset_name,
         split=args.split,
         guide_text=args.guide_text,
+        tokens_pooling_method=args.tokens_pooling_method,
+        representation_cache_path=representation_cache_path,
+        force_recompute_representations=args.force_recompute_representations,
+        save_representations=args.save_representations,
+        sample_set_tag=sample_set_tag,
+        label_granularity=args.mmmu_label_granularity,
         max_samples=args.max_samples,
+        n_shots=args.n_shots,
     )
 
     encoded_labels = np.asarray(labels)
@@ -749,32 +1346,29 @@ def main() -> None:
     y = label_encoder.fit_transform(encoded_labels)
 
     num_layers, num_samples, _ = representations.shape
-    results_base = _resolve_results_base(args.results_dir)
 
     for metric_name in args.metrics:
         print(f"\nComputing metric: {metric_name}")
 
         if metric_name == "logistic_regression":
-            layer_results = classify_per_layer_logistic_regression(
-                representations,
-                y,
-                backend=args.backend,
-            )
+            layer_results = classify_per_layer_logistic_regression(representations, y)
+        elif metric_name == "knn":
+            layer_results = classify_per_layer_knn(representations, y)
         elif metric_name == "label_overlap":
             layer_results = classify_per_layer_label_overlap(representations, y)
-        else:
-            layer_results = classify_per_layer_knn(representations, y)
+        else:  # homogeneity
+            layer_results = homogeneity_score_per_layer(representations, y)
 
         out_path = _build_output_path(
             results_base=results_base,
             dataset_name=args.dataset_name,
             split=args.split,
             model_name=args.model_name,
-            pooling_method=POOLING_METHOD,
+            pooling_method=args.tokens_pooling_method,
             metric_name=metric_name,
+            suffix=icl_suffix,
         )
 
-        classes = label_encoder.classes_
         _save_metric_results(
             out_path=out_path,
             metric_name=metric_name,
@@ -782,7 +1376,7 @@ def main() -> None:
             num_layers=num_layers,
             args=args,
             num_samples=num_samples,
-            label_classes=classes,
+            label_classes=label_encoder.classes_,
         )
 
 
