@@ -59,7 +59,7 @@ RESIDUAL_STREAM_TYPE = "output_layer"
 
 SUPPORTED_METRICS = ("logistic_regression", "knn", "label_overlap", "homogeneity")
 METRIC_TO_KEYS: dict[str, list[str]] = {
-    "logistic_regression": ["f1_weighted", "mcc"],
+    "logistic_regression": ["f1_weighted", "f1_weighted_train", "mcc"],
     "knn": ["knn_f1_weighted", "knn_mcc"],
     "label_overlap": ["label_overlap"],
     "homogeneity": ["homogeneity_score", "adjusted_rand_score", "n_clusters_ratio"],
@@ -1044,7 +1044,7 @@ def classify_per_layer_logistic_regression(
             "Logistic regression requires at least 2 classes in train split.",
             stacklevel=2,
         )
-        return {i: {"f1_weighted": 0.0, "mcc": 0.0} for i in range(num_layers)}
+        return {i: {"f1_weighted": 0.0, "f1_weighted_train": 0.0, "mcc": 0.0} for i in range(num_layers)}
 
     update_every = max(1, int(0.1 * num_layers))
     updates_pending = 0
@@ -1083,9 +1083,13 @@ def classify_per_layer_logistic_regression(
                     print(f"Warning: Layer {layer_idx} failed to converge.")
 
             y_pred = classifier.predict(X_test)
+            y_pred_train = classifier.predict(X_train)
             layer_results[layer_idx] = {
                 "f1_weighted": float(
                     f1_score(y_test, y_pred, average="weighted", zero_division=0)
+                ),
+                "f1_weighted_train": float(
+                    f1_score(y_train, y_pred_train, average="weighted", zero_division=0)
                 ),
                 "mcc": float(matthews_corrcoef(y_test, y_pred)),
             }
