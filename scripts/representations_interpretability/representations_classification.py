@@ -2,6 +2,7 @@ import argparse
 import ast
 import gc
 import hashlib
+import json
 import math
 import os
 import re
@@ -347,6 +348,7 @@ def _icl_collate_fn(
     n_shots: int,
     guide_text: str,
     label_granularity: str,
+    prompt_log: list[str] | None = None,
 ) -> tuple:
     """Collator for ICL: builds multi-image conversation from dev shots + test instance.
 
@@ -368,6 +370,8 @@ def _icl_collate_fn(
     if shots:
         conv, images = _build_icl_conversation(shots, test_instance, processor)
         text = processor.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
+        if prompt_log is not None:
+            prompt_log.append(text)
         tokenized = processor(text=text, images=images, return_tensors="pt")
     else:
         # Zero-shot fallback for categories with no dev examples
@@ -377,6 +381,8 @@ def _icl_collate_fn(
             processor=processor,
             guide_text=guide_text,
         )
+        if prompt_log is not None:
+            prompt_log.append(text[0])
         tokenized = processor(text=text, images=[item["image"]], return_tensors="pt")
 
     return tokenized, [label]
@@ -405,14 +411,14 @@ def _build_internvl_icl_query(
     test: dict,
     model,
     tokenizer,
-) -> tuple[dict, torch.Tensor]:
+) -> tuple[dict, torch.Tensor, str]:
     """Build InternVL2 multi-image ICL prompt.
 
     Each shot and the test instance each get one <image> placeholder, which is
     replaced with its specific image tokens (patch count varies per image).
 
-    Returns (tokenized_dict, pixel_values) for the tracer InternVL batch format:
-    (tokenized, pixel_values, labels).
+    Returns (tokenized_dict, pixel_values, query) where query is the fully
+    formatted string with image tokens replaced (for logging purposes).
     """
     import copy as _copy
 
@@ -447,7 +453,7 @@ def _build_internvl_icl_query(
         query = query.replace("<image>", image_tokens, 1)
 
     tokenized = tokenizer(query, return_tensors="pt", padding=False)
-    return tokenized, pixel_values
+    return tokenized, pixel_values, query
 
 
 def _internvl_zero_shot_collate_fn(
@@ -455,11 +461,14 @@ def _internvl_zero_shot_collate_fn(
     model,
     tokenizer,
     guide_text: str,
+    prompt_log: list[str] | None = None,
 ) -> tuple:
     item = batch[0]
     img = item["image"]
     pixel_values, num_patches_list = get_pixel_values([img])
     query = internvl_apply_chat_template(model, [item["question"]], num_patches_list, guide_text)[0]
+    if prompt_log is not None:
+        prompt_log.append(query)
     tokenized = tokenizer(query, return_tensors="pt", padding=False)
     return tokenized, pixel_values, [item["label"]]
 
@@ -471,6 +480,7 @@ def _internvl_icl_collate_fn(
     shots_pool: dict[str, list[dict]],
     n_shots: int,
     label_granularity: str,
+    prompt_log: list[str] | None = None,
 ) -> tuple:
     item = batch[0]
     label = item["label"]
@@ -485,12 +495,16 @@ def _internvl_icl_collate_fn(
     shots = shots_pool.get(key, [])[:n_shots]
 
     if shots:
-        tokenized, pixel_values = _build_internvl_icl_query(shots, test_instance, model, tokenizer)
+        tokenized, pixel_values, query = _build_internvl_icl_query(shots, test_instance, model, tokenizer)
+        if prompt_log is not None:
+            prompt_log.append(query)
     else:
         # Zero-shot fallback
         img = item["image"]
         pixel_values, num_patches_list = get_pixel_values([img])
         query = internvl_apply_chat_template(model, [item["question"]], num_patches_list)[0]
+        if prompt_log is not None:
+            prompt_log.append(query)
         tokenized = tokenizer(query, return_tensors="pt", padding=False)
 
     return tokenized, pixel_values, [label]
@@ -506,6 +520,7 @@ def _cambrian_zero_shot_collate_fn(
     model,
     tokenizer,
     guide_text: str,
+    prompt_log: list[str] | None = None,
 ) -> tuple:
     item = batch[0]
     prepared = prepare_cambrian_batch_inputs(
@@ -515,6 +530,8 @@ def _cambrian_zero_shot_collate_fn(
         images=[item["image"]],
         guide_text=guide_text,
     )
+    if prompt_log is not None:
+        prompt_log.append(prepared["prompts"][0])
     return (
         prepared["tokenized"],
         prepared["image_tensors"],
@@ -532,6 +549,7 @@ def _cambrian_icl_collate_fn(
     n_shots: int,
     label_granularity: str,
     guide_text: str,
+    prompt_log: list[str] | None = None,
 ) -> tuple:
     """Cambrian ICL is NOT SUPPORTED — SVA is hardwired to single-image position.
 
@@ -561,6 +579,8 @@ def _cambrian_icl_collate_fn(
         images=[item["image"]],
         guide_text=guide_text,
     )
+    if prompt_log is not None:
+        prompt_log.append(prepared["prompts"][0])
     return (
         prepared["tokenized"],
         prepared["image_tensors"],
@@ -594,6 +614,7 @@ def get_representations_and_labels(
     label_granularity: str = "intermediate",
     max_samples: int | None = None,
     n_shots: int = 0,
+    save_prompts_path: Path | None = None,
 ) -> tuple[torch.Tensor, np.ndarray]:
     # mini-imagenet: override dataset-specific parameters unconditionally so this
     # dataset can coexist with MMMU/ScienceQA in the same shell script run.
@@ -644,6 +665,12 @@ def get_representations_and_labels(
             )
 
             if is_valid_cache:
+                if save_prompts_path is not None:
+                    print(
+                        f"  [prompts] Representations loaded from cache — "
+                        f"prompts were saved in the original run. "
+                        f"Re-run with --force-recompute-representations to regenerate."
+                    )
                 return cached_representations, labels
 
             print(
@@ -653,6 +680,9 @@ def get_representations_and_labels(
     # Captioning datasets don't use MCQ guide text
     if "mini-imagenet" in dataset_name.lower():
         guide_text = ""
+
+    # Mutable list captured by collate closures to record formatted prompts.
+    _prompt_log: list[str] = []
 
     # Load dev shots before model (no GPU needed; fail fast if unavailable)
     shots_pool: dict[str, list[dict]] | None = None
@@ -678,6 +708,7 @@ def get_representations_and_labels(
                 shots_pool=shots_pool,
                 n_shots=n_shots,
                 label_granularity=label_granularity,
+                prompt_log=_prompt_log,
             )
         else:
             collate_fn = partial(
@@ -685,6 +716,7 @@ def get_representations_and_labels(
                 model=model,
                 tokenizer=processor,
                 guide_text=guide_text,
+                prompt_log=_prompt_log,
             )
     elif _is_cambrian(model_name):
         if shots_pool is not None:
@@ -696,6 +728,7 @@ def get_representations_and_labels(
                 n_shots=n_shots,
                 label_granularity=label_granularity,
                 guide_text=guide_text,
+                prompt_log=_prompt_log,
             )
         else:
             collate_fn = partial(
@@ -703,6 +736,7 @@ def get_representations_and_labels(
                 model=model,
                 tokenizer=processor,
                 guide_text=guide_text,
+                prompt_log=_prompt_log,
             )
     elif shots_pool is not None:
         collate_fn = partial(
@@ -712,25 +746,25 @@ def get_representations_and_labels(
             n_shots=n_shots,
             guide_text=guide_text,
             label_granularity=label_granularity,
+            prompt_log=_prompt_log,
         )
     else:
-        collate_fn = partial(
-            lambda batch, processor, guide_text: (
+        def collate_fn(batch: list[dict]) -> tuple:  # type: ignore[misc]
+            texts = _build_llava_prompts(
+                questions=[item["question"] for item in batch],
+                images=[item["image"] for item in batch],
+                processor=processor,
+                guide_text=guide_text,
+            )
+            _prompt_log.append(texts[0])
+            return (
                 processor(
                     return_tensors="pt",
-                    text=_build_llava_prompts(
-                        questions=[item["question"] for item in batch],
-                        images=[item["image"] for item in batch],
-                        processor=processor,
-                        guide_text=guide_text,
-                    ),
+                    text=texts,
                     images=[item["image"] for item in batch],
                 ),
                 [item["label"] for item in batch],
-            ),
-            processor=processor,
-            guide_text=guide_text,
-        )
+            )
 
     dataloader = DataLoader(
         dataset,
@@ -772,6 +806,21 @@ def get_representations_and_labels(
             },
         )
         print(f"Saved representations cache: {representation_cache_path}")
+
+    if save_prompts_path is not None and _prompt_log:
+        records = [
+            {
+                "idx": i,
+                "sample_id": sample_ids[i],
+                "label": str(labels[i]),
+                "formatted_prompt": prompt,
+            }
+            for i, prompt in enumerate(_prompt_log)
+        ]
+        save_prompts_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_prompts_path, "w", encoding="utf-8") as f:
+            json.dump(records, f, indent=2, ensure_ascii=False)
+        print(f"Saved prompts: {save_prompts_path}")
 
     result = representations.cpu().to(torch.float32)
     del model, processor
@@ -1243,6 +1292,15 @@ def parse_args() -> argparse.Namespace:
             "Results and representations are saved with a _{n}shot suffix."
         ),
     )
+    parser.add_argument(
+        "--save-prompts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Save formatted prompts (after chat-template application) to "
+            "prompts{icl_suffix}.json in the same directory as metric files."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1261,6 +1319,7 @@ def _build_output_path(
     pooling_method: str,
     metric_name: str,
     suffix: str = "",
+    extension: str = "safetensors",
 ) -> Path:
     dataset_slug = dataset_name.split("/")[-1].replace("-", "_").lower()
     model_slug = Path(model_name).name
@@ -1273,7 +1332,7 @@ def _build_output_path(
         / pooling_method
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir / f"{metric_name}{suffix}.safetensors"
+    return out_dir / f"{metric_name}{suffix}.{extension}"
 
 
 def _build_representation_cache_path(
@@ -1349,6 +1408,21 @@ def main() -> None:
         sample_set_tag=sample_set_tag,
     )
 
+    prompts_save_path = (
+        _build_output_path(
+            results_base=results_base,
+            dataset_name=args.dataset_name,
+            split=args.split,
+            model_name=args.model_name,
+            pooling_method=args.tokens_pooling_method,
+            metric_name="prompts",
+            suffix=icl_suffix,
+            extension="json",
+        )
+        if args.save_prompts
+        else None
+    )
+
     representations, labels = get_representations_and_labels(
         model_name=args.model_name,
         dataset_name=args.dataset_name,
@@ -1362,6 +1436,7 @@ def main() -> None:
         label_granularity=args.mmmu_label_granularity,
         max_samples=args.max_samples,
         n_shots=args.n_shots,
+        save_prompts_path=prompts_save_path,
     )
 
     encoded_labels = np.asarray(labels)

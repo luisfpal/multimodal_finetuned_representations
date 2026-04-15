@@ -3,7 +3,7 @@
 set -euo pipefail
 
 MODELS=(
-    # "lbasile/llava_7b"
+    "lbasile/llava_7b"
     # "l11p/llava-v1.5-7b-pretrained-lbasile"
     # "lbasile/llava_7b_frozen"
     # "lbasile/llava_7b_0_16"
@@ -20,10 +20,10 @@ MODELS=(
     # "lmms-lab/LLaVA-OneVision-1.5-4B-Base"
 
     # "OpenGVLab/InternVL2-8B"
-    "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
 
-    "nyu-visionx/cambrian-8b"
-    "lbasile/cambrian-8b-pretrained"
+    # "nyu-visionx/cambrian-8b"
+    # "lbasile/cambrian-8b-pretrained"
 )
 
 DATASETS=(
@@ -53,6 +53,7 @@ MAX_SAMPLES=""
 GUIDE_TEXT="Answer with the option's letter from the given choices directly."
 SAVE_REPRESENTATIONS="true"
 FORCE_RECOMPUTE="true"
+SAVE_PROMPTS="false"
 # MMMU label granularity: "intermediate" (subjects, ~30 classes) or "detailed" (subfields >= mean count)
 MMMU_LABEL_GRANULARITY="detailed"
 # In-context learning shots from MMMU dev split (0 = zero-shot)
@@ -76,6 +77,7 @@ echo "Metrics: ${METRICS[*]}"
 echo "Pooling methods: ${TOKENS_POOLING_METHODS[*]}"
 echo "MMMU label granularity: $MMMU_LABEL_GRANULARITY"
 echo "ICL shots: $N_SHOTS"
+echo "Save prompts: $SAVE_PROMPTS"
 echo "Started at: $START_HUMAN"
 
 for MODEL_NAME in "${MODELS[@]}"; do
@@ -113,6 +115,12 @@ for MODEL_NAME in "${MODELS[@]}"; do
 
             if [ -n "$MAX_SAMPLES" ]; then
                 CMD_ARGS+=(--max-samples "$MAX_SAMPLES")
+            fi
+
+            if [ "$SAVE_PROMPTS" = "true" ]; then
+                CMD_ARGS+=(--save-prompts)
+            else
+                CMD_ARGS+=(--no-save-prompts)
             fi
 
             "$PYTHON_BIN" "$PY_SCRIPT" "${CMD_ARGS[@]}"
