@@ -342,6 +342,26 @@ def _build_icl_conversation(
     return conv, images
 
 
+def _llava_zero_shot_collate_fn(
+    batch: list[dict],
+    processor,
+    guide_text: str,
+    prompt_log: list[str] | None = None,
+) -> tuple:
+    texts = _build_llava_prompts(
+        questions=[item["question"] for item in batch],
+        images=[item["image"] for item in batch],
+        processor=processor,
+        guide_text=guide_text,
+    )
+    if prompt_log is not None:
+        prompt_log.append(texts[0])
+    return (
+        processor(return_tensors="pt", text=texts, images=[item["image"] for item in batch]),
+        [item["label"] for item in batch],
+    )
+
+
 def _icl_collate_fn(
     batch: list[dict],
     processor,
@@ -750,22 +770,12 @@ def get_representations_and_labels(
             prompt_log=_prompt_log,
         )
     else:
-        def collate_fn(batch: list[dict]) -> tuple:
-            texts = _build_llava_prompts(
-                questions=[item["question"] for item in batch],
-                images=[item["image"] for item in batch],
-                processor=processor,
-                guide_text=guide_text,
-            )
-            _prompt_log.append(texts[0])
-            return (
-                processor(
-                    return_tensors="pt",
-                    text=texts,
-                    images=[item["image"] for item in batch],
-                ),
-                [item["label"] for item in batch],
-            )
+        collate_fn = partial(
+            _llava_zero_shot_collate_fn,
+            processor=processor,
+            guide_text=guide_text,
+            prompt_log=_prompt_log,
+        )
 
     dataloader = DataLoader(
         dataset,
