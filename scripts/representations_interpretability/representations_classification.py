@@ -246,6 +246,7 @@ class ClassificationDataset(Dataset):
 
         if "mini-imagenet" in self.dataset_name_lower:
             return "Describe this image in detail."
+            # return "In one sentence, describe the contents of the image."
 
         return _format_mmmu_question(instance)
 
@@ -749,7 +750,7 @@ def get_representations_and_labels(
             prompt_log=_prompt_log,
         )
     else:
-        def collate_fn(batch: list[dict]) -> tuple:  # type: ignore[misc]
+        def collate_fn(batch: list[dict]) -> tuple:
             texts = _build_llava_prompts(
                 questions=[item["question"] for item in batch],
                 images=[item["image"] for item in batch],
