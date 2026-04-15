@@ -595,6 +595,15 @@ def get_representations_and_labels(
     max_samples: int | None = None,
     n_shots: int = 0,
 ) -> tuple[torch.Tensor, np.ndarray]:
+    # mini-imagenet: override dataset-specific parameters unconditionally so this
+    # dataset can coexist with MMMU/ScienceQA in the same shell script run.
+    if "mini-imagenet" in dataset_name.lower():
+        if split != "validation":
+            print(f"  [mini-imagenet] Overriding split '{split}' → 'validation'")
+            split = "validation"
+        guide_text = ""   # captioning prompt — no MCQ suffix
+        n_shots = 0       # ICL not supported for non-MMMU datasets
+
     dataset = ClassificationDataset(
         dataset_name=dataset_name,
         split=split,
@@ -1358,6 +1367,8 @@ def main() -> None:
     encoded_labels = np.asarray(labels)
     label_encoder = LabelEncoder()
     y = label_encoder.fit_transform(encoded_labels)
+    print(f'Number of unique labels: {label_encoder.classes_.size}')
+    print(f'First 5 classes: {label_encoder.classes_[:5]}')
 
     num_layers, num_samples, _ = representations.shape
 
