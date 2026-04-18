@@ -4,13 +4,15 @@ import gc
 import os
 import time
 from typing import Dict, Optional, Union, Literal, List
+
 import torch
 from einops import einsum
-from tqdm import tqdm
-from rich import print
 from safetensors.torch import save_file, load_file
-from transformers.feature_extraction_utils import BatchFeature
+from rich import print
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers.feature_extraction_utils import BatchFeature
+from typing_extensions import deprecated
 from utils import ModelType, ProcessorType, sample_image_and_text_positions
 from utils.cambrian_utils import is_cambrian_model
 from utils.context_pooling_utils import (
@@ -41,6 +43,12 @@ VALID_TOKENS_POOLING_METHODS = [
     "mean_text_context",
     "last_caption",
 ]
+
+HOOK_BASED_TRACER_DEPRECATION_MSG = (
+    "Hook-based residual stream tracers are deprecated and kept only as reference. "
+    "They are not maintained with the latest tracing features. "
+    "Prefer residual_stream_type='output_layer'."
+)
 
 
 def _resolve_decoder_config(model: ModelType):
@@ -477,6 +485,7 @@ class ResidualStreamTracer(abc.ABC):
         self.counter = 0
 
 
+@deprecated(HOOK_BASED_TRACER_DEPRECATION_MSG)
 class HookBasedResidualStreamTracer(ResidualStreamTracer):
     """
     Base class for residual stream tracers that use forward hooks.
@@ -581,6 +590,29 @@ class HookBasedResidualStreamTracer(ResidualStreamTracer):
         super().clear()
 
 
+def _get_lm_components(model) -> tuple:
+    """Return (lm_head, final_norm) for logit-lens projection across VLM architectures.
+
+    LLaVA/Cambrian: lm_head is on the top-level model; language_model property returns
+    the bare backbone (LlamaModel, no lm_head).
+    InternVL2: language_model is a full causal LM (has its own lm_head / model.norm).
+    Returns (None, None) when architecture is unrecognised — callers skip silently.
+    """
+    # lm_head: top-level first (LLaVA, Cambrian), fall back to language_model child (InternVL2)
+    lm_head = getattr(model, "lm_head", None)
+    lang = getattr(model, "language_model", None)
+    if lm_head is None and lang is not None:
+        lm_head = getattr(lang, "lm_head", None)
+
+    # norm: lang may be bare backbone (LlamaModel, has .norm directly) or full causal LM
+    # (.model.norm); fall back through both paths.
+    backbone = lang if lang is not None else model
+    inner = getattr(backbone, "model", backbone)
+    norm = getattr(inner, "norm", None) or getattr(backbone, "norm", None)
+
+    return lm_head, norm
+
+
 class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
     """
     This class is used to extract the residual stream of a huggingface
@@ -605,7 +637,18 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
         return_dtype: torch.dtype = torch.bfloat16,
         tokens_pooling_method: Optional[str] = None,
         embeddings_sampling_args: Optional[dict] = None,
+        token_log: Optional[List[str]] = None,
+        layer_token_log: Optional[List[List[str]]] = None,
     ):
+        self.token_log = token_log
+        self.layer_token_log = layer_token_log
+        self._lm_head: Optional[torch.nn.Module] = None
+        self._lm_norm: Optional[torch.nn.Module] = None
+        if layer_token_log is not None:
+            self._lm_head, self._lm_norm = _get_lm_components(model)
+            if self._lm_head is None:
+                print("  [logit-lens] LM head not found — per-layer token log disabled.")
+                self.layer_token_log = None
         super().__init__(
             model=model,
             num_samples=num_samples,
@@ -679,31 +722,60 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
                 hidden_state.to(device=self.model.device, dtype=torch.bfloat16)
                 for hidden_state in hidden_states
             ]
-            # list of num_hidden_layers tensors of shape (batch_size, max_sequence_length, hidden_size)
+
+            # Detect internal image expansion (e.g. Cambrian: single -200 placeholder
+            # internally becomes ~450 visual tokens, so hs_full_len > ids_full_len).
+            # Validated by tinkering/understand_cambrian.py: V = hs_full_len - seq_len + 1,
+            # visual block starts at img_pos_content (content-relative, already absolute in
+            # expanded seq since Cambrian strips padding before expansion).
+            is_expanded = (
+                batch_input_ids is not None
+                and hidden_states[0].shape[1] != batch_input_ids.shape[1]
+            )
+
+            if (
+                is_expanded
+                and self.tokens_pooling_method in ("mean_image", "last_image")
+                and batch_length > 1
+            ):
+                raise RuntimeError(
+                    f"'{self.tokens_pooling_method}' pooling with expansion models (e.g. Cambrian) "
+                    f"requires batch_size=1. Got batch_length={batch_length}. "
+                    "Set batch_size=1 in the dataloader."
+                )
 
             batch_residual_stream = []
             for idx in range(batch_length):
-                # Get the position of the embedding to sample
                 current_pooling_indices = None
                 if pooling_indices is not None:
                     current_pooling_indices = pooling_indices[idx]
 
+                if is_expanded and self.tokens_pooling_method in ("mean_image", "last_image"):
+                    # Expansion-aware path: remap the single image placeholder to the full
+                    # visual block in the expanded sequence.
+                    seq_len_i = int(sequence_lengths[idx].item())
+                    V = hidden_states[0].shape[1] - seq_len_i + 1
+                    img_pos_content = int(current_pooling_indices[0].item())
+                    visual_indices = torch.arange(img_pos_content, img_pos_content + V)
+                    per_sample = torch.stack(
+                        [hidden_states[layer_idx][idx] for layer_idx in range(self.num_layers)],
+                        dim=0,
+                    )  # (num_layers, hs_full_len, hidden_size)
+                    result = self._pool_tokens(per_sample, pooling_indices=visual_indices)
+                else:
+                    per_sample = torch.stack(
+                        [
+                            hidden_states[layer_idx][idx, -sequence_lengths[idx] :, :]
+                            for layer_idx in range(self.num_layers)
+                        ],
+                        dim=0,
+                    )  # (num_layers, sequence_length(idx), hidden_size)
+                    result = self._pool_tokens(
+                        per_sample, pooling_indices=current_pooling_indices
+                    )
+
                 batch_residual_stream.append(
-                    self._pool_tokens(
-                        torch.stack(
-                            [  # num_layers tensors of shape (sequence_length(idx), hidden_size)
-                                hidden_states[layer_idx][
-                                    idx, -sequence_lengths[idx] :, :
-                                ]
-                                for layer_idx in range(self.num_layers)
-                            ],
-                            dim=0,
-                        ),  # shape: (num_layers, sequence_length(idx), hidden_size)
-                        pooling_indices=current_pooling_indices,
-                    ).to(device="cpu", dtype=self.return_dtype)
-                    # batch_length list of tensors of shape
-                    # (num_layers, sequence_length(idx), hidden_size) or
-                    # (num_layers, hidden_size)
+                    result.to(device="cpu", dtype=self.return_dtype)
                 )
 
             if self.tokens_pooling_method != "none":
@@ -721,11 +793,49 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
                         batch_residual_stream[idx]
                     )
 
+            # Capture greedy next-token prediction from the last position's logits.
+            # outputs.logits shape: (batch, seq_len, vocab_size) — computed for free
+            # as part of the existing forward pass; no extra compute needed.
+            if self.token_log is not None and self.tokenizer is not None:
+                next_token_ids = outputs.logits[:, -1, :].argmax(dim=-1).cpu().tolist()
+                for nid in next_token_ids:
+                    self.token_log.append(
+                        self.tokenizer.decode(
+                            [nid],
+                            skip_special_tokens=False,
+                            clean_up_tokenization_spaces=False,
+                        )
+                    )
+
+            # Per-layer logit-lens: project each layer's last-position hidden state through
+            # the final norm + LM head.  hidden_states is outputs.hidden_states[1:] so
+            # layer_idx=0 is the first transformer block — the raw embedding (index 0) is
+            # never included.  Operates inside the existing no_grad context.
+            if self.layer_token_log is not None:
+                for idx in range(batch_length):
+                    per_sample_tokens: list[str] = []
+                    lm_dtype = next(self._lm_head.parameters()).dtype
+                    for layer_idx in range(self.num_layers):
+                        h = hidden_states[layer_idx][idx, -1:, :].to(lm_dtype)
+                        if self._lm_norm is not None:
+                            h = self._lm_norm(h)
+                        logits = self._lm_head(h)                  # (1, vocab_size)
+                        nid = int(logits[0].argmax().item())
+                        per_sample_tokens.append(
+                            self.tokenizer.decode(
+                                [nid],
+                                skip_special_tokens=False,
+                                clean_up_tokenization_spaces=False,
+                            )
+                        )
+                    self.layer_token_log.append(per_sample_tokens)
+
             del batch_residual_stream, hidden_states, outputs
 
         self.counter += batch_length
 
 
+@deprecated(HOOK_BASED_TRACER_DEPRECATION_MSG)
 class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
     """
     This class is used to extract the residual stream of a huggingface
@@ -854,6 +964,7 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
             self.handles.append(hook)
 
 
+@deprecated(HOOK_BASED_TRACER_DEPRECATION_MSG)
 class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
     """
     This class is used to extract the residual stream of a huggingface
@@ -977,14 +1088,17 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
 
         # Pre-slice weight matrix for all heads
         W = module.weight.data.T  # (hidden_size_in, hidden_size_out)
-        # The application of the linear layer with no bias is:
-        # module(x) = x * W.T
-        # where x is the input tensor of shape (batch, max_seq_len, hidden_size_in)
-        # and W.T is the transposed weight matrix of shape (hidden_size_in, hidden_size_out)
-        # The output tensor of shape (batch, max_seq_len, hidden_size_out)
+        # For torch.nn.Linear, module.weight has shape
+        # (hidden_size_out, hidden_size_in).
+        # With W = module.weight.T, W has shape
+        # (hidden_size_in, hidden_size_out), and the linear map is:
+        # module(x) = x @ W (+b)
+        # where x has shape (batch, max_seq_len, hidden_size_in)
+        # and output has shape (batch, max_seq_len, hidden_size_out).
         # !W = module.weight.data could be taken but the code below to compute the projections
         # !should be adapted to use it.
-        # ! module(x) = x * W.T = W * x (+b)
+        # ! In batched form: module(x) = x @ W (+b), where W = module.weight.T.
+        # ! (Using module.weight directly would require rewriting the einsum accordingly.)
 
         # !To extract each head contribution to the input and project it to the residual stream,
         # !we need to slice the transposed weight matrix for each head, in blocks of
@@ -1125,6 +1239,8 @@ def residual_stream_tracer(
     save_representations: bool = False,
     save_metadata: Optional[Dict] = None,
     debug: bool = False,
+    token_log: Optional[List[str]] = None,
+    layer_token_log: Optional[List[List[str]]] = None,
 ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
     """
     Extract the residual stream of a huggingface multimodal decoder-based,
@@ -1251,7 +1367,9 @@ def residual_stream_tracer(
     }
 
     if residual_stream_type == "output_layer":
-        tracer = ResidualStreamOutputLayerTracer(**tracer_kwargs)
+        tracer = ResidualStreamOutputLayerTracer(
+            **tracer_kwargs, token_log=token_log, layer_token_log=layer_token_log
+        )
     elif residual_stream_type == "post_mlp":
         tracer = ResidualStreamPostMLPTracer(**tracer_kwargs)
     elif residual_stream_type == "heads_projection":

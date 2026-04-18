@@ -11,8 +11,8 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$PROJECT_ROOT/.venv/bin/activate"
 
-export HF_HOME="${HF_HOME:-$HOME/scratch/huggingface}"
-export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
+# ARO source code lives in third_party/vision-language-models-are-bows/ (tracked in git).
+# This script only downloads the image data to scratch.
 
 python "$PROJECT_ROOT/scripts/data/download_aro_images.py" \
     --aro-data-root "$HOME/scratch/datasets/vision-language-models-are-bows" \

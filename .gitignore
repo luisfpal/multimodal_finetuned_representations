@@ -70,6 +70,9 @@ tests/
 *.tsv
 *.csv
 
+# Allow ARO annotation JSON files checked into third_party
+!third_party/vision-language-models-are-bows/*.json
+
 # ============================================================================
 # PLOTTING & VISUALIZATION
 # ============================================================================

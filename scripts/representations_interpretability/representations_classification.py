@@ -37,7 +37,7 @@ from tqdm import tqdm
 
 from src.residual_stream_tracer import residual_stream_tracer
 from utils import load_hf_model_and_processor_or_tokenizer, seed_all
-from utils.cambrian_utils import prepare_cambrian_batch_inputs, resolve_cambrian_conv_mode
+from utils.cambrian_utils import prepare_cambrian_batch_inputs
 from utils.constants import SYSTEM_ROLE
 from utils.dataset import _build_llava_prompts, _processor_has_default_system
 from utils.internvl_utils import (
@@ -57,6 +57,18 @@ REPRESENTATIONS_BASE = HOME_DIR / "scratch"
 MIN_TOPIC_SAMPLES = 70
 MMMU_IMAGE_COLUMNS = [f"image_{index}" for index in range(1, 8)]
 RESIDUAL_STREAM_TYPE = "output_layer"
+
+# Prompt modes for mini-imagenet (captioning dataset).
+# Format: {mode_name: (user_question, assistant_prefix)}
+# - "describe"      (default): free-form description; assistant generates from scratch
+# - "continuation": short description seed; assistant continues from the partial sentence
+_PROMPT_MODES: dict[str, tuple[str, str]] = {
+    "describe": ("Describe this image in detail.", ""),
+    "continuation": (
+        "In one sentence, describe the contents of the image.",
+        "In the image, there is a ",
+    ),
+}
 
 SUPPORTED_METRICS = ("logistic_regression", "knn", "label_overlap", "homogeneity")
 METRIC_TO_KEYS: dict[str, list[str]] = {
@@ -113,10 +125,12 @@ class ClassificationDataset(Dataset):
         split: str = "test",
         max_samples: int | None = None,
         label_granularity: str = "intermediate",
+        prompt_mode: str = "describe",
     ) -> None:
         dataset = load_dataset(dataset_name, split=split)
         self.dataset_name_lower = dataset_name.lower()
         self.label_granularity = label_granularity
+        self.prompt_mode = prompt_mode
 
         if "scienceqa" in self.dataset_name_lower:
             topics_counts = Counter(dataset["topic"])
@@ -165,6 +179,7 @@ class ClassificationDataset(Dataset):
         elif "mini-imagenet" in self.dataset_name_lower:
             lf = dataset.features["label"]
             self._class_names: list[str] | None = lf.names if hasattr(lf, "names") else None
+            self._mini_imagenet_question = _PROMPT_MODES.get(prompt_mode, _PROMPT_MODES["describe"])[0]
             self.dataset = dataset
         else:
             raise ValueError(
@@ -245,8 +260,7 @@ class ClassificationDataset(Dataset):
             return prompt
 
         if "mini-imagenet" in self.dataset_name_lower:
-            return "Describe this image in detail."
-            # return "In one sentence, describe the contents of the image."
+            return self._mini_imagenet_question
 
         return _format_mmmu_question(instance)
 
@@ -346,6 +360,7 @@ def _llava_zero_shot_collate_fn(
     batch: list[dict],
     processor,
     guide_text: str,
+    assistant_prefix: str = "",
     prompt_log: list[str] | None = None,
 ) -> tuple:
     texts = _build_llava_prompts(
@@ -353,6 +368,7 @@ def _llava_zero_shot_collate_fn(
         images=[item["image"] for item in batch],
         processor=processor,
         guide_text=guide_text,
+        assistant_prefix=assistant_prefix,
     )
     if prompt_log is not None:
         prompt_log.append(texts[0])
@@ -369,6 +385,7 @@ def _icl_collate_fn(
     n_shots: int,
     guide_text: str,
     label_granularity: str,
+    assistant_prefix: str = "",
     prompt_log: list[str] | None = None,
 ) -> tuple:
     """Collator for ICL: builds multi-image conversation from dev shots + test instance.
@@ -401,6 +418,7 @@ def _icl_collate_fn(
             images=[item["image"]],
             processor=processor,
             guide_text=guide_text,
+            assistant_prefix=assistant_prefix,
         )
         if prompt_log is not None:
             prompt_log.append(text[0])
@@ -482,12 +500,15 @@ def _internvl_zero_shot_collate_fn(
     model,
     tokenizer,
     guide_text: str,
+    assistant_prefix: str = "",
     prompt_log: list[str] | None = None,
 ) -> tuple:
     item = batch[0]
     img = item["image"]
     pixel_values, num_patches_list = get_pixel_values([img])
-    query = internvl_apply_chat_template(model, [item["question"]], num_patches_list, guide_text)[0]
+    query = internvl_apply_chat_template(
+        model, [item["question"]], num_patches_list, guide_text, assistant_prefix
+    )[0]
     if prompt_log is not None:
         prompt_log.append(query)
     tokenized = tokenizer(query, return_tensors="pt", padding=False)
@@ -501,6 +522,7 @@ def _internvl_icl_collate_fn(
     shots_pool: dict[str, list[dict]],
     n_shots: int,
     label_granularity: str,
+    assistant_prefix: str = "",
     prompt_log: list[str] | None = None,
 ) -> tuple:
     item = batch[0]
@@ -523,7 +545,9 @@ def _internvl_icl_collate_fn(
         # Zero-shot fallback
         img = item["image"]
         pixel_values, num_patches_list = get_pixel_values([img])
-        query = internvl_apply_chat_template(model, [item["question"]], num_patches_list)[0]
+        query = internvl_apply_chat_template(
+            model, [item["question"]], num_patches_list, assistant_prefix=assistant_prefix
+        )[0]
         if prompt_log is not None:
             prompt_log.append(query)
         tokenized = tokenizer(query, return_tensors="pt", padding=False)
@@ -541,6 +565,7 @@ def _cambrian_zero_shot_collate_fn(
     model,
     tokenizer,
     guide_text: str,
+    assistant_prefix: str = "",
     prompt_log: list[str] | None = None,
 ) -> tuple:
     item = batch[0]
@@ -550,6 +575,7 @@ def _cambrian_zero_shot_collate_fn(
         questions=[item["question"]],
         images=[item["image"]],
         guide_text=guide_text,
+        assistant_prefix=assistant_prefix,
     )
     if prompt_log is not None:
         prompt_log.append(prepared["prompts"][0])
@@ -570,6 +596,7 @@ def _cambrian_icl_collate_fn(
     n_shots: int,
     label_granularity: str,
     guide_text: str,
+    assistant_prefix: str = "",
     prompt_log: list[str] | None = None,
 ) -> tuple:
     """Cambrian ICL is NOT SUPPORTED — SVA is hardwired to single-image position.
@@ -599,6 +626,7 @@ def _cambrian_icl_collate_fn(
         questions=[item["question"]],
         images=[item["image"]],
         guide_text=guide_text,
+        assistant_prefix=assistant_prefix,
     )
     if prompt_log is not None:
         prompt_log.append(prepared["prompts"][0])
@@ -636,21 +664,29 @@ def get_representations_and_labels(
     max_samples: int | None = None,
     n_shots: int = 0,
     save_prompts_path: Path | None = None,
+    prompt_mode: str = "describe",
+    metrics_only: bool = False,
 ) -> tuple[torch.Tensor, np.ndarray]:
+    is_mini_imagenet = "mini-imagenet" in dataset_name.lower()
+
     # mini-imagenet: override dataset-specific parameters unconditionally so this
     # dataset can coexist with MMMU/ScienceQA in the same shell script run.
-    if "mini-imagenet" in dataset_name.lower():
+    if is_mini_imagenet:
         if split != "validation":
             print(f"  [mini-imagenet] Overriding split '{split}' → 'validation'")
             split = "validation"
         guide_text = ""   # captioning prompt — no MCQ suffix
         n_shots = 0       # ICL not supported for non-MMMU datasets
 
+    # assistant_prefix only applies to mini-imagenet captioning; force "" for MCQ datasets
+    assistant_prefix = _PROMPT_MODES.get(prompt_mode, _PROMPT_MODES["describe"])[1] if is_mini_imagenet else ""
+
     dataset = ClassificationDataset(
         dataset_name=dataset_name,
         split=split,
         max_samples=max_samples,
         label_granularity=label_granularity,
+        prompt_mode=prompt_mode if is_mini_imagenet else "describe",
     )
     labels = np.array(dataset.labels)
     sample_ids = list(dataset.sample_ids)
@@ -694,6 +730,12 @@ def get_representations_and_labels(
                     )
                 return cached_representations, labels
 
+            if metrics_only:
+                raise RuntimeError(
+                    f"--metrics-only: cached representations at\n  {representation_cache_path}\n"
+                    "exist but failed validation (shape/metadata/signature mismatch). "
+                    "Re-run without --metrics-only to recompute."
+                )
             print(
                 "Cached representations mismatch (shape/metadata/signature). Recomputing..."
             )
@@ -702,8 +744,9 @@ def get_representations_and_labels(
     if "mini-imagenet" in dataset_name.lower():
         guide_text = ""
 
-    # Mutable list captured by collate closures to record formatted prompts.
+    # Mutable lists captured by collate closures / tracer to record prompts + next tokens.
     _prompt_log: list[str] = []
+    _layer_token_log: list[list[str]] = []
 
     # Load dev shots before model (no GPU needed; fail fast if unavailable)
     shots_pool: dict[str, list[dict]] | None = None
@@ -729,6 +772,7 @@ def get_representations_and_labels(
                 shots_pool=shots_pool,
                 n_shots=n_shots,
                 label_granularity=label_granularity,
+                assistant_prefix=assistant_prefix,
                 prompt_log=_prompt_log,
             )
         else:
@@ -737,6 +781,7 @@ def get_representations_and_labels(
                 model=model,
                 tokenizer=processor,
                 guide_text=guide_text,
+                assistant_prefix=assistant_prefix,
                 prompt_log=_prompt_log,
             )
     elif _is_cambrian(model_name):
@@ -749,6 +794,7 @@ def get_representations_and_labels(
                 n_shots=n_shots,
                 label_granularity=label_granularity,
                 guide_text=guide_text,
+                assistant_prefix=assistant_prefix,
                 prompt_log=_prompt_log,
             )
         else:
@@ -757,6 +803,7 @@ def get_representations_and_labels(
                 model=model,
                 tokenizer=processor,
                 guide_text=guide_text,
+                assistant_prefix=assistant_prefix,
                 prompt_log=_prompt_log,
             )
     elif shots_pool is not None:
@@ -767,6 +814,7 @@ def get_representations_and_labels(
             n_shots=n_shots,
             guide_text=guide_text,
             label_granularity=label_granularity,
+            assistant_prefix=assistant_prefix,
             prompt_log=_prompt_log,
         )
     else:
@@ -774,6 +822,7 @@ def get_representations_and_labels(
             _llava_zero_shot_collate_fn,
             processor=processor,
             guide_text=guide_text,
+            assistant_prefix=assistant_prefix,
             prompt_log=_prompt_log,
         )
 
@@ -793,6 +842,7 @@ def get_representations_and_labels(
         residual_stream_type="output_layer",
         return_deepcopy=True,
         save_representations=False,
+        layer_token_log=_layer_token_log if save_prompts_path is not None else None,
     )
 
     if not isinstance(representations, torch.Tensor):
@@ -825,6 +875,7 @@ def get_representations_and_labels(
                 "sample_id": sample_ids[i],
                 "label": str(labels[i]),
                 "formatted_prompt": prompt,
+                "next_tokens_per_layer": _layer_token_log[i] if i < len(_layer_token_log) else [],
             }
             for i, prompt in enumerate(_prompt_log)
         ]
@@ -1312,6 +1363,31 @@ def parse_args() -> argparse.Namespace:
             "prompts{icl_suffix}.json in the same directory as metric files."
         ),
     )
+    parser.add_argument(
+        "--prompt-mode",
+        type=str,
+        default="describe",
+        choices=list(_PROMPT_MODES.keys()),
+        help=(
+            "Prompt mode for timm/mini-imagenet. "
+            "'describe' (default): 'Describe this image in detail.' → free generation. "
+            "'continuation': short question + seeded assistant prefix for continuation. "
+            "Non-default modes add a suffix to all output paths."
+        ),
+    )
+    parser.add_argument(
+        "--representations-only",
+        action="store_true",
+        help="Extract and save representations only — skip all metric computation.",
+    )
+    parser.add_argument(
+        "--metrics-only",
+        action="store_true",
+        help=(
+            "Load representations from cache and compute metrics — skip GPU extraction. "
+            "Fails fast if the representation cache does not exist."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1409,7 +1485,17 @@ def main() -> None:
     # ICL suffix differentiates n-shot runs from zero-shot without touching any
     # zero-shot paths.  Both cache path and metric filenames carry the suffix.
     icl_suffix = f"_{args.n_shots}shot" if args.n_shots > 0 else ""
-    sample_set_tag = f"unique_images{icl_suffix}"
+
+    # Prompt-mode suffix: only for mini-imagenet, only for non-default modes.
+    # Default "describe" mode produces no suffix so existing results are untouched.
+    is_mini_imagenet = "mini-imagenet" in args.dataset_name.lower()
+    prompt_suffix = f"_{args.prompt_mode}" if (is_mini_imagenet and args.prompt_mode != "describe") else ""
+
+    output_suffix = icl_suffix + prompt_suffix
+    sample_set_tag = f"unique_images{output_suffix}"
+
+    if args.representations_only and args.metrics_only:
+        raise ValueError("--representations-only and --metrics-only are mutually exclusive.")
 
     representation_cache_path = _build_representation_cache_path(
         representations_base=representations_base,
@@ -1419,6 +1505,12 @@ def main() -> None:
         sample_set_tag=sample_set_tag,
     )
 
+    if args.metrics_only and not representation_cache_path.exists():
+        raise FileNotFoundError(
+            f"--metrics-only requires cached representations at:\n  {representation_cache_path}\n"
+            "Run without --metrics-only first to extract and save representations."
+        )
+
     prompts_save_path = (
         _build_output_path(
             results_base=results_base,
@@ -1427,7 +1519,7 @@ def main() -> None:
             model_name=args.model_name,
             pooling_method=args.tokens_pooling_method,
             metric_name="prompts",
-            suffix=icl_suffix,
+            suffix=output_suffix,
             extension="json",
         )
         if args.save_prompts
@@ -1448,7 +1540,13 @@ def main() -> None:
         max_samples=args.max_samples,
         n_shots=args.n_shots,
         save_prompts_path=prompts_save_path,
+        prompt_mode=args.prompt_mode,
+        metrics_only=args.metrics_only,
     )
+
+    if args.representations_only:
+        print("--representations-only: representations saved. Skipping metric computation.")
+        return
 
     encoded_labels = np.asarray(labels)
     label_encoder = LabelEncoder()
@@ -1477,7 +1575,7 @@ def main() -> None:
             model_name=args.model_name,
             pooling_method=args.tokens_pooling_method,
             metric_name=metric_name,
-            suffix=icl_suffix,
+            suffix=output_suffix,
         )
 
         _save_metric_results(

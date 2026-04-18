@@ -27,16 +27,47 @@ DEFAULT_PLOTS_DIR = (
 
 CONFIG_RESULTS_BASE = DEFAULT_RESULTS_BASE
 CONFIG_PLOTS_DIR = DEFAULT_PLOTS_DIR
-CONFIG_SPLIT = "test"
-CONFIG_DATASET_SLUGS: list[str] | None = None
+
+# Each entry: (dataset_slug, split). Split is intrinsic to the dataset — not a global default.
+# Set to None to auto-discover all datasets under results_base (split auto-detected).
+CONFIG_DATASETS: list[tuple[str, str]] | None = [
+    ("mmmu", "test"),
+    ("mini_imagenet", "validation"),
+]
+
 CONFIG_POOLING_METHODS: list[str] | None = None
 CONFIG_AUTO_DISCOVER_DATASETS = True
 CONFIG_AUTO_DISCOVER_POOLING_METHODS = True
 
+# Prompt modes to plot — each produces a separate figure.
+# "describe"      → no filename suffix (default free-description prompt)
+# "continuation"  → _continuation suffix (seeded assistant-prefix prompt)
+CONFIG_PROMPT_MODES: list[str] = [
+    "describe",
+    "continuation",
+]
+
+# Whitelist of pooling methods to include. None = all auto-discovered methods.
+CONFIG_POOLING_METHODS_FILTER: list[str] | None = [
+    "last",
+    # "mean_image",
+]
+
+# Figure modes — at least one must be True.
+# Global : one figure per combo (rows=model families, cols=metrics).
+# Individual: one figure per metric per combo (1 row, cols=model families),
+#             saved to a per-combo subfolder under plots_dir.
+CONFIG_GLOBAL_FIGURE = True
+CONFIG_INDIVIDUAL_METRIC_FIGURES = False
+
+# DPI for saved figures. 150 ≈ 4× smaller than 300, still crisp on screen.
+# Raise to 200–300 for print-quality output.
+CONFIG_PLOT_DPI = 150
+
 # (file_name, tensor_key, y_axis_label)
 COLUMN_SPECS: dict[str, tuple[str, str, str]] = {
     "logistic_regression_f1":       ("logistic_regression", "f1_weighted",       "LR — F1 (weighted)"),
-    # "logistic_regression_f1_train": ("logistic_regression", "f1_weighted_train", "LR — F1 Train (weighted)"),
+    "logistic_regression_f1_train": ("logistic_regression", "f1_weighted_train", "LR — F1 Train (weighted)"),
     # "logistic_regression_mcc":      ("logistic_regression", "mcc",               "LR — MCC"),
     # "knn_f1":                       ("knn",                 "knn_f1_weighted",   "KNN — F1 (weighted)"),
     # "knn_mcc":                       ("knn",                 "knn_mcc",           "KNN — MCC"),
@@ -109,13 +140,6 @@ def parse_args() -> argparse.Namespace:
         default=CONFIG_PLOTS_DIR,
     )
     parser.add_argument(
-        "--dataset-slugs",
-        type=str,
-        nargs="+",
-        default=CONFIG_DATASET_SLUGS,
-    )
-    parser.add_argument("--split", type=str, default=CONFIG_SPLIT)
-    parser.add_argument(
         "--pooling-methods",
         type=str,
         nargs="+",
@@ -156,14 +180,21 @@ def make_model_slug(model_name: str) -> str:
     return Path(model_name).name
 
 
-def _discover_dataset_slugs(results_base: Path, split: str) -> list[str]:
+_CANDIDATE_SPLITS = ("test", "validation", "train")
+
+
+def _discover_datasets(results_base: Path) -> list[tuple[str, str]]:
     if not results_base.exists():
         return []
-    return [
-        candidate.name
-        for candidate in sorted(results_base.iterdir())
-        if candidate.is_dir() and (candidate / split).exists()
-    ]
+    pairs: list[tuple[str, str]] = []
+    for candidate in sorted(results_base.iterdir()):
+        if not candidate.is_dir():
+            continue
+        for split in _CANDIDATE_SPLITS:
+            if (candidate / split).exists():
+                pairs.append((candidate.name, split))
+                break
+    return pairs
 
 
 def _discover_pooling_methods(
@@ -185,19 +216,20 @@ def _discover_pooling_methods(
     return sorted(pooling_methods)
 
 
-def _resolve_datasets(args: argparse.Namespace, results_base: Path) -> list[str]:
-    if args.dataset_slugs:
-        return args.dataset_slugs
+def _resolve_datasets(args: argparse.Namespace, results_base: Path) -> list[tuple[str, str]]:
+    if CONFIG_DATASETS is not None:
+        return CONFIG_DATASETS
     if not args.auto_discover_datasets:
-        print("No datasets configured. Set CONFIG_DATASET_SLUGS or enable auto-discovery.")
+        print("No datasets configured. Set CONFIG_DATASETS or enable auto-discovery.")
         return []
-    return _discover_dataset_slugs(results_base=results_base, split=args.split)
+    return _discover_datasets(results_base=results_base)
 
 
 def _resolve_poolings(
     args: argparse.Namespace,
     results_base: Path,
     dataset_slug: str,
+    dataset_split: str,
 ) -> list[str]:
     if args.pooling_methods:
         return args.pooling_methods
@@ -210,7 +242,7 @@ def _resolve_poolings(
     return _discover_pooling_methods(
         results_base=results_base,
         dataset_slug=dataset_slug,
-        split=args.split,
+        split=dataset_split,
     )
 
 
@@ -235,11 +267,25 @@ def _configure_plot_style() -> None:
 
 
 def _build_color_map(models: list[str]) -> dict[str, tuple[float, float, float, float]]:
-    palette = plt.cm.get_cmap("tab10", len(models))
+    # tab10 has 10 equally-spaced slots; pick by center of each slot (i+0.5)/10
+    palette = plt.colormaps["tab10"]
     return {
-        make_model_slug(model_name): palette(index)
+        make_model_slug(model_name): palette((index % 10 + 0.5) / 10)
         for index, model_name in enumerate(models)
     }
+
+
+def _settings_label(
+    dataset_slug: str, split: str, pooling_method: str, icl_suffix: str
+) -> str:
+    icl_label = icl_suffix.lstrip("_") if icl_suffix else "0shot"
+    return f"dataset={dataset_slug} | split={split} | pooling={pooling_method} | {icl_label}"
+
+
+def _combo_tag(
+    dataset_slug: str, split: str, pooling_method: str, icl_suffix: str
+) -> str:
+    return f"{dataset_slug}_{split}_{pooling_method}{icl_suffix}"
 
 
 def load_metric_values(
@@ -372,12 +418,9 @@ def _generate_plot_for_combo(
             )
             any_data = any_data or has_data
 
-    icl_label = icl_suffix.lstrip("_") if icl_suffix else "0shot"
     fig.suptitle(
-        (
-            "Representations Classification Metrics | "
-            f"dataset={dataset_slug} | split={split} | pooling={pooling_method} | {icl_label}"
-        ),
+        "Representations Classification Metrics | "
+        + _settings_label(dataset_slug, split, pooling_method, icl_suffix),
         fontsize=15,
         fontweight="bold",
     )
@@ -388,15 +431,78 @@ def _generate_plot_for_combo(
         return False
 
     plots_dir.mkdir(parents=True, exist_ok=True)
-    cols_tag = "_".join(selected_columns)
-    out_path = (
-        plots_dir
-        / f"representations_classification_{dataset_slug}_{split}_{pooling_method}{icl_suffix}_{cols_tag}.png"
-    )
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    tag = _combo_tag(dataset_slug, split, pooling_method, icl_suffix)
+    out_path = plots_dir / f"representations_classification_{tag}.png"
+    fig.savefig(out_path, dpi=CONFIG_PLOT_DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")
     return True
+
+
+def _generate_individual_metric_plots(
+    *,
+    results_base: Path,
+    plots_dir: Path,
+    dataset_slug: str,
+    split: str,
+    pooling_method: str,
+    selected_columns: list[str],
+    icl_suffix: str = "",
+) -> int:
+    """One figure per metric: 1 row × n_families columns, saved to a per-combo subfolder."""
+    active_rows = [(models, label) for models, label in ROWS if models]
+    color_maps = [_build_color_map(models) for models, _ in active_rows]
+    n_families = len(active_rows)
+
+    combo_dir = plots_dir / _combo_tag(dataset_slug, split, pooling_method, icl_suffix)
+    generated = 0
+
+    for col_name in selected_columns:
+        _, _, y_label = COLUMN_SPECS[col_name]
+        fig, axes = plt.subplots(1, n_families, figsize=(7 * n_families, 6), squeeze=False)
+
+        any_data = False
+        for fam_idx, ((models, row_label), color_map) in enumerate(
+            zip(active_rows, color_maps)
+        ):
+            has_data = _plot_row(
+                ax=axes[0, fam_idx],
+                models=models,
+                column_name=col_name,
+                results_base=results_base,
+                dataset_slug=dataset_slug,
+                split=split,
+                pooling_method=pooling_method,
+                row_name=row_label,
+                color_map=color_map,
+                show_legend=True,
+                icl_suffix=icl_suffix,
+            )
+            # Override titles set by _plot_row: subplot title = family, y-label = metric only
+            axes[0, fam_idx].set_title(row_label, fontsize=12)
+            axes[0, fam_idx].set_ylabel(y_label, fontsize=10)
+            any_data = any_data or has_data
+
+        fig.suptitle(
+            y_label + " | " + _settings_label(dataset_slug, split, pooling_method, icl_suffix),
+            fontsize=15,
+            fontweight="bold",
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+
+        if not any_data:
+            plt.close(fig)
+            continue
+
+        combo_dir.mkdir(parents=True, exist_ok=True)
+        tag = _combo_tag(dataset_slug, split, pooling_method, icl_suffix)
+        out_path = combo_dir / f"{tag}_{col_name}.png"
+        fig.savefig(out_path, dpi=CONFIG_PLOT_DPI, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved: {out_path}")
+        generated += 1
+
+    return generated
 
 
 def main() -> None:
@@ -406,32 +512,42 @@ def main() -> None:
 
     _configure_plot_style()
 
-    dataset_slugs = _resolve_datasets(args=args, results_base=results_base)
-    if not dataset_slugs:
+    datasets = _resolve_datasets(args=args, results_base=results_base)
+    if not datasets:
         return
 
+    icl_suffix = f"_{args.icl_shots}shot" if args.icl_shots > 0 else ""
+
     total_generated = 0
-    for dataset_slug in dataset_slugs:
+    for dataset_slug, dataset_split in datasets:
         pooling_methods = _resolve_poolings(
             args=args,
             results_base=results_base,
             dataset_slug=dataset_slug,
+            dataset_split=dataset_split,
         )
+        if CONFIG_POOLING_METHODS_FILTER is not None:
+            pooling_methods = [p for p in pooling_methods if p in CONFIG_POOLING_METHODS_FILTER]
         if not pooling_methods:
             continue
 
-        icl_suffix = f"_{args.icl_shots}shot" if args.icl_shots > 0 else ""
-        for pooling_method in pooling_methods:
-            did_generate = _generate_plot_for_combo(
-                results_base=results_base,
-                plots_dir=plots_dir,
-                dataset_slug=dataset_slug,
-                split=args.split,
-                pooling_method=pooling_method,
-                selected_columns=args.columns,
-                icl_suffix=icl_suffix,
-            )
-            total_generated += int(did_generate)
+        for prompt_mode in CONFIG_PROMPT_MODES:
+            prompt_suffix = f"_{prompt_mode}" if prompt_mode != "describe" else ""
+            combined_suffix = icl_suffix + prompt_suffix
+            for pooling_method in pooling_methods:
+                kwargs = dict(
+                    results_base=results_base,
+                    plots_dir=plots_dir,
+                    dataset_slug=dataset_slug,
+                    split=dataset_split,
+                    pooling_method=pooling_method,
+                    selected_columns=args.columns,
+                    icl_suffix=combined_suffix,
+                )
+                if CONFIG_GLOBAL_FIGURE:
+                    total_generated += int(_generate_plot_for_combo(**kwargs))
+                if CONFIG_INDIVIDUAL_METRIC_FIGURES:
+                    total_generated += _generate_individual_metric_plots(**kwargs)
 
     if total_generated == 0:
         print("No plots generated. Verify results-base, split, and available metric files.")

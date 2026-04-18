@@ -6,16 +6,16 @@
 DATASETS=(
     # "l11p/MME-test-captioned"
     # "l11p/POPE-test-captioned"
-    # "l11p/MMBench_EN-dev-captioned"
-    # "l11p/SEED-Bench-images-captioned"
-    # "l11p/GQA-val-balanced-noyesno-captioned"
-    "l11p/COCOQA-restval-ICQA"
-    "l11p/VQAv2-COCO-restval-ICQ"
+    "l11p/MMBench_EN-dev-captioned"
+    "l11p/SEED-Bench-images-captioned"
+    "l11p/GQA-val-balanced-noyesno-captioned"
+    # "l11p/COCOQA-restval-ICQA"
+    # "l11p/VQAv2-COCO-restval-ICQ"
 )
 
 # Caption source: "human" or "synthetic" for COCOQA / VQAv2-ICQ (which have human captions),
 # "synthetic" for everything else. Always passed explicitly so path is deterministic.
-CAPTION_SOURCE="human"
+CAPTION_SOURCE="synthetic"
 
 # Analysis configuration
 TOKENS_POOLING_METHODS=(
@@ -24,8 +24,8 @@ TOKENS_POOLING_METHODS=(
     # "mean_image_last_caption"
     # "last_image_last_caption"
 )
-# SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
-SIMILARITY_MEASURES="information_imbalance information_imbalance"
+SIMILARITY_MEASURES="neighborhood_overlap linear_cka information_imbalance information_imbalance_reversed information_imbalance_mean"
+# SIMILARITY_MEASURES="information_imbalance information_imbalance"
 # SIMILARITY_MEASURES="${SIMILARITY_MEASURES} linear_regression_r2 linear_regression_r2_reversed"
 
 # Processing parameters
@@ -43,16 +43,16 @@ MODELS=(
     # "l11p/llava-v1.5-7b-pretrained-lbasile"
     # "OpenGVLab/InternVL2-8B"
     # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+    "nyu-visionx/cambrian-8b"
+    "lbasile/cambrian-8b-pretrained"
     # "lbasile/llava_13b"
     # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
     # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
     # "lbasile/LLaVA-OneVision-1.5-8B-stage1"
     # "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
-    "lmms-lab/LLaVA-OneVision-1.5-4B-Base"
-    "lmms-lab/LLaVA-OneVision-1.5-4B-Instruct"
-    # "lbasile/cambrian-8b-pretrained"
-    # "nyu-visionx/cambrian-8b"
+    # "lmms-lab/LLaVA-OneVision-1.5-4B-Base"
+    # "lmms-lab/LLaVA-OneVision-1.5-4B-Instruct"
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
     # "OpenGVLab/InternVL3_5-8B-Pretrained"

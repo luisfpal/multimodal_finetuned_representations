@@ -23,6 +23,7 @@ from datasets import load_dataset
 
 # Default configuration
 DEFAULT_SEED = 42
+MAX_NEW_TOKENS = 1000
 # Project root is 3 levels up from this script (scripts/captioning/caption_dataset.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "captions"
@@ -36,6 +37,7 @@ CAPTIONING_PROMPT = (
     "- Describe ONLY what is visibly present\n"
     "- Focus on main objects, actions, and scene elements\n"
     "- NO reasoning, explanations, or meta-commentary\n"
+    "- BE SPECIFIC and DETAILED about the visual content\n"
     "- Output ONLY the final caption\n"
     "This is critical - follow these rules exactly."
 )
@@ -282,7 +284,7 @@ def _caption_single_image(args):
         caption = captioner.caption_image(
             image=image,
             prompt=CAPTIONING_PROMPT,
-            max_tokens=500,
+            max_tokens=MAX_NEW_TOKENS,
             temperature=0.0,
             max_retries=5,
             seed=seed,
@@ -293,7 +295,7 @@ def _caption_single_image(args):
             caption = captioner.caption_image(
                 image=image,
                 prompt=CAPTIONING_PROMPT,
-                max_tokens=500,
+                max_tokens=MAX_NEW_TOKENS,
                 temperature=0.3,
                 max_retries=5,
                 seed=seed,

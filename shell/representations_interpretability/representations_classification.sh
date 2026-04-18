@@ -53,11 +53,15 @@ MAX_SAMPLES=""
 GUIDE_TEXT="Answer with the option's letter from the given choices directly."
 SAVE_REPRESENTATIONS="true"
 FORCE_RECOMPUTE="true"
-SAVE_PROMPTS="false"
+REPRESENTATIONS_ONLY="true"
+METRICS_ONLY="false"
+SAVE_PROMPTS="true"
 # MMMU label granularity: "intermediate" (subjects, ~30 classes) or "detailed" (subfields >= mean count)
 MMMU_LABEL_GRANULARITY="detailed"
 # In-context learning shots from MMMU dev split (0 = zero-shot)
 N_SHOTS=0
+# Prompt mode for timm/mini-imagenet: "describe" (default, no suffix) or "continuation"
+PROMPT_MODE="continuation"
 
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
 RESULTS_DIR="$PROJECT_DIR/results"
@@ -77,6 +81,7 @@ echo "Metrics: ${METRICS[*]}"
 echo "Pooling methods: ${TOKENS_POOLING_METHODS[*]}"
 echo "MMMU label granularity: $MMMU_LABEL_GRANULARITY"
 echo "ICL shots: $N_SHOTS"
+echo "Prompt mode: $PROMPT_MODE"
 echo "Save prompts: $SAVE_PROMPTS"
 echo "Started at: $START_HUMAN"
 
@@ -101,6 +106,7 @@ for MODEL_NAME in "${MODELS[@]}"; do
                 --metrics "${METRICS[@]}"
                 --mmmu-label-granularity "$MMMU_LABEL_GRANULARITY"
                 --n-shots "$N_SHOTS"
+                --prompt-mode "$PROMPT_MODE"
             )
 
             if [ "$SAVE_REPRESENTATIONS" = "true" ]; then
@@ -111,6 +117,14 @@ for MODEL_NAME in "${MODELS[@]}"; do
 
             if [ "$FORCE_RECOMPUTE" = "true" ]; then
                 CMD_ARGS+=(--force-recompute-representations)
+            fi
+
+            if [ "$REPRESENTATIONS_ONLY" = "true" ]; then
+                CMD_ARGS+=(--representations-only)
+            fi
+
+            if [ "$METRICS_ONLY" = "true" ]; then
+                CMD_ARGS+=(--metrics-only)
             fi
 
             if [ -n "$MAX_SAMPLES" ]; then

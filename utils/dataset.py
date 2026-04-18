@@ -881,12 +881,16 @@ def _build_llava_prompts(
     images: List[Optional[Image.Image]],
     processor: Any,
     guide_text: str = "",
+    assistant_prefix: str = "",
 ) -> List[str]:
     """Format questions + (optional) images into chat-template strings for LLaVA models.
 
     Injects SYSTEM_ROLE only when the processor has no built-in default system
     message (LLaVA-1.5).  LLaVA-OneVision's Qwen2 tokenizer already includes
     one, so no injection is needed there.
+
+    When ``assistant_prefix`` is non-empty, it is appended as a partial assistant
+    turn so the model continues from that point (continuation mode).
     """
     include_system = not _processor_has_default_system(processor)
     if not images:
@@ -901,7 +905,13 @@ def _build_llava_prompts(
         conv: List[Dict[str, Any]] = [{"role": "user", "content": content}]
         if include_system:
             conv.insert(0, SYSTEM_ROLE)
+        if assistant_prefix:
+            conv.append({"role": "assistant", "content": [{"type": "text", "text": assistant_prefix}]})
         conversations.append(conv)
+    if assistant_prefix:
+        return processor.apply_chat_template(
+            conversations, tokenize=False, add_generation_prompt=False, continue_final_message=True,
+        )
     return processor.apply_chat_template(
         conversations, tokenize=False, add_generation_prompt=True,
     )

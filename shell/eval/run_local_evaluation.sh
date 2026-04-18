@@ -20,13 +20,18 @@ set -e
 # DEFAULT_MODEL_NAME="lbasile/cambrian-8b-pretrained"
 # DEFAULT_MODEL_NAME="nyu-visionx/cambrian-8b"
 # DEFAULT_MODEL_NAME="lbasile/llava_7b"
-DEFAULT_MODEL_NAME="lbasile/llava_13b"
+# DEFAULT_MODEL_NAME="lbasile/llava_13b"
 # DEFAULT_MODEL_NAME="lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
+# DEFAULT_MODEL_NAME="lmms-lab/LLaVA-OneVision-1.5-4B-Base"
+# DEFAULT_MODEL_NAME="l11p/llava-v1.5-7b-pretrained-lbasile"
+# DEFAULT_MODEL_NAME="l11p/llava-v1.5-13b-pretrained-lbasile"
+DEFAULT_MODEL_NAME="lbasile/llava_7b_6_16"
+
 
 # Tasks to evaluate (uncomment to enable)
 TASKS=(
-    # "scienceqa_img"
+    "scienceqa_img"
     # "mme"
     # "textvqa_val"
     # "pope"
@@ -39,7 +44,7 @@ TASKS=(
     # "mmbench_cn_dev"
     # "docvqa_val"
     # "ai2d"
-    "mmmu_val"
+    # "mmmu_val"
     # "coco2017_cap_val"
     # "flickr30k"
 )
@@ -158,3 +163,9 @@ done
 
 echo ""
 echo "All tasks complete for $MODEL_TO_EVAL in $(( SECONDS - overall_start ))s."
+
+# =============================================================================
+# COMPOSITIONALITY BENCHMARKS (ARO + BiVLC + SugarCrepe)
+# Results saved under evals/<model>/compositionality/ (not lmms_eval/)
+# =============================================================================
+bash "$PROJECT_ROOT/shell/eval/run_local_compositionality_evaluation.sh" "$MODEL_TO_EVAL"

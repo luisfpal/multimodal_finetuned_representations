@@ -22,18 +22,25 @@ set -e
 # USER CONFIGURATION
 # =============================================================================
 
+PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/compositionality_evaluation.py"
+
 # Default model (override with first argument)
 DEFAULT_MODEL_NAME="lbasile/llava_7b"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
-
+# =============================================================================
+# DATA PATHS
+# =============================================================================
+ARO_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/vision-language-models-are-bows"
+SUGARCREPE_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/sugar-crepe"
 # =============================================================================
 # ARGUMENT PARSING
 # =============================================================================
 
 MODEL_TO_EVAL="${1:-$DEFAULT_MODEL_NAME}"
 BENCHMARK="${2:-all}"
-LIMIT="${3:-}"
+LIMIT="${3:-5}"
 
 if [ -z "$MODEL_TO_EVAL" ]; then
     echo "Error: No model specified."
@@ -44,9 +51,6 @@ fi
 echo "Model:     $MODEL_TO_EVAL"
 echo "Benchmark: $BENCHMARK"
 [ -n "$LIMIT" ] && echo "Limit:     $LIMIT samples"
-
-PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
-PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/compositionality_evaluation.py"
 
 # =============================================================================
 # ENVIRONMENT SETUP
@@ -117,7 +121,6 @@ setup_cuda
 
 MODEL_SUBDIR=$(basename "$MODEL_TO_EVAL" | sed 's/\//_/g')
 OUTPUT_DIR="$PROJECT_ROOT/evals/$MODEL_SUBDIR/compositionality"
-ARO_DATA_ROOT="$HOME/scratch/datasets/vision-language-models-are-bows"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -134,9 +137,9 @@ args=(
     --model-name-or-path "$MODEL_TO_EVAL"
     --output-dir "$OUTPUT_DIR"
     --benchmark "$BENCHMARK"
-    --eval-method "both"
     --datasets-cache-dir "$HF_DATASETS_CACHE"
     --aro-data-root "$ARO_DATA_ROOT"
+    --sugarcrepe-data-root "$SUGARCREPE_DATA_ROOT"
 )
 [ -n "$LIMIT" ] && args+=(--limit "$LIMIT")
 

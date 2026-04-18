@@ -72,8 +72,8 @@ PLOTS_DIR_BASE = Path(
 # ── run variant ───────────────────────────────────────────────────────────────
 POOLING_METHODS = [
     "last",
-    "mean_context",
-    "mean_image_last_caption",
+    # "mean_context",
+    # "mean_image_last_caption",
 ]  # "last" | "mean_context" | "mean_image_last_caption" | "last_image_last_caption"
 
 # Figure generation mode:
@@ -102,36 +102,36 @@ COLORMAP_NORM = "cross_model"  # "none" | "per_metric" | "cross_model"
 # Tuple format:
 #   (finetuned_id, finetuned_label, pretrained_id, pretrained_label)
 MODEL_PAIRS: list[tuple[str, str, str, str]] = [
-    (
-        "llava_7b",
-        "LLaVA-7B (Finetuned)",
-        "llava-v1.5-7b-pretrained-lbasile",
-        "LLaVA-7B (Pretrained)",
-    ),
-    (
-        "llava_13b",
-        "LLaVA-13B (Finetuned)",
-        "llava-v1.5-13b-pretrained-lbasile",
-        "LLaVA-13B (Pretrained)",
-    ),
-    (
-        "InternVL2-8B",
-        "InternVL2-8B",
-        "InternVL2-8B-Pretrain",
-        "InternVL2-8B (Pretrained)",
-    ),
-    (
-        "LLaVA-OneVision-1.5-8B-stage2-2600",
-        "LLaVA-OneVision-8B (Finetuned)",
-        "LLaVA-OneVision-1.5-8B-stage1",
-        "LLaVA-OneVision-8B (Pretrained)",
-    ),
-    (
-        "LLaVA-OneVision-1.5-8B-Instruct",
-        "LLaVA-OneVision-8B (Instruct)",
-        "LLaVA-OneVision-1.5-8B-Base",
-        "LLaVA-OneVision-8B (Base)",
-    ),
+    # (
+    #     "llava_7b",
+    #     "LLaVA-7B (Finetuned)",
+    #     "llava-v1.5-7b-pretrained-lbasile",
+    #     "LLaVA-7B (Pretrained)",
+    # ),
+    # (
+    #     "llava_13b",
+    #     "LLaVA-13B (Finetuned)",
+    #     "llava-v1.5-13b-pretrained-lbasile",
+    #     "LLaVA-13B (Pretrained)",
+    # ),
+    # (
+    #     "InternVL2-8B",
+    #     "InternVL2-8B",
+    #     "InternVL2-8B-Pretrain",
+    #     "InternVL2-8B (Pretrained)",
+    # ),
+    # (
+    #     "LLaVA-OneVision-1.5-8B-stage2-2600",
+    #     "LLaVA-OneVision-8B (Finetuned)",
+    #     "LLaVA-OneVision-1.5-8B-stage1",
+    #     "LLaVA-OneVision-8B (Pretrained)",
+    # ),
+    # (
+    #     "LLaVA-OneVision-1.5-8B-Instruct",
+    #     "LLaVA-OneVision-8B (Instruct)",
+    #     "LLaVA-OneVision-1.5-8B-Base",
+    #     "LLaVA-OneVision-8B (Base)",
+    # ),
     (
         "cambrian-8b",
         "Cambrian-8B (Finetuned)",

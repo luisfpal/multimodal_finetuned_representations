@@ -3,7 +3,7 @@
 # SLURM launcher for compositionality evaluation (ARO + BiVLC).
 #
 # Evaluates generative VLMs on compositionality benchmarks using
-# log-likelihood scoring and MCQ prompting.
+# constrained logits scoring (mcq_logits).
 #
 # Usage:
 #   1. Configure MODELS, BENCHMARK, ARO_SUBTASKS, and SLURM settings below.
@@ -56,14 +56,17 @@ MODELS=(
 )
 
 # =============================================================================
+# DATA PATHS
+# =============================================================================
+ARO_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/vision-language-models-are-bows"
+SUGARCREPE_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/sugar-crepe"
+
+# =============================================================================
 # EVALUATION PARAMETERS
 # =============================================================================
 
 # Benchmark to evaluate: "aro", "bivlc", "sugarcrepe" or "all"
 BENCHMARK="sugarcrepe"
-
-# Evaluation method: "loglikelihood", "mcq", "mcq_logits", or "all"
-EVAL_METHOD="mcq_logits"
 
 # Sample limit (empty = no limit, use for debugging)
 LIMIT=""
@@ -76,13 +79,6 @@ ARO_SUBTASKS=(
     "vg_relation"
     "vg_attribution"
 )
-
-# ARO data root (where ARO annotations and images are downloaded)
-ARO_DATA_ROOT="$HOME/scratch/datasets/vision-language-models-are-bows"
-
-# SugarCrepe data root (must contain data/*.json and val2017/)
-# Run: bash shell/data/download_sugarcrepe.sh to set up
-SUGARCREPE_DATA_ROOT="$HOME/scratch/datasets/sugar-crepe"
 
 # SugarCrepe categories to evaluate (comment out any to skip)
 SUGARCREPE_CATEGORIES=(
@@ -181,20 +177,18 @@ for MODEL_TO_EVAL in "${MODELS[@]}"; do
     echo "  COMPOSITIONALITY EVALUATION"
     echo "  Model:     $MODEL_TO_EVAL"
     echo "  Benchmark: $BENCHMARK"
-    echo "  Method:    $EVAL_METHOD"
     echo "================================================================"
 
     args=(
         --model-name-or-path "$MODEL_TO_EVAL"
         --output-dir "$OUTPUT_DIR"
         --benchmark "$BENCHMARK"
-        --eval-method "$EVAL_METHOD"
         --datasets-cache-dir "$DATASETS_CACHE_DIR"
         --aro-data-root "$ARO_DATA_ROOT"
+        --sugarcrepe-data-root "$SUGARCREPE_DATA_ROOT"
     )
     [ ${#ARO_SUBTASKS[@]} -gt 0 ] && args+=(--aro-subtasks "${ARO_SUBTASKS[@]}")
     [ ${#SUGARCREPE_CATEGORIES[@]} -gt 0 ] && args+=(--sugarcrepe-categories "${SUGARCREPE_CATEGORIES[@]}")
-    [ -n "$SUGARCREPE_DATA_ROOT" ] && args+=(--sugarcrepe-data-root "$SUGARCREPE_DATA_ROOT")
     [ -n "$LIMIT" ] && args+=(--limit "$LIMIT")
 
     python "$SNAPSHOT_PYTHON_SCRIPT" "${args[@]}"
@@ -244,7 +238,6 @@ export HF_HOME="$HF_HOME"
 export MODEL_CACHE_DIR="$MODEL_CACHE_DIR"
 export DATASETS_CACHE_DIR="$DATASETS_CACHE_DIR"
 export BENCHMARK="$BENCHMARK"
-export EVAL_METHOD="$EVAL_METHOD"
 export LIMIT="$LIMIT"
 export ARO_DATA_ROOT="$ARO_DATA_ROOT"
 export SUGARCREPE_DATA_ROOT="$SUGARCREPE_DATA_ROOT"
@@ -273,7 +266,6 @@ echo "================================================================"
 echo "  COMPOSITIONALITY EVALUATION LAUNCHER"
 printf "  Models:    %s\n" "${MODELS[*]}"
 printf "  Benchmark: %s\n" "$BENCHMARK"
-printf "  Method:    %s\n" "$EVAL_METHOD"
 printf "  Snapshot:  %s\n" "$PYTHON_SCRIPT"
 printf "  GPUs:      %s x %s\n" "$NUM_GPUS" "$GPU_TYPE"
 echo "================================================================"

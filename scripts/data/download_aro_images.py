@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Download images for ARO order subtasks (COCO val2014 + Flickr30k).
 
+ARO source code (dataset_zoo/, JSON annotations, etc.) lives in
+third_party/vision-language-models-are-bows/ and is tracked in git.
+This script only downloads the heavy image data to the scratch directory.
+
 Idempotent: skips images already present.
 Resume-capable: uses HF cache for Flickr30k, parallel wget for COCO.
 
@@ -14,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +28,17 @@ from urllib.request import urlretrieve
 DEFAULT_ARO_ROOT = (
     Path.home() / "scratch" / "datasets" / "vision-language-models-are-bows"
 )
+
+ARO_THIRD_PARTY = (
+    Path(__file__).parents[2] / "third_party" / "vision-language-models-are-bows"
+)
+
+JSON_FILES = [
+    "coco_karpathy_test.json",
+    "flickr30k_test.json",
+    "visual_genome_relation.json",
+    "visual_genome_attribution.json",
+]
 
 COCO_IMAGE_URL = "http://images.cocodataset.org/val2014"
 COCO_ZIP_URL = "http://images.cocodataset.org/zips/val2014.zip"
@@ -49,6 +65,19 @@ def _download_one_image(args: tuple[str, Path]) -> bool:
         return True
     except Exception:
         return False
+
+
+def _copy_missing_annotations(aro_root: Path) -> None:
+    """Copy any missing JSON annotations from third_party/ to aro_root."""
+    for fname in JSON_FILES:
+        dst = aro_root / fname
+        if not dst.exists():
+            src = ARO_THIRD_PARTY / fname
+            if src.exists():
+                shutil.copy2(src, dst)
+                print(f"  Copied annotation: {fname}")
+            else:
+                print(f"  ⚠ Annotation not found in third_party/: {fname}")
 
 
 def download_coco_val2014(aro_root: Path, workers: int = 16) -> None:
@@ -179,7 +208,7 @@ def main() -> None:
         "--aro-data-root",
         type=Path,
         default=DEFAULT_ARO_ROOT,
-        help="Root directory of the ARO dataset repo",
+        help="Root directory for ARO image data in scratch",
     )
     parser.add_argument(
         "--dataset",
@@ -195,9 +224,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.aro_data_root.is_dir():
-        print(f"Error: ARO data root not found: {args.aro_data_root}")
-        sys.exit(1)
+    args.aro_data_root.mkdir(parents=True, exist_ok=True)
+
+    # Ensure JSON annotations are present (copy from third_party/ if needed)
+    _copy_missing_annotations(args.aro_data_root)
 
     if args.dataset in ("coco", "all"):
         download_coco_val2014(args.aro_data_root, workers=args.workers)

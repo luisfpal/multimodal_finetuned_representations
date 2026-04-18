@@ -81,12 +81,16 @@ def apply_chat_template(
     has_image: bool = False,
     guide_text: str = "",
     conv_mode: Optional[str] = None,
+    assistant_prefix: str = "",
 ) -> list[str]:
     """Apply the Cambrian chat template to questions, returning formatted prompts.
 
     Mirrors the ``apply_chat_template`` function in ``internvl_utils.py``.
     Conv mode is resolved internally from ``model.config._name_or_path``.
     Use ``resolve_cambrian_conv_mode`` directly if you need the mode string.
+
+    When ``assistant_prefix`` is non-empty, seed the assistant turn with this
+    partial response so the model continues from that point (continuation mode).
     """
     _ensure_cambrian_importable()
     from cambrian.constants import (
@@ -120,7 +124,15 @@ def apply_chat_template(
         conv = conv_templates[selected_mode].copy()
         conv.append_message(conv.roles[0], q)
         conv.append_message(conv.roles[1], None)
-        prompts.append(conv.get_prompt())
+        prompt = conv.get_prompt()
+        if assistant_prefix:
+            # Passing None for the assistant role gives just the role header with no
+            # turn-closing separator.  We then manually append the partial content.
+            # Vicuna-style templates (TWO/SINGLE) end with "ROLE:" → add a space.
+            # LLAMA_3 / CHATML / MPT end with a header token or "\n" → append directly.
+            sep = " " if prompt.rstrip("\n").endswith(":") else ""
+            prompt = prompt + sep + assistant_prefix
+        prompts.append(prompt)
 
     return prompts
 
@@ -207,6 +219,7 @@ def prepare_cambrian_batch_inputs(
     guide_text: str = "",
     conv_mode: Optional[str] = None,
     model_name_or_path: Optional[str] = None,
+    assistant_prefix: str = "",
 ) -> dict[str, Any]:
     """Prepare tokenized inputs, prompts, and image tensors for Cambrian.
 
@@ -226,6 +239,7 @@ def prepare_cambrian_batch_inputs(
         has_image=has_image,
         guide_text=guide_text,
         conv_mode=selected_mode,
+        assistant_prefix=assistant_prefix,
     )
     tokenized = tokenize_cambrian_prompts(
         prompts=prompts,

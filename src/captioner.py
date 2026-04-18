@@ -193,6 +193,8 @@ class VlmCaptioner:
                         "- Output ONLY the final caption - no reasoning, no meta-commentary, no thinking tags\n"
                         "- If you must think, complete your thinking fully before the caption\n"
                         "- Focus on main objects, actions, and scene elements visible in the image\n"
+                        "- BE SPECIFIC and DETAILED about the visual content\n"
+                        "- The caption must convey the same information as the image\n"
                         "- This is an URGENT, top-priority task - follow these rules exactly"
                     ),
                 },

@@ -122,6 +122,7 @@ def apply_chat_template(
     text: Union[str, List[str]],
     num_patches_list: Optional[List[int]] = None,
     guide_text: str = "",
+    assistant_prefix: str = "",
 ) -> List[str]:
     """Apply InternVL chat template to text, optionally with image tokens.
 
@@ -129,6 +130,8 @@ def apply_chat_template(
         model: InternVL model (needed for conv_template)
         text: Single string or list of strings
         num_patches_list: Number of patches per image. If None, text-only mode (no image tokens).
+        assistant_prefix: When non-empty, seed the assistant turn with this partial response
+            so the model continues from that point (continuation mode).
     """
     # Normalize to list
     if isinstance(text, str):
@@ -153,6 +156,10 @@ def apply_chat_template(
         template.append_message(template.roles[0], txt)
         template.append_message(template.roles[1], None)
         query = template.get_prompt()
+        if assistant_prefix:
+            # MPT style: role = "<|im_start|>assistant\n", ends with \n — append directly.
+            # Appending to None (role-only) avoids the separator that would close the turn.
+            query = query + assistant_prefix
 
         # Replace <image> with IMG_CONTEXT tokens (only if we have images)
         if has_image:
