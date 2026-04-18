@@ -64,7 +64,7 @@ TASK_LIMITS = {
     # "flickr30k": 5000,  # 1000 samples (test)
     # "coco2017_cap_val": 5000,  # 5000 samples
     # "llava_in_the_wild": 15,  # 60 samples, heavy post processing
-    "flickr30k": 50,  # 1000 samples (test)
+    # "flickr30k": 50,  # 1000 samples (test)
     # "coco2017_cap_val": 25,  # 5000 samples
     # "mmmu_val": 5000,
 }
