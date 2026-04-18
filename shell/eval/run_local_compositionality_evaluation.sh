@@ -40,7 +40,7 @@ SUGARCREPE_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/sugar-
 
 MODEL_TO_EVAL="${1:-$DEFAULT_MODEL_NAME}"
 BENCHMARK="${2:-all}"
-LIMIT="${3:-5}"
+LIMIT="${3:-}"
 
 if [ -z "$MODEL_TO_EVAL" ]; then
     echo "Error: No model specified."

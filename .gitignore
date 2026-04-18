@@ -48,6 +48,8 @@ backup/
 # ============================================================================
 tinkering/
 tests/
+results/representations_classification/
+results/mmmu_evaluation/
 
 # ============================================================================
 # LARGE BINARY FILES (models, checkpoints, archives)
