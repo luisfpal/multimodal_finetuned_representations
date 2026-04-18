@@ -48,7 +48,7 @@ RANDOM_SEED = NUMPY_RANDOM_SEED = TORCH_RANDOM_SEED = FEWSHOT_RANDOM_SEED = 42
 
 # Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
 TASK_LIMITS = {
-    "scienceqa_img": 25,  # 2018 samples
+    # "scienceqa_img": 25,  # 2018 samples
     "mme": 5000,  # 2374 samples
     # "textvqa_val": 5000,  # 5000 samples
     "pope": 5000,  # 9000 samples
