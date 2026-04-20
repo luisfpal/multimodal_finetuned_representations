@@ -126,3 +126,5 @@ third_party/cambrian/fsdp_config.json
 .claude/
 GEMINI.md
 CLAUDE.md
+AGENTS.md
+.claudeignore
