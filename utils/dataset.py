@@ -1,10 +1,14 @@
+import ast
 import base64
+import csv
 import hashlib
 import json
 import os
 import re
+from collections import Counter
 from functools import partial
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import random
 
@@ -32,6 +36,9 @@ from .constants import (
 from .internvl_utils import apply_chat_template as apply_internvl_chat_template
 from .internvl_utils import get_pixel_values
 from .model_utils import ProcessorType
+from .prompt_formatting import format_user_turn_text
+
+SEED: int = 42
 
 MULTIPLE_CHOICE_BENCHMARKS = [
     "mmlu",
@@ -474,7 +481,7 @@ class OpenVQADataset(Dataset):
         cache_dir: Optional[str] = None,
         split: str = "train",
         downsample_size: Optional[int] = None,
-        seed: int = 42,
+        seed: int = SEED,
         images_qa: bool = False,
         texts_qa: bool = False,
         remove_yes_no: bool = False,
@@ -769,7 +776,7 @@ class ImageCaptioningDataset(Dataset):
         self,
         dataset_path_or_name: str,
         downsample_size: Optional[int] = None,
-        seed: int = 42,
+        seed: int = SEED,
         concatenate_captions_and_add_prompt: bool = False,
         concatenate_captions: bool = False,
     ):
@@ -900,7 +907,7 @@ def _build_llava_prompts(
         content: List[Dict[str, Any]] = []
         if image is not None:
             content.append({"type": "image"})
-        text = f"{question}\n{guide_text}\n" if guide_text else question
+        text = format_user_turn_text(question, guide_text)
         content.append({"type": "text", "text": text})
         conv: List[Dict[str, Any]] = [{"role": "user", "content": content}]
         if include_system:
@@ -1251,3 +1258,626 @@ def get_dataloader_for_captioning(
         collate_fn=collate_fn,
         pin_memory=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# ClassificationDataset — for ScienceQA, MMMU, mini-imagenet probing
+# ---------------------------------------------------------------------------
+
+SCIENCEQA_MIN_TOPIC_SAMPLES = 70
+MMMU_IMAGE_COLUMNS = [f"image_{i}" for i in range(1, 8)]
+_IDENTIFY_QUESTION = (
+    "You are a precision image classifier. Your task is to identify the primary entity "
+    "in the image using the most specific name possible. Rules:\n"
+    "1. Output exactly one identifier.\n"
+    "2. Use snake_case for multi-word names (e.g., golden_retriever).\n"
+    "3. Do not use articles (a, an, the).\n"
+    "4. Do not provide descriptions or sentences."
+)
+
+_DESCRIBE_QUESTION = "Describe this image in detail."
+_DESCRIBE_STARTS = (
+    "A picture of a",
+    "The scene shows",
+    "Portrayed in the figure, there is",
+    "I see an image with",
+    "Of course! Above, there is a photo displaying",
+)
+
+_PROMPT_MODES: dict[str, tuple[str, str]] = {
+    "describe":    (_DESCRIBE_QUESTION, ""),
+    "continuation": (
+        "In one sentence, describe the contents of the image.",
+        "In the image, there is a ",
+    ),
+    "mcq":                ("", ""),  # mini-imagenet, category-based, N-choice
+    "mcq_nocat":          ("", ""),  # mini-imagenet, category-free, N-choice (new)
+    "mcq_nocat_filter":   ("", ""),  # mini-imagenet, category-free + filter to N classes
+    "category_id":        ("", ""),  # mini-imagenet, open id with category hint
+    "identify":           (_IDENTIFY_QUESTION, "Identity: "),
+    "animal_mcq":         ("", ""),  # imagenet_short_text, N-choice from all 100 classes
+    "animal_mcq_filter":  ("", ""),  # imagenet_short_text, filter to N classes + N-choice
+    "animal_id":          ("This animal is a ", ""),
+    "generic_mcq":            ("", ""),  # generic HF classification datasets
+    "generic_mcq_filter":     ("", ""),
+    "generic_mcq_top_filter": ("", ""),
+}
+
+MCQ_MODES: frozenset[str] = frozenset({
+    "mcq", "mcq_nocat", "mcq_nocat_filter",
+    "animal_mcq", "animal_mcq_filter",
+    "generic_mcq", "generic_mcq_filter", "generic_mcq_top_filter",
+})
+MCQ_FILTER_MODES: frozenset[str] = frozenset({
+    "mcq_nocat_filter", "animal_mcq_filter",
+    "generic_mcq_filter", "generic_mcq_top_filter",
+})
+MCQ_FREE_MODES: frozenset[str] = frozenset({
+    "mcq_nocat", "mcq_nocat_filter",
+    "animal_mcq", "animal_mcq_filter",
+    "generic_mcq", "generic_mcq_filter", "generic_mcq_top_filter",
+})
+
+# Dataset-specific MCQ question text for generic HF classification datasets.
+_GENERIC_MCQ_QUESTIONS: dict[str, str] = {
+    "food101": "What food is shown in this image?",
+    "sun397": "What scene is shown in this image?",
+    "caltech101": "What object is shown in this image?",
+}
+
+_MCQ_CATALOG_PATH = (
+    Path(__file__).resolve().parents[1] / "data" / "mini-imagenet" / "mini-imagenet_mcq_categorization.csv"
+)
+
+
+def _load_mcq_catalog(path: Path) -> tuple[dict[str, dict], dict[str, list[str]]]:
+    """Returns (wnid_to_entry, category_to_class_names)."""
+    wnid_to_entry: dict[str, dict] = {}
+    category_to_classes: dict[str, list[str]] = {}
+    with path.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            wnid_to_entry[row["wnid"]] = {
+                "class_name": row["class_name"],
+                "question_category": row["question_category"],
+            }
+            category_to_classes.setdefault(row["question_category"], []).append(row["class_name"])
+    return wnid_to_entry, category_to_classes
+
+
+def _format_mmmu_question(instance: dict) -> str:
+    """Format an MMMU instance as 'question\\nA. opt\\n...' with image tags stripped."""
+    question_text = re.sub(r"<image[^>]*>", " ", str(instance["question"]))
+    question_text = re.sub(r"\s+", " ", question_text).strip()
+    raw_options = instance.get("options", [])
+    if isinstance(raw_options, str):
+        try:
+            options = ast.literal_eval(raw_options)
+        except (ValueError, SyntaxError):
+            options = []
+    else:
+        options = list(raw_options) if raw_options is not None else []
+    choices_lines = []
+    for letter_ord, choice_text in zip(range(ord("A"), ord("Z") + 1), options):
+        normalized = re.sub(r"<image[^>]*>", " ", str(choice_text))
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        choices_lines.append(f"{chr(letter_ord)}. {normalized}")
+    if choices_lines:
+        return f"{question_text}\n" + "\n".join(choices_lines)
+    return question_text
+
+
+def _balanced_describe_starts(num_samples: int, seed: int) -> list[str]:
+    repeats = (num_samples + len(_DESCRIBE_STARTS) - 1) // len(_DESCRIBE_STARTS)
+    starts = list(_DESCRIBE_STARTS) * repeats
+    starts = starts[:num_samples]
+    rng = random.Random(seed)
+    rng.shuffle(starts)
+    return starts
+
+
+def _format_describe_prompt(start: str) -> str:
+    return f'{_DESCRIBE_QUESTION} Start the description with: "{start}"'
+
+
+class ClassificationDataset(Dataset):
+    def __init__(
+        self,
+        dataset_name: str = "derek-thomas/ScienceQA",
+        split: str = "test",
+        max_samples: int | None = None,
+        label_granularity: str = "intermediate",
+        prompt_mode: str = "describe",
+        seed: int = SEED,
+        n_choices: int = 10,
+        subsample_size: int | None = None,
+        label_mode: str = "class_name",
+    ) -> None:
+        if subsample_size is not None and prompt_mode in MCQ_FILTER_MODES:
+            raise ValueError(
+                f"--subsample-size is disjoint from filter modes; got "
+                f"prompt_mode={prompt_mode!r} with subsample_size={subsample_size}. "
+                f"Filter modes already subsample by class."
+            )
+        if prompt_mode in MCQ_MODES and n_choices < 2:
+            raise ValueError(f"n_choices must be >= 2 for MCQ modes, got {n_choices}")
+        if label_mode == "option_letter" and prompt_mode not in MCQ_MODES:
+            raise ValueError(
+                f"label_mode='option_letter' requires an MCQ prompt_mode; "
+                f"got prompt_mode={prompt_mode!r}"
+            )
+
+        dataset = load_dataset(dataset_name, split=split)
+        self.dataset_name_lower = dataset_name.lower()
+        self.label_granularity = label_granularity
+        self.prompt_mode = prompt_mode
+        self.n_choices = n_choices
+        self.subsample_size = subsample_size
+        self.label_mode = label_mode
+
+        if "scienceqa" in self.dataset_name_lower:
+            topics_counts = Counter(dataset["topic"])
+
+            def filter_min_counts_and_image(example):
+                return (
+                    topics_counts[example["topic"]] >= SCIENCEQA_MIN_TOPIC_SAMPLES
+                    and example["image"] is not None
+                )
+
+            filtered_dataset = dataset.filter(filter_min_counts_and_image, num_proc=8)
+            topics_counts_filtered = Counter(filtered_dataset["topic"])
+
+            def filter_min_counts(example):
+                return topics_counts_filtered[example["topic"]] >= SCIENCEQA_MIN_TOPIC_SAMPLES
+
+            self.dataset = filtered_dataset.filter(filter_min_counts, num_proc=8)
+        elif "mmmu" in self.dataset_name_lower:
+            self.dataset = dataset.filter(
+                lambda example: sum(
+                    example.get(column) is not None for column in MMMU_IMAGE_COLUMNS
+                ) <= 1,
+                num_proc=8,
+            )
+            self.dataset = self.dataset.filter(
+                lambda example: str(example.get("question_type", "")).strip().lower()
+                == "multiple-choice",
+                num_proc=8,
+            )
+            if label_granularity == "detailed":
+                all_subfields = [str(sf).strip() for sf in self.dataset["subfield"]]
+                subfield_counts = Counter(sf for sf in all_subfields if sf)
+                if subfield_counts:
+                    mean_count = sum(subfield_counts.values()) / len(subfield_counts)
+                    valid_subfields = {
+                        sf for sf, cnt in subfield_counts.items() if cnt >= mean_count
+                    }
+                    self.dataset = self.dataset.filter(
+                        lambda example: str(example.get("subfield", "")).strip()
+                        in valid_subfields,
+                        num_proc=8,
+                    )
+        elif "mini-imagenet" in self.dataset_name_lower:
+            lf = dataset.features["label"]
+            self._class_names: list[str] | None = lf.names if hasattr(lf, "names") else None
+            self._mini_imagenet_question = _PROMPT_MODES.get(prompt_mode, _PROMPT_MODES["describe"])[0]
+            self._mcq_catalog, self._category_classes = _load_mcq_catalog(_MCQ_CATALOG_PATH)
+            self._all_catalog_classes: list[str] = sorted({
+                entry["class_name"] for entry in self._mcq_catalog.values()
+            })
+            self._mcq_selected: set[str] = set()
+            if prompt_mode == "mcq_nocat_filter":
+                rng = random.Random(seed)
+                self._mcq_selected = set(rng.sample(self._all_catalog_classes, n_choices))
+                dataset = dataset.filter(
+                    lambda x: self._mcq_catalog[self._class_names[x["label"]]]["class_name"]
+                              in self._mcq_selected
+                )
+            self.dataset = dataset
+        elif "imagenet_short_text" in self.dataset_name_lower:
+            # Build offset→class_name map from first unique 100 rows.
+            # synset like "cocker_spaniel.n.01" → "cocker_spaniel"
+            seen: dict[str, str] = {}
+            for row in dataset:
+                if row["offset"] not in seen:
+                    seen[row["offset"]] = row["synset"].split(".")[0]
+                if len(seen) == 100:
+                    break
+            self._imagenet_offset_to_class: dict[str, str] = seen
+            self._imagenet_all_classes: list[str] = sorted(seen.values())
+            self._imagenet_animal_question: str = _PROMPT_MODES.get(
+                prompt_mode, _PROMPT_MODES["animal_id"]
+            )[0]
+            self._animal_selected: set[str] = set()
+            if prompt_mode == "animal_mcq_filter":
+                rng = random.Random(seed)
+                self._animal_selected = set(rng.sample(self._imagenet_all_classes, n_choices))
+                dataset = dataset.filter(
+                    lambda x: self._imagenet_offset_to_class[x["offset"]] in self._animal_selected
+                )
+            self.dataset = dataset
+        elif any(ds in self.dataset_name_lower for ds in ("food101", "sun397", "caltech101")):
+            lf = dataset.features["label"]
+            self._class_names_list: list[str] = (
+                lf.names if hasattr(lf, "names") else [str(i) for i in range(lf.num_classes)]
+            )
+            self._generic_mcq_question: str = next(
+                q for k, q in _GENERIC_MCQ_QUESTIONS.items() if k in self.dataset_name_lower
+            )
+            dataset = self._prepare_generic_classification_dataset(
+                dataset=dataset,
+                dataset_name=dataset_name,
+                prompt_mode=prompt_mode,
+                n_choices=n_choices,
+                seed=seed,
+            )
+            self.dataset = dataset
+        else:
+            raise ValueError(
+                "Unsupported dataset for classification pipeline: "
+                f"{dataset_name!r}. Supported: ScienceQA, MMMU, mini-imagenet, "
+                "imagenet_short_text, food101, sun397, caltech101."
+            )
+
+        # Compute labels before any subsampling (needed to stratify).
+        pre_labels = [self._extract_label(instance) for instance in self.dataset]
+
+        # Seeded class-stratified subsample (disjoint from *_filter modes).
+        if subsample_size is not None:
+            from .subsample import stratified_indices
+            keep = stratified_indices(pre_labels, subsample_size, seed=seed)
+            self.dataset = self.dataset.select(keep)
+            self.labels = [pre_labels[i] for i in keep]
+        else:
+            self.labels = pre_labels
+
+        # _within_class_idx on the final (post-subsample) dataset.
+        self._within_class_idx = self._build_within_class_indices(self.labels)
+
+        # _option_letters: cycle A..chr(A+k-1) per class via (within_class_idx % k).
+        self._option_letters: list[str | None] = []
+        for i, instance in enumerate(self.dataset):
+            if self.prompt_mode == "mcq":
+                wnid = self._class_names[instance["label"]]
+                cat_size = len(
+                    self._category_classes[self._mcq_catalog[wnid]["question_category"]]
+                )
+                k = min(cat_size, self.n_choices)
+            elif self.prompt_mode in MCQ_FREE_MODES:
+                k = self.n_choices
+            else:
+                self._option_letters.append(None)
+                continue
+            pos = self._within_class_idx[i] % k
+            self._option_letters.append(chr(ord("A") + pos))
+
+        # Remap public labels to option letters if requested.
+        # Stratification above always used class-name labels (correct); this only
+        # affects the externally visible self.labels after all data shaping is done.
+        if label_mode == "option_letter":
+            self.labels = [
+                letter if letter is not None else self.labels[i]
+                for i, letter in enumerate(self._option_letters)
+            ]
+
+        # max_samples: last-resort prefix cap (debug). Applied after stratified sample.
+        if max_samples is not None and max_samples < len(self.dataset):
+            self.dataset = self.dataset.select(range(max_samples))
+            self.labels = self.labels[:max_samples]
+            self._within_class_idx = self._within_class_idx[:max_samples]
+            self._option_letters = self._option_letters[:max_samples]
+
+        self._describe_starts: list[str] = []
+        if (
+            self.prompt_mode == "describe"
+            and (
+                "mini-imagenet" in self.dataset_name_lower
+                or "imagenet_short_text" in self.dataset_name_lower
+            )
+        ):
+            self._describe_starts = _balanced_describe_starts(len(self.dataset), seed)
+
+        self.sample_ids = [
+            self._extract_sample_id(index=idx, instance=instance)
+            for idx, instance in enumerate(self.dataset)
+        ]
+        self.prompt_signature = self._compute_prompt_signature()
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, idx: int) -> dict[str, str | Image.Image]:
+        instance = self.dataset[idx]
+        image = self._extract_image(instance)
+        prompt, option_letter = self._build_prompt(instance, idx)
+        return {
+            "question": prompt,
+            "image": image,
+            "label": self.labels[idx],
+            "option_letter": option_letter,
+            "_raw": dict(instance),
+        }
+
+    @staticmethod
+    def _build_within_class_indices(labels: list[str]) -> list[int]:
+        class_seen: dict[str, int] = {}
+        within_class_idx: list[int] = []
+        for label in labels:
+            n = class_seen.get(label, 0)
+            within_class_idx.append(n)
+            class_seen[label] = n + 1
+        return within_class_idx
+
+    def _generic_label(self, instance: dict) -> str:
+        return self._class_names_list[instance["label"]]
+
+    def _generic_labels(self, dataset: datasets.Dataset) -> list[str]:
+        return [self._generic_label(instance) for instance in dataset]
+
+    def _prepare_generic_classification_dataset(
+        self,
+        *,
+        dataset: datasets.Dataset,
+        dataset_name: str,
+        prompt_mode: str,
+        n_choices: int,
+        seed: int,
+    ) -> datasets.Dataset:
+        """Apply generic-dataset shaping before prompt construction.
+
+        ``generic_mcq`` now has dataset-specific default semantics:
+        - Food101: keep all 101 classes, cap to 100 samples per class.
+        - SUN397: keep a seeded subset of 200 classes, all 50 samples each.
+        - Caltech101: keep the full imbalanced train split.
+
+        ``generic_mcq_filter`` and ``generic_mcq_top_filter`` keep their existing
+        behavior; this helper simply centralizes the shared class-pool setup.
+        """
+        self._all_generic_classes: list[str] = sorted(self._class_names_list)
+        self._generic_pool_classes: list[str] = list(self._all_generic_classes)
+        self._generic_selected: set[str] = set()
+
+        if prompt_mode == "generic_mcq":
+            if "food101" in self.dataset_name_lower:
+                from .subsample import stratified_indices
+
+                raw_labels = self._generic_labels(dataset)
+                target_size = 100 * len(self._all_generic_classes)
+                keep = stratified_indices(raw_labels, target_size, seed=seed)
+                dataset = dataset.select(keep)
+                self._generic_pool_classes = sorted(set(raw_labels[i] for i in keep))
+            elif "sun397" in self.dataset_name_lower:
+                if len(self._all_generic_classes) < 200:
+                    raise ValueError(
+                        f"generic_mcq for {dataset_name!r} requires at least 200 classes, "
+                        f"but only {len(self._all_generic_classes)} were found."
+                    )
+                rng = random.Random(seed)
+                self._generic_pool_classes = sorted(
+                    rng.sample(self._all_generic_classes, 200)
+                )
+                selected = set(self._generic_pool_classes)
+                dataset = dataset.filter(
+                    lambda x: self._generic_label(x) in selected,
+                    num_proc=8,
+                )
+            return dataset
+
+        if prompt_mode == "generic_mcq_filter":
+            if len(self._all_generic_classes) < n_choices:
+                raise ValueError(
+                    f"generic_mcq_filter requires at least n_choices={n_choices} classes "
+                    f"in {dataset_name!r}, but only {len(self._all_generic_classes)} found."
+                )
+            rng = random.Random(seed)
+            self._generic_selected = set(
+                rng.sample(self._all_generic_classes, n_choices)
+            )
+            self._generic_pool_classes = sorted(self._generic_selected)
+            return dataset.filter(
+                lambda x: self._generic_label(x) in self._generic_selected,
+                num_proc=8,
+            )
+
+        if prompt_mode == "generic_mcq_top_filter":
+            from .subsample import stratified_indices
+
+            raw_labels = self._generic_labels(dataset)
+            counts = Counter(raw_labels)
+            top_n = sorted(
+                counts,
+                key=lambda class_name: (-counts[class_name], class_name),
+            )[:n_choices]
+            if len(top_n) < n_choices:
+                raise ValueError(
+                    f"generic_mcq_top_filter requires at least n_choices={n_choices} classes "
+                    f"in {dataset_name!r}, but only {len(top_n)} found."
+                )
+            min_count = min(counts[class_name] for class_name in top_n)
+            self._generic_selected = set(top_n)
+            self._generic_pool_classes = sorted(self._generic_selected)
+            dataset = dataset.filter(
+                lambda x: self._generic_label(x) in self._generic_selected,
+                num_proc=8,
+            )
+            filtered_labels = self._generic_labels(dataset)
+            keep = stratified_indices(
+                filtered_labels,
+                n_choices * min_count,
+                seed=seed,
+            )
+            return dataset.select(keep)
+
+        return dataset
+
+    def _extract_image(self, instance: dict) -> Image.Image | None:
+        image = instance.get("image_1") if "mmmu" in self.dataset_name_lower else instance["image"]
+        if isinstance(image, Image.Image):
+            return image.convert("RGB")
+        return image
+
+    @staticmethod
+    def _extract_mmmu_subject(example_id: str) -> str:
+        return "_".join(example_id.split("_")[1:-1])
+
+    def _extract_label(self, instance: dict) -> str:
+        if "scienceqa" in self.dataset_name_lower:
+            return instance["topic"]
+        if "mini-imagenet" in self.dataset_name_lower:
+            names = getattr(self, "_class_names", None)
+            wnid = names[instance["label"]] if names is not None else str(instance["label"])
+            return self._mcq_catalog[wnid]["class_name"]   # always class_name
+        if "imagenet_short_text" in self.dataset_name_lower:
+            return self._imagenet_offset_to_class[instance["offset"]]
+        if any(ds in self.dataset_name_lower for ds in ("food101", "sun397", "caltech101")):
+            return self._class_names_list[instance["label"]]
+        if self.label_granularity == "detailed":
+            return str(instance.get("subfield", "")).strip()
+        return self._extract_mmmu_subject(instance["id"])
+
+    def _extract_sample_id(self, index: int, instance: dict) -> str:
+        if "id" in instance:
+            return str(instance["id"])
+        if "pid" in instance:
+            return str(instance["pid"])
+        question = str(instance.get("question", ""))
+        label = self._extract_label(instance)
+        return f"{self.dataset_name_lower}:{index}:{label}:{question}"
+
+    def _build_prompt(self, instance: dict, idx: int) -> tuple[str, str | None]:
+        if "scienceqa" in self.dataset_name_lower:
+            context_text = instance.get("hint", None)
+            context_text = "" if context_text == "nan" else context_text
+            choices_list = instance["choices"]
+            prompt = ""
+            if context_text:
+                prompt += f"Context: {context_text} "
+            if choices_list is not None:
+                last_choice = choices_list[-1]
+                for letter_ord, choice_text in zip(range(ord("A"), ord("Z") + 1), choices_list):
+                    prompt += f"{chr(letter_ord)}. {choice_text}"
+                    prompt += "\n" if choice_text != last_choice else ""
+            return prompt, None
+        if "mini-imagenet" in self.dataset_name_lower:
+            if self.prompt_mode == "mcq":
+                return self._build_mini_imagenet_category_mcq(instance, idx)
+            if self.prompt_mode in ("mcq_nocat", "mcq_nocat_filter"):
+                return self._build_mini_imagenet_free_mcq(instance, idx)
+            if self.prompt_mode == "category_id":
+                return self._build_mini_imagenet_category_id_prompt(instance), None
+            if self.prompt_mode == "describe":
+                return _format_describe_prompt(self._describe_starts[idx]), None
+            return self._mini_imagenet_question, None  # continuation / identify
+        if "imagenet_short_text" in self.dataset_name_lower:
+            if self.prompt_mode in ("animal_mcq", "animal_mcq_filter"):
+                return self._build_animal_mcq(instance, idx)
+            if self.prompt_mode == "describe":
+                return _format_describe_prompt(self._describe_starts[idx]), None
+            return self._imagenet_animal_question, None  # continuation / animal_id
+        if any(ds in self.dataset_name_lower for ds in ("food101", "sun397", "caltech101")):
+            if self.prompt_mode in ("generic_mcq", "generic_mcq_filter", "generic_mcq_top_filter"):
+                return self._build_generic_mcq(instance, idx)
+            return self._generic_mcq_question, None
+        return _format_mmmu_question(instance), None
+
+    def _compute_prompt_signature(self) -> str:
+        prompts = [
+            self._build_prompt(instance, idx)[0]
+            for idx, instance in enumerate(self.dataset)
+        ]
+        return hashlib.sha256("\n".join(prompts).encode("utf-8")).hexdigest()
+
+    def _build_mini_imagenet_category_mcq(self, instance: dict, idx: int) -> tuple[str, str]:
+        """Category-based MCQ: distractors drawn from the correct class's category."""
+        from .mcq_utils import build_mcq_prompt
+        names = self._class_names
+        wnid = names[instance["label"]] if names is not None else str(instance["label"])
+        entry = self._mcq_catalog[wnid]
+        category = entry["question_category"]
+        correct = entry["class_name"]
+        pool = [c for c in self._category_classes[category] if c != correct]
+        k = min(len(pool) + 1, self.n_choices)
+        correct_pos = self._within_class_idx[idx] % k
+        return build_mcq_prompt(
+            question=f"What {category} is shown in this image?",
+            correct=correct,
+            pool=pool,
+            n_choices=k,
+            correct_pos=correct_pos,
+            shuffle_seed=wnid,
+        )
+
+    def _build_mini_imagenet_free_mcq(self, instance: dict, idx: int) -> tuple[str, str]:
+        """Category-free MCQ for mini-imagenet.
+
+        ``mcq_nocat``         -> pool is all catalog class names (minus correct).
+        ``mcq_nocat_filter``  -> pool is the ``n_choices`` filtered classes (minus correct).
+        """
+        from .mcq_utils import build_mcq_prompt
+        names = self._class_names
+        wnid = names[instance["label"]] if names is not None else str(instance["label"])
+        correct = self._mcq_catalog[wnid]["class_name"]
+        if self.prompt_mode == "mcq_nocat_filter":
+            pool = [c for c in sorted(self._mcq_selected) if c != correct]
+        else:
+            pool = [c for c in self._all_catalog_classes if c != correct]
+        correct_pos = self._within_class_idx[idx] % self.n_choices
+        return build_mcq_prompt(
+            question="What is shown in this image?",
+            correct=correct,
+            pool=pool,
+            n_choices=self.n_choices,
+            correct_pos=correct_pos,
+            shuffle_seed=wnid,
+        )
+
+    def _build_mini_imagenet_category_id_prompt(self, instance: dict) -> str:
+        names = self._class_names
+        wnid = names[instance["label"]] if names is not None else str(instance["label"])
+        category = self._mcq_catalog[wnid]["question_category"]
+        return f"Provide the specific name of the {category} shown.\nOutput exactly one word."
+
+    def _build_animal_mcq(self, instance: dict, idx: int) -> tuple[str, str]:
+        """Category-free MCQ for imagenet_short_text.
+
+        ``animal_mcq``         -> pool is all 100 class names (minus correct).
+        ``animal_mcq_filter``  -> pool is the ``n_choices`` filtered classes (minus correct).
+        """
+        from .mcq_utils import build_mcq_prompt
+        offset = instance["offset"]
+        correct = self._imagenet_offset_to_class[offset]
+        if self.prompt_mode == "animal_mcq_filter":
+            pool = [c for c in sorted(self._animal_selected) if c != correct]
+        else:
+            pool = [c for c in self._imagenet_all_classes if c != correct]
+        correct_pos = self._within_class_idx[idx] % self.n_choices
+        return build_mcq_prompt(
+            question="What animal is shown in this image?",
+            correct=correct,
+            pool=pool,
+            n_choices=self.n_choices,
+            correct_pos=correct_pos,
+            shuffle_seed=offset,
+            letter_sep=": ",  # preserved from prior animal_mcq formatting
+        )
+
+    def _build_generic_mcq(self, instance: dict, idx: int) -> tuple[str, str]:
+        """Category-free MCQ for generic HF classification datasets (food101, sun397, caltech101).
+
+        ``generic_mcq``            -> pool is the shaped generic-MCQ class set (minus correct).
+        ``generic_mcq_filter``     -> pool is the N randomly selected classes (minus correct).
+        ``generic_mcq_top_filter`` -> pool is the top-N most-populated classes (minus correct).
+        """
+        from .mcq_utils import build_mcq_prompt
+        correct = self._class_names_list[instance["label"]]
+        if self.prompt_mode in ("generic_mcq_filter", "generic_mcq_top_filter"):
+            pool = [c for c in sorted(self._generic_selected) if c != correct]
+        else:
+            pool = [c for c in self._generic_pool_classes if c != correct]
+        correct_pos = self._within_class_idx[idx] % self.n_choices
+        return build_mcq_prompt(
+            question=self._generic_mcq_question,
+            correct=correct,
+            pool=pool,
+            n_choices=self.n_choices,
+            correct_pos=correct_pos,
+            shuffle_seed=correct,
+        )

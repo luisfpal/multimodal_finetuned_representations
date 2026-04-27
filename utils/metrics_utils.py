@@ -1,15 +1,29 @@
 import math
+import time
+import warnings
+from functools import wraps
 from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from dadapy.data import Data
-from sklearn.metrics import homogeneity_completeness_v_measure
-from sklearn.metrics import r2_score
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    adjusted_rand_score,
+    f1_score,
+    homogeneity_completeness_v_measure,
+    matthews_corrcoef,
+    r2_score,
+)
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
 
 # from anatome.similarity import svcca_distance
 from tqdm import tqdm
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def _ensure_device(
@@ -1776,3 +1790,325 @@ def compute_layers_homogeneity_score(
             homogeneity_scores[layer] = homogeneity_score
 
     return homogeneity_scores
+
+
+# ---------------------------------------------------------------------------
+# Classification metrics — layer-wise probing
+# ---------------------------------------------------------------------------
+
+
+def format_time_smart(seconds: int) -> str:
+    if seconds < 0:
+        return "0s"
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def timed_metric(metric_name: str):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            layer_results = func(*args, **kwargs)
+            elapsed_time = time.time() - start_time
+            print(
+                f"Metric {metric_name} completed in "
+                f"{format_time_smart(int(elapsed_time))}."
+            )
+            return layer_results
+        return wrapper
+    return decorator
+
+
+def compute_label_overlap(
+    data: Union[np.ndarray, torch.Tensor],
+    labels: Union[np.ndarray, torch.Tensor],
+    maxk: int = 30,
+    use_dadapy: bool = True,
+    metric: str = "euclidean",
+    class_fraction: float | None = 0.3,
+    weighted: bool = True,
+) -> float:
+    """Compute DADApy label overlap using GPU-computed nearest neighbours."""
+    if not use_dadapy:
+        warnings.warn(
+            "compute_label_overlap now always delegates label-overlap scoring to DADApy.",
+            stacklevel=2,
+        )
+    if metric not in {"euclidean", "cosine"}:
+        raise ValueError(f"Unsupported metric '{metric}'. Expected 'euclidean' or 'cosine'.")
+
+    if isinstance(data, torch.Tensor):
+        data_t = data.detach().to(device=DEVICE, dtype=torch.float32)
+    else:
+        data_t = torch.as_tensor(np.asarray(data, dtype=np.float32), device=DEVICE)
+
+    if isinstance(labels, torch.Tensor):
+        labels_np = labels.detach().cpu().numpy()
+    else:
+        labels_np = np.asarray(labels)
+    labels_np = labels_np.reshape(-1).astype(int)
+
+    n_samples = data_t.shape[0]
+    if labels_np.shape[0] != n_samples:
+        raise ValueError(
+            f"Data has {n_samples} samples, labels has {labels_np.shape[0]} samples"
+        )
+    if n_samples <= 1:
+        return 0.0
+
+    # Ask DADApy how many neighbours its class_fraction logic will need, then
+    # hand the public scoring call a GPU-computed neighbour table of that width.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _, _, required_k = Data()._label_imbalance_helper(labels_np, maxk, class_fraction)
+    effective_k = min(int(required_k), n_samples - 1)
+    if effective_k <= 0:
+        return 0.0
+
+    with torch.no_grad():
+        if metric == "cosine":
+            normed = F.normalize(data_t, p=2, dim=1)
+            sim = normed @ normed.T
+            sim.fill_diagonal_(-float("inf"))
+            nn_sim, nn_idx = torch.topk(sim, effective_k, dim=1, largest=True)
+            nn_dist = torch.clamp(1.0 - nn_sim, min=0.0, max=2.0)
+        else:
+            dist = torch.cdist(data_t, data_t)
+            dist.fill_diagonal_(float("inf"))
+            nn_dist, nn_idx = torch.topk(dist, effective_k, dim=1, largest=False)
+
+    self_idx = torch.arange(n_samples, device=data_t.device).unsqueeze(1)
+    self_dist = torch.zeros((n_samples, 1), dtype=nn_dist.dtype, device=data_t.device)
+    dist_for_dadapy = torch.cat([self_dist, nn_dist], dim=1).cpu().numpy()
+    idx_for_dadapy = torch.cat([self_idx, nn_idx], dim=1).cpu().numpy()
+
+    d = Data(distances=(dist_for_dadapy, idx_for_dadapy), maxk=effective_k)
+    overlap = d.return_label_overlap(
+        labels_np,
+        k=effective_k,
+        class_fraction=class_fraction,
+        weighted=weighted,
+    )
+    return float(overlap)
+
+
+@timed_metric("knn")
+def classify_per_layer_knn(
+    representations: torch.Tensor,
+    y: np.ndarray,
+    n_neighbors: int = 30,
+) -> dict[int, dict[str, float]]:
+    num_layers, num_samples, _ = representations.shape
+    use_stratify = bool(np.all(np.bincount(y) >= 2))
+    layer_results: dict[int, dict[str, float]] = {}
+
+    indices = np.arange(num_samples)
+    train_idx, test_idx = train_test_split(
+        indices, test_size=0.2, random_state=42, stratify=y if use_stratify else None,
+    )
+
+    update_every = max(1, int(0.1 * num_layers))
+    updates_pending = 0
+    with tqdm(total=num_layers, desc="Metric knn", unit="layer") as pbar:
+        for layer_idx in range(num_layers):
+            X_train_gpu = representations[layer_idx, train_idx].to(device=DEVICE, dtype=torch.float32)
+            X_test_gpu = representations[layer_idx, test_idx].to(device=DEVICE, dtype=torch.float32)
+
+            X_train_gpu = F.normalize(X_train_gpu, p=2, dim=1)
+            X_test_gpu = F.normalize(X_test_gpu, p=2, dim=1)
+
+            train_sim = torch.mm(X_train_gpu, X_train_gpu.t())
+            test_sim = torch.mm(X_test_gpu, X_train_gpu.t())
+
+            D_train = torch.clamp(1.0 - train_sim, min=0.0, max=2.0).cpu().numpy()
+            D_test = torch.clamp(1.0 - test_sim, min=0.0, max=2.0).cpu().numpy()
+            np.fill_diagonal(D_train, 0.0)
+            D_train = np.ascontiguousarray(D_train, dtype=np.float32)
+            D_test = np.ascontiguousarray(D_test, dtype=np.float32)
+
+            n_neighbors_effective = min(n_neighbors, len(train_idx))
+            knn = KNeighborsClassifier(
+                n_neighbors=n_neighbors_effective,
+                metric="precomputed",
+                weights="distance",
+                algorithm="brute",
+            )
+            knn.fit(D_train, y[train_idx])
+            y_pred = knn.predict(D_test)
+            y_true = y[test_idx]
+
+            layer_results[layer_idx] = {
+                "knn_f1_weighted": float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
+                "knn_mcc": float(matthews_corrcoef(y_true, y_pred)),
+            }
+
+            updates_pending += 1
+            if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
+                pbar.update(updates_pending)
+                updates_pending = 0
+
+    return layer_results
+
+
+@timed_metric("label_overlap")
+def classify_per_layer_label_overlap(
+    representations: torch.Tensor,
+    y: np.ndarray,
+    maxk: int = 30,
+    class_fraction: float | None = None,
+) -> dict[int, dict[str, float]]:
+    num_layers = representations.shape[0]
+    layer_results: dict[int, dict[str, float]] = {}
+
+    lo_kwargs = {} if class_fraction is None else {"class_fraction": class_fraction}
+    update_every = max(1, int(0.1 * num_layers))
+    updates_pending = 0
+    with tqdm(total=num_layers, desc="Metric label_overlap", unit="layer") as pbar:
+        for layer_idx in range(num_layers):
+            overlap = compute_label_overlap(
+                data=representations[layer_idx],
+                labels=y,
+                maxk=maxk,
+                metric="euclidean",
+                **lo_kwargs,
+            )
+            layer_results[layer_idx] = {"label_overlap": float(overlap)}
+
+            updates_pending += 1
+            if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
+                pbar.update(updates_pending)
+                updates_pending = 0
+
+    return layer_results
+
+
+@timed_metric("logistic_regression")
+def classify_per_layer_logistic_regression(
+    representations: torch.Tensor,
+    y: np.ndarray,
+) -> dict[int, dict[str, float]]:
+    num_layers, num_samples, _ = representations.shape
+    use_stratify = bool(np.all(np.bincount(y) >= 2))
+    layer_results: dict[int, dict[str, float]] = {}
+
+    indices = np.arange(num_samples)
+    train_idx, test_idx = train_test_split(
+        indices, test_size=0.2, random_state=42, stratify=y if use_stratify else None,
+    )
+
+    if np.unique(y[train_idx]).shape[0] < 2:
+        warnings.warn("Logistic regression requires at least 2 classes in train split.", stacklevel=2)
+        return {i: {"f1_weighted": 0.0, "f1_weighted_train": 0.0, "mcc": 0.0} for i in range(num_layers)}
+
+    update_every = max(1, int(0.1 * num_layers))
+    updates_pending = 0
+    with tqdm(total=num_layers, desc="Metric logistic_regression", unit="layer") as pbar:
+        for layer_idx in range(num_layers):
+            X = representations[layer_idx].numpy()
+            X_train, X_test = X[train_idx], X[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+
+            n_train_samples, n_features = X_train.shape
+            if n_train_samples < n_features:
+                classifier = LogisticRegression(
+                    penalty="l1", solver="liblinear", C=0.1, tol=1e-2,
+                    max_iter=2000, class_weight="balanced", random_state=42,
+                )
+            else:
+                classifier = LogisticRegression(
+                    penalty=None, solver="lbfgs", max_iter=2000,
+                    class_weight="balanced", random_state=42,
+                )
+
+            with warnings.catch_warnings(record=True) as captured:
+                warnings.simplefilter("always", ConvergenceWarning)
+                classifier.fit(X_train, y_train)
+                if captured:
+                    print(f"Warning: Layer {layer_idx} failed to converge.")
+
+            y_pred = classifier.predict(X_test)
+            y_pred_train = classifier.predict(X_train)
+            layer_results[layer_idx] = {
+                "f1_weighted": float(f1_score(y_test, y_pred, average="weighted", zero_division=0)),
+                "f1_weighted_train": float(f1_score(y_train, y_pred_train, average="weighted", zero_division=0)),
+                "mcc": float(matthews_corrcoef(y_test, y_pred)),
+            }
+
+            updates_pending += 1
+            if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
+                pbar.update(updates_pending)
+                updates_pending = 0
+
+    return layer_results
+
+
+@timed_metric("homogeneity")
+def homogeneity_score_per_layer(
+    representations: torch.Tensor,
+    y: np.ndarray,
+    K: int = 16,
+    Z: float = 1.65,
+) -> dict[int, dict[str, float]]:
+    num_layers, n_samples, _ = representations.shape
+    layer_results: dict[int, dict[str, float]] = {}
+
+    if n_samples <= K:
+        warnings.warn(f"n_samples ({n_samples}) <= K ({K}). Returning 0.0 for all layers.", stacklevel=2)
+        return {
+            layer_idx: {"homogeneity_score": 0.0, "adjusted_rand_score": 0.0, "n_clusters_ratio": 0.0}
+            for layer_idx in range(num_layers)
+        }
+
+    n_labels = len(np.unique(y))
+    id_index = int(math.log2(K))
+
+    update_every = max(1, int(0.1 * num_layers))
+    updates_pending = 0
+    with tqdm(total=num_layers, desc="Metric homogeneity", unit="layer") as pbar:
+        for layer_idx in range(num_layers):
+            try:
+                layer_data = F.normalize(
+                    representations[layer_idx].to(DEVICE, dtype=torch.float32), p=2, dim=1
+                )
+                with torch.no_grad():
+                    distances = torch.cdist(layer_data, layer_data).cpu().numpy().astype(np.float64)
+
+                d = Data(distances=distances)
+                d.distances = d.remove_zero_dists(d.distances)
+                id_list, _, _ = d.return_id_scaling_gride()
+                d.set_id(id_list[id_index])
+                d.compute_density_kNN(k=K)
+                cluster_labels = d.compute_clustering_ADP(Z=Z)
+
+                score, _, _ = homogeneity_completeness_v_measure(y, cluster_labels)
+                layer_results[layer_idx] = {
+                    "homogeneity_score": float(score),
+                    "adjusted_rand_score": float(adjusted_rand_score(y, cluster_labels)),
+                    "n_clusters_ratio": float(d.N_clusters / n_labels),
+                }
+            except Exception as exc:
+                print(f"Warning: Homogeneity failed at layer {layer_idx}: {exc}")
+                layer_results[layer_idx] = {
+                    "homogeneity_score": 0.0,
+                    "adjusted_rand_score": 0.0,
+                    "n_clusters_ratio": 0.0,
+                }
+
+            updates_pending += 1
+            if (layer_idx + 1) % update_every == 0 or (layer_idx + 1) == num_layers:
+                pbar.update(updates_pending)
+                updates_pending = 0
+
+    return layer_results

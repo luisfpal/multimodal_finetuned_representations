@@ -1,7 +1,9 @@
-import torch
-import os
 import gc
+import os
+from collections.abc import Sequence
 from typing import Tuple, Type, Union, Optional
+
+import torch
 from transformers import (
     LlavaProcessor,
     LlavaForConditionalGeneration,
@@ -301,6 +303,7 @@ def load_hf_model_and_processor_or_tokenizer(
     use_fast: bool = True,
     skip_model: bool = False,
     skip_processor: bool = False,
+    cambrian_vision_encoders: Sequence[str] | None = None,
 ) -> Union[
     ModelType,
     ProcessorType,
@@ -320,6 +323,8 @@ def load_hf_model_and_processor_or_tokenizer(
         use_fast (bool): Use the fast version of the processor if available.
         skip_model (bool): Whether to not load the model.
         skip_processor (bool): Whether to not load the processor.
+        cambrian_vision_encoders: Optional Cambrian vision encoder aliases to load.
+            None preserves the original full Cambrian encoder set.
 
     Returns:
         The loaded model and processor/tokenizer or just the model or the processor.
@@ -349,6 +354,7 @@ def load_hf_model_and_processor_or_tokenizer(
             attn_implementation=attn_implementation,
             skip_model=skip_model,
             skip_processor=skip_processor,
+            cambrian_vision_encoders=cambrian_vision_encoders,
         )
 
     # Handle InternVL2 models specially - they require dynamic class loading

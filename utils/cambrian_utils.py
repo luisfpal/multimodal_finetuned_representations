@@ -7,6 +7,7 @@ from PIL import Image
 from transformers import BatchEncoding, PreTrainedTokenizer
 
 from .cambrian_bridge import _ensure_cambrian_importable
+from .prompt_formatting import format_user_turn_text
 
 
 def is_cambrian_model(
@@ -110,8 +111,7 @@ def apply_chat_template(
 
     prompts: list[str] = []
     for question in questions:
-        q = f"{question}\n{guide_text}\n" if guide_text else question
-        q = q.strip()
+        q = format_user_turn_text(question, guide_text)
         if has_image:
             if use_im_start_end:
                 image_prefix = (

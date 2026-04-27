@@ -8,6 +8,8 @@ import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
 from transformers import PreTrainedModel
 
+from .prompt_formatting import format_user_turn_text
+
 # Constants
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -141,8 +143,7 @@ def apply_chat_template(
     queries = []
 
     for idx, txt in enumerate(text):
-        if guide_text and guide_text != "":
-            txt += f"\n{guide_text}\n"
+        txt = format_user_turn_text(txt, guide_text)
 
         # Add <image> placeholder only if we have images
         has_image = num_patches_list is not None and idx < len(num_patches_list)
