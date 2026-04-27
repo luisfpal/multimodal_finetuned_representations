@@ -1,282 +1,396 @@
-import os
-import matplotlib.pyplot as plt
+"""Paper-ready paired pretrained/finetuned multimodality heatmaps.
+
+This script intentionally keeps the original two-panel heatmap aesthetic from
+the legacy version, but reads the current multimodality result layout:
+
+    results/multimodality_comparison/<dataset>/last/unique_images/similarities/
+        <model_id>_<metric>.safetensors
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import re
+
 import matplotlib.gridspec as gridspec
-# Importing make_axes_locatable to strictly control colorbar sizing relative to the heatmap
+import matplotlib.pyplot as plt
 import numpy as np
-from safetensors.torch import load_file
+from safetensors import safe_open
 
 
-MODELS = ["llava_7b", "llava_13b", "llava-v1.5-7b-pretrained-lbasile", "llava-v1.5-13b-pretrained-lbasile", "InternVL2-8B", "InternVL2-8B-Pretrain",]
-METRICS = ["linear_cka", "neighborhood_overlap"]
-DATASET_NAMES = [
-    "l11p/COCOQA-restval-ICQA",
-    "l11p/VQAv2-COCO-restval-ICQ",
-]
-RESULTS_DIR = "/orfeo/cephfs/home/dssc/lpalaciosflores/multimodal_finetuned_representations/results"
+# ==============================================================================
+# SECTION 1 - CONFIGURATION
+# ==============================================================================
 
-# Helper to convert dataset name to directory name
-def get_dataset_dir_name(dataset_name):
-    # Removes 'l11p/' prefix, converts to lowercase, replaces '-' with '_' and appends '_img_vs_txt'
-    name = dataset_name.replace("l11p/", "").lower().replace("-", "_")
-    return f"{name}_img_vs_txt"
+PROJECT_ROOT = Path("/u/dssc/lpalaciosflores/multimodal_finetuned_representations")
+RESULTS_DIR = PROJECT_ROOT / "results" / "multimodality_comparison"
+PLOTS_DIR = PROJECT_ROOT / "plots" / "similarity_grids"
 
-def load_data():
-    """
-    Loads data into a dictionary with the following hierarchy:
-    results_data = {
-        "model_name": {
-            "metric_name": {
-                "dataset_name": numpy_array
-            }
-        }
-    }
-    """
-    data = {}
-    
-    for model in MODELS:
-        model_data = {}
-        for metric in METRICS:
-            metric_data = {}
-            for dataset_name in DATASET_NAMES:
-                dir_name = get_dataset_dir_name(dataset_name)
-                similarities_path = os.path.join(RESULTS_DIR, dir_name, "similarities")
-                
-                # Filename pattern: {model}_last_{metric}.safetensors
-                filename = f"{model}_last_{metric}.safetensors"
-                file_path = os.path.join(similarities_path, filename)
-                
-                if os.path.exists(file_path):
-                    try:
-                        loaded = load_file(file_path)
-                        if metric in loaded:
-                            val = loaded[metric].cpu().numpy()
-                            # Apply transformation for information imbalance if needed (referencing plot_internvl_heatmap.py)
-                            if "information_imbalance" in metric:
-                                val = 1 - val
-                            metric_data[dataset_name] = val
-                    except Exception as e:
-                        print(f"Error loading {file_path}: {e}")
-            
-            if metric_data:
-                # Calculate element-wise mean across datasets
-                try:
-                    arrays = list(metric_data.values())
-                    if len(arrays) > 0:
-                        # Ensure all arrays have the same shape before stacking
-                        first_shape = arrays[0].shape
-                        if all(arr.shape == first_shape for arr in arrays):
-                            mean_val = np.mean(np.stack(arrays), axis=0)
-                            metric_data["average"] = mean_val
-                        else:
-                            print(f"Warning: Shapes do not match for {model} - {metric}, skipping average.")
-                except Exception as e:
-                    print(f"Error calculating average for {model} - {metric}: {e}")
+POOLING_METHOD = "last"
+VARIANT_TAG = "unique_images"
+DPI_PNG = 200
 
-                model_data[metric] = metric_data
-        
-        if model_data:
-            data[model] = model_data
-            
-    return data
+METRICS: tuple[str, ...] = (
+    "linear_cka",
+    "neighborhood_overlap",
+)
 
-results_data = load_data()
+DATASETS_TO_AVERAGE: tuple[tuple[str, str], ...] = (
+    ("cocoqa_restval_icqa_split01_human", "COCOQA Split01 (Human)"),
+    ("gqa_val_balanced_noyesno_captioned_synthetic", "GQA"),
+    ("vqav2_coco_restval_icq_split01_human", "VQAv2 Split01 (Human)"),
+    ("mmbench_en_dev_captioned_open_ended_synthetic", "MMBench (Open-Ended)"),
+    ("seed_bench_images_captioned_open_ended_synthetic", "SEED (Open-Ended)"),
+)
 
-def plot_heatmap_comparison(data_dict, model1, model2, metric, dataset_key, base_output_dir="plots/heatmap_comparisons", 
-                            model1_title=None, model2_title=None,
-                            fontsize_title=26, fontsize_label=18, fontsize_ticks=14, fontsize_cbar=14,
-                            trim_whitespace=False):
-    """
-    Generates a publication-quality side-by-side heatmap comparison.
-    
-    Args:
-        data_dict (dict): The loaded data structure.
-        model1 (str): Name of the first model.
-        model2 (str): Name of the second model.
-        metric (str): Metric to plot.
-        dataset_key (str): Dataset key (e.g., 'average' or 'l11p/COCOQA...').
-        base_output_dir (str): Base directory to save the plot.
-        model1_title (str, optional): Custom title for the first model subplot. Defaults to model1 name.
-        model2_title (str, optional): Custom title for the second model subplot. Defaults to model2 name.
-        fontsize_title (int, optional): Font size for subplot titles. Defaults to 26.
-        fontsize_label (int, optional): Font size for axis labels. Defaults to 18.
-        fontsize_ticks (int, optional): Font size for axis ticks. Defaults to 14.
-        fontsize_cbar (int, optional): Font size for colorbar ticks. Defaults to 14.
-        trim_whitespace (bool, optional): If True, uses bbox_inches='tight' when saving. Defaults to False.
-    """
-    # 1. Retrieve Data
+# Tuple format:
+#   (finetuned_id, finetuned_label, pretrained_id, pretrained_label)
+MODEL_PAIRS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "llava_7b",
+        "finetuned",
+        "llava-v1.5-7b-pretrained-lbasile",
+        "pretrained",
+    ),
+    (
+        "llava_13b",
+        "finetuned",
+        "llava-v1.5-13b-pretrained-lbasile",
+        "pretrained",
+    ),
+    (
+        "LLaVA-OneVision-1.5-4B-Instruct",
+        "finetuned",
+        "LLaVA-OneVision-1.5-4B-Base",
+        "pretrained",
+    ),
+    (
+        "LLaVA-OneVision-1.5-8B-Instruct",
+        "finetuned",
+        "LLaVA-OneVision-1.5-8B-Base",
+        "pretrained",
+    ),
+    (
+        "InternVL2-8B",
+        "finetuned",
+        "InternVL2-8B-Pretrain",
+        "pretrained",
+    ),
+    (
+        "cambrian-8b",
+        "finetuned",
+        "cambrian-8b-pretrained",
+        "pretrained",
+    ),
+)
+
+EXPECTED_SOURCE_ORIENTATION = ("text", "image")
+DISPLAY_ORIENTATION = ("image", "text")
+
+
+@dataclass(frozen=True)
+class ModelPair:
+    finetuned_id: str
+    finetuned_label: str
+    pretrained_id: str
+    pretrained_label: str
+
+    @property
+    def slug(self) -> str:
+        return f"{_slugify(self.pretrained_id)}_vs_{_slugify(self.finetuned_id)}"
+
+
+# ==============================================================================
+# SECTION 2 - DATA LOADING
+# ==============================================================================
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_").lower()
+    return re.sub(r"_+", "_", slug)
+
+
+def _similarities_path(dataset_dir: str, model_id: str, metric: str) -> Path:
+    return (
+        RESULTS_DIR
+        / dataset_dir
+        / POOLING_METHOD
+        / VARIANT_TAG
+        / "similarities"
+        / f"{model_id}_{metric}.safetensors"
+    )
+
+
+def _normalize_modality_label(value: str | None, fallback: str) -> str:
+    label = str(value or "").strip().lower()
+    return label if label in {"text", "image"} else fallback
+
+
+def _resolve_matrix_orientation(metadata: dict[str, str] | None) -> tuple[str, str]:
+    if not metadata:
+        return EXPECTED_SOURCE_ORIENTATION
+
+    row_modality = _normalize_modality_label(
+        metadata.get("row_modality"), EXPECTED_SOURCE_ORIENTATION[0]
+    )
+    col_modality = _normalize_modality_label(
+        metadata.get("col_modality"), EXPECTED_SOURCE_ORIENTATION[1]
+    )
+    if row_modality == col_modality:
+        return EXPECTED_SOURCE_ORIENTATION
+    return row_modality, col_modality
+
+
+def _orient_for_display(
+    matrix: np.ndarray,
+    source_orientation: tuple[str, str],
+) -> np.ndarray:
+    if source_orientation == DISPLAY_ORIENTATION:
+        return matrix
+    if source_orientation == EXPECTED_SOURCE_ORIENTATION:
+        return matrix.T
+    return matrix.T
+
+
+def load_matrix(dataset_dir: str, model_id: str, metric: str) -> np.ndarray | None:
+    path = _similarities_path(dataset_dir, model_id, metric)
+    if not path.exists():
+        return None
+
     try:
-        # Transpose matrices to swap axes: 
-        # Original: Rows=Text, Cols=Image -> New: Rows=Image, Cols=Text
-        matrix1 = data_dict[model1][metric][dataset_key].T
-        matrix2 = data_dict[model2][metric][dataset_key].T
-    except KeyError as e:
-        print(f"Error: Missing data for {e}. Check models, metric, or dataset availability.")
-        return
+        with safe_open(path, framework="np", device="cpu") as f:
+            if metric not in f.keys():
+                print(f"  ⚠ missing key {metric!r}: {path}")
+                return None
+            matrix = f.get_tensor(metric).copy()
+            source_orientation = _resolve_matrix_orientation(f.metadata())
+    except Exception as exc:
+        print(f"  ⚠ failed to load {path}: {exc}")
+        return None
 
-    # 2. Setup Plotting Style (Scientific Publication Quality)
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial', 'Helvetica', 'DejaVu Sans', 'Bitstream Vera Sans', 'sans-serif']
-    plt.rcParams['axes.titlesize'] = 26
-    plt.rcParams['axes.labelsize'] = 18
-    plt.rcParams['xtick.labelsize'] = 14
-    plt.rcParams['ytick.labelsize'] = 14
-    plt.rcParams['figure.titlesize'] = 28
-    plt.rcParams['axes.spines.top'] = False
-    plt.rcParams['axes.spines.right'] = False
-    
-    # 3. Determine Global Limits for Shared Colorbar
-    vmin = min(matrix1.min(), matrix2.min())
-    vmax = max(matrix1.max(), matrix2.max())
-    
-    # 4. Create Figure - TOTAL MANUAL CONTROL
-    # We disable constrained_layout/tight_layout to manually place everything.
+    matrix = _orient_for_display(matrix, source_orientation)
+    if "information_imbalance" in metric:
+        matrix = 1.0 - matrix
+    return matrix
+
+
+def average_over_datasets(model_id: str, metric: str) -> np.ndarray | None:
+    matrices: list[np.ndarray] = []
+    missing: list[str] = []
+
+    for dataset_dir, _label in DATASETS_TO_AVERAGE:
+        matrix = load_matrix(dataset_dir, model_id, metric)
+        if matrix is None:
+            missing.append(dataset_dir)
+        else:
+            matrices.append(matrix)
+
+    if missing:
+        print(f"  ⚠ {model_id} / {metric}: missing {len(missing)} dataset(s)")
+        for dataset_dir in missing:
+            print(f"     - {dataset_dir}")
+        return None
+
+    shapes = {matrix.shape for matrix in matrices}
+    if len(shapes) != 1:
+        print(f"  ⚠ {model_id} / {metric}: shape mismatch {sorted(shapes)}")
+        return None
+
+    return np.mean(np.stack(matrices, axis=0), axis=0)
+
+
+# ==============================================================================
+# SECTION 3 - PLOTTING
+# ==============================================================================
+
+
+def _apply_publication_style(
+    fontsize_title: int,
+    fontsize_label: int,
+    fontsize_ticks: int,
+) -> None:
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = [
+        "Arial",
+        "Helvetica",
+        "DejaVu Sans",
+        "Bitstream Vera Sans",
+        "sans-serif",
+    ]
+    plt.rcParams["axes.titlesize"] = fontsize_title
+    plt.rcParams["axes.labelsize"] = fontsize_label
+    plt.rcParams["xtick.labelsize"] = fontsize_ticks
+    plt.rcParams["ytick.labelsize"] = fontsize_ticks
+    plt.rcParams["figure.titlesize"] = fontsize_title + 2
+    plt.rcParams["axes.spines.top"] = False
+    plt.rcParams["axes.spines.right"] = False
+
+
+def _layer_ticks(num_layers: int) -> range:
+    return range(0, num_layers, 5)
+
+
+def plot_heatmap_comparison(
+    matrix_pretrained: np.ndarray,
+    matrix_finetuned: np.ndarray,
+    metric: str,
+    pair: ModelPair,
+    output_dir: Path,
+    *,
+    fontsize_title: int = 22,
+    fontsize_label: int = 20,
+    fontsize_ticks: int = 18,
+    fontsize_cbar: int = 18,
+    trim_whitespace: bool = True,
+) -> list[Path]:
+    """Generate the original-style side-by-side heatmap comparison."""
+    _apply_publication_style(fontsize_title, fontsize_label, fontsize_ticks)
+
+    vmin = float(min(matrix_pretrained.min(), matrix_finetuned.min()))
+    vmax = float(max(matrix_pretrained.max(), matrix_finetuned.max()))
+
     fig = plt.figure(figsize=(16, 8))
-    
-    # 5. Define Grid for Heatmaps
-    # --------------------------------------------------------------------------------
-    # CONTROL: HEATMAP SEPARATION & MARGINS
-    # 'wspace': Gap between heatmaps.
-    # 'left', 'right', 'top', 'bottom': Global figure margins (0-1).
-    # Reducing 'left' removes the "horrible white space" on the side.
-    # --------------------------------------------------------------------------------
-    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1], wspace=0.1,
-                           left=0.05, right=0.92, top=0.85, bottom=0.10)
-    
+    gs = gridspec.GridSpec(
+        1,
+        2,
+        width_ratios=[1, 1],
+        wspace=0.1,
+        left=0.05,
+        right=0.92,
+        top=0.85,
+        bottom=0.10,
+    )
+
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
-    
-    # 6. Plot Heatmaps
-    im1 = ax1.imshow(matrix1, cmap='viridis', vmin=vmin, vmax=vmax, origin='lower', interpolation='nearest')
-    im2 = ax2.imshow(matrix2, cmap='viridis', vmin=vmin, vmax=vmax, origin='lower', interpolation='nearest')
-    
-    # 7. Styling Axes
-    # Determine titles to display
-    t1 = model1_title if model1_title is not None else model1
-    t2 = model2_title if model2_title is not None else model2
-    
-    for ax, title in zip([ax1, ax2], [t1, t2]):
-        # ----------------------------------------------------------------------------
-        # CONTROL: SUBTITLE POSITION
-        # 'pad' controls the vertical distance (in points) between the subplot title
-        # and the top of the heatmap.
-        # - Larger pad -> Title moves up.
-        # - Smaller pad -> Title moves down.
-        # ----------------------------------------------------------------------------
-        ax.set_title(title,
-                     pad=16,
-                     color='#222222', 
-                     fontsize=fontsize_title,
-                    #  fontweight='bold',
+
+    im1 = ax1.imshow(
+        matrix_pretrained,
+        cmap="viridis",
+        vmin=vmin,
+        vmax=vmax,
+        origin="lower",
+        interpolation="nearest",
+    )
+    ax2.imshow(
+        matrix_finetuned,
+        cmap="viridis",
+        vmin=vmin,
+        vmax=vmax,
+        origin="lower",
+        interpolation="nearest",
+    )
+
+    for ax, title, matrix in (
+        (ax1, pair.pretrained_label, matrix_pretrained),
+        (ax2, pair.finetuned_label, matrix_finetuned),
+    ):
+        ax.set_title(
+            title,
+            pad=16,
+            color="#222222",
+            fontsize=fontsize_title,
         )
-        ax.set_xlabel("text input", labelpad=12, color='#333333', fontsize=fontsize_label)
-        
-        ax.tick_params(axis='both', which='major', direction='out', length=6, width=1.5, color='#444444', labelsize=fontsize_ticks)
-        
-        num_layers = matrix1.shape[0] 
-        ticks = range(0, num_layers, 5)
-        ax.set_xticks(ticks)
-        ax.set_yticks(ticks)
-        
+        ax.set_xlabel("text input", labelpad=12, color="#333333", fontsize=fontsize_label)
+        ax.set_ylabel("visual input", labelpad=12, color="#333333", fontsize=fontsize_label)
+        ax.tick_params(
+            axis="both",
+            which="major",
+            direction="out",
+            length=6,
+            width=1.5,
+            color="#444444",
+            labelsize=fontsize_ticks,
+        )
+        ax.set_xticks(_layer_ticks(matrix.shape[1]))
+        ax.set_yticks(_layer_ticks(matrix.shape[0]))
         ax.grid(False)
 
-    ax1.set_ylabel("visual input", labelpad=12, color='#333333', fontsize=fontsize_label)
-    ax2.set_ylabel("visual input", labelpad=12, color='#333333', fontsize=fontsize_label)
-    
-    # Remove y-axis labels and ticks for the second plot
-    # ax2.set_yticklabels([])
-    # ax2.set_ylabel("")
-    # ax2.tick_params(axis='y', left=False) 
-
-    # 8. Colorbar (Manual Positioning)
-    # This allows independent control of the colorbar's distance from the second plot.
-    # We must force a draw first so that get_position() returns the final calculated bbox.
-    fig.canvas.draw() 
-    
+    fig.canvas.draw()
     pos = ax2.get_position()
-    
-    # --------------------------------------------------------------------------------
-    # CONTROL: COLORBAR POSITION
-    # 'cbar_gap' controls the horizontal distance (in figure coordinates, 0-1)
-    # between the right edge of the second heatmap and the left edge of the colorbar.
-    # - Larger cbar_gap (e.g., 0.05) -> Colorbar moves further right.
-    # - Smaller cbar_gap (e.g., 0.01) -> Colorbar moves closer to the plot.
-    # --------------------------------------------------------------------------------
-    cbar_gap = 0.02 
-    cbar_width = 0.02 # Width of the colorbar
-    
-    # Create the colorbar axis [left, bottom, width, height]
-    cax = fig.add_axes([pos.x1 + cbar_gap, pos.y0, cbar_width, pos.height])
-    
+    cax = fig.add_axes([pos.x1 + 0.02, pos.y0, 0.02, pos.height])
     cbar = fig.colorbar(im1, cax=cax)
-    cbar.outline.set_visible(False) 
+    cbar.outline.set_visible(False)
     cbar.ax.tick_params(size=0, labelsize=fontsize_cbar)
 
-    # fig.tight_layout()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename_stem = f"{metric}_average_{len(DATASETS_TO_AVERAGE)}datasets"
 
-    # 9. Main Title
-    display_dataset = "Average" if dataset_key == "average" else dataset_key.split("/")[-1]
-    metric_display = metric.replace("_", " ").title()
-    
-    # --------------------------------------------------------------------------------
-    # CONTROL: MAIN TITLE POSITION
-    # 'y' controls the vertical position of the main figure title in figure coordinates (0-1).
-    # - y > 1.0 (e.g., 1.05) -> Title moves higher, potentially outside the saved area unless constrained.
-    # - y < 1.0 (e.g., 0.95) -> Title moves lower, closer to the subplots.
-    # --------------------------------------------------------------------------------
-    # fig.suptitle(f"{metric_display} Comparison: {display_dataset}", fontweight='bold', y=0.98)
-
-    # 10. Save
-    clean_metric = metric.replace("_", "-")
-    output_dir = os.path.join(base_output_dir, clean_metric)
-    os.makedirs(output_dir, exist_ok=True)
-    
-    clean_dataset = "average" if dataset_key == "average" else get_dataset_dir_name(dataset_key)
-    filename = f"multimodality_comparison_{model1}_vs_{model2}_{clean_dataset}_{clean_metric}.png"
-    save_path = os.path.join(output_dir, filename)
-    
-    # We avoid bbox_inches='tight' because it can shift our manually placed axes.
-    # Instead, we ensure the figure size (16,8) is sufficient for the content.
-    save_kwargs = {}
+    save_kwargs = {"facecolor": "white"}
     if trim_whitespace:
-        save_kwargs['bbox_inches'] = 'tight'
-        save_kwargs['pad_inches'] = 0.1
-        
-    plt.savefig(save_path, dpi=300, facecolor='white', **save_kwargs)
-    print(f"✅ Generated Scientific Plot: {save_path}")
+        save_kwargs["bbox_inches"] = "tight"
+        save_kwargs["pad_inches"] = 0.1
+
+    outputs = [
+        output_dir / f"{filename_stem}.png",
+        output_dir / f"{filename_stem}.pdf",
+    ]
+    fig.savefig(outputs[0], dpi=DPI_PNG, **save_kwargs)
+    fig.savefig(outputs[1], **save_kwargs)
     plt.close(fig)
+    return outputs
 
 
 # ==============================================================================
-# MAIN EXECUTION
+# SECTION 4 - MAIN
 # ==============================================================================
+
+
+def main() -> None:
+    pairs = [ModelPair(*pair) for pair in MODEL_PAIRS]
+    paper_dir = PLOTS_DIR / POOLING_METHOD / "paper"
+
+    print("=" * 72)
+    print("  heatmap_similarities_plot.py")
+    print(f"  pooling={POOLING_METHOD} | variant={VARIANT_TAG}")
+    print(f"  datasets={len(DATASETS_TO_AVERAGE)} | metrics={', '.join(METRICS)}")
+    print(f"  output={paper_dir}")
+    print("=" * 72)
+
+    written: list[Path] = []
+    skipped: list[str] = []
+
+    for pair in pairs:
+        pair_dir = paper_dir / pair.slug
+        print(f"\n{pair.pretrained_id}  ->  {pair.finetuned_id}")
+
+        for metric in METRICS:
+            print(f"  metric={metric}")
+            pretrained = average_over_datasets(pair.pretrained_id, metric)
+            finetuned = average_over_datasets(pair.finetuned_id, metric)
+
+            if pretrained is None or finetuned is None:
+                skipped.append(f"{pair.slug}/{metric}")
+                print("    skipped: incomplete data")
+                continue
+
+            if pretrained.shape != finetuned.shape:
+                skipped.append(f"{pair.slug}/{metric}")
+                print(
+                    "    skipped: pretrained/finetuned shape mismatch "
+                    f"{pretrained.shape} vs {finetuned.shape}"
+                )
+                continue
+
+            outputs = plot_heatmap_comparison(
+                pretrained,
+                finetuned,
+                metric,
+                pair,
+                pair_dir,
+            )
+            written.extend(outputs)
+            for output in outputs:
+                print(f"    ✓ {output}")
+
+    print("\n" + "=" * 72)
+    print(f"  wrote {len(written)} file(s)")
+    print(f"  skipped {len(skipped)} plot(s)")
+    for item in skipped:
+        print(f"    - {item}")
+    print("=" * 72)
+
+
 if __name__ == "__main__":
-    # Example Configuration
-    # SELECTED_METRIC = "neighborhood_overlap"
-    SELECTED_METRIC = "linear_cka"
-    SELECTED_DATASET = "average" 
-    # MODEL_A = "InternVL2-8B-Pretrain"
-    # MODEL_B = "InternVL2-8B"
-    MODEL_A = "llava-v1.5-13b-pretrained-lbasile"
-    MODEL_B = "llava_13b"
-    
-    # Optional Custom Titles (set to None to use model keys)
-    MODEL_A_TITLE = "pretrained"
-    MODEL_B_TITLE = "finetuned"
-    # MODEL_A_TITLE = "pretrained (InternVL2 8B)"
-    # MODEL_B_TITLE = "finetuned (InternVL2 8B)"
-    
-    print(f"Running comparison for {SELECTED_METRIC} on {SELECTED_DATASET}...")
-    plot_heatmap_comparison(
-        results_data, 
-        MODEL_A, 
-        MODEL_B, 
-        SELECTED_METRIC, 
-        SELECTED_DATASET,
-        model1_title=MODEL_A_TITLE,
-        model2_title=MODEL_B_TITLE,
-        fontsize_title=22,
-        fontsize_label=20,
-        fontsize_ticks=18,
-        fontsize_cbar=18,
-        trim_whitespace=True
-    )
+    main()

@@ -102,36 +102,36 @@ COLORMAP_NORM = "cross_model"  # "none" | "per_metric" | "cross_model"
 # Tuple format:
 #   (finetuned_id, finetuned_label, pretrained_id, pretrained_label)
 MODEL_PAIRS: list[tuple[str, str, str, str]] = [
-    # (
-    #     "llava_7b",
-    #     "LLaVA-7B (Finetuned)",
-    #     "llava-v1.5-7b-pretrained-lbasile",
-    #     "LLaVA-7B (Pretrained)",
-    # ),
-    # (
-    #     "llava_13b",
-    #     "LLaVA-13B (Finetuned)",
-    #     "llava-v1.5-13b-pretrained-lbasile",
-    #     "LLaVA-13B (Pretrained)",
-    # ),
-    # (
-    #     "InternVL2-8B",
-    #     "InternVL2-8B",
-    #     "InternVL2-8B-Pretrain",
-    #     "InternVL2-8B (Pretrained)",
-    # ),
-    # (
-    #     "LLaVA-OneVision-1.5-8B-stage2-2600",
-    #     "LLaVA-OneVision-8B (Finetuned)",
-    #     "LLaVA-OneVision-1.5-8B-stage1",
-    #     "LLaVA-OneVision-8B (Pretrained)",
-    # ),
-    # (
-    #     "LLaVA-OneVision-1.5-8B-Instruct",
-    #     "LLaVA-OneVision-8B (Instruct)",
-    #     "LLaVA-OneVision-1.5-8B-Base",
-    #     "LLaVA-OneVision-8B (Base)",
-    # ),
+    (
+        "llava_7b",
+        "LLaVA-7B (Finetuned)",
+        "llava-v1.5-7b-pretrained-lbasile",
+        "LLaVA-7B (Pretrained)",
+    ),
+    (
+        "llava_13b",
+        "LLaVA-13B (Finetuned)",
+        "llava-v1.5-13b-pretrained-lbasile",
+        "LLaVA-13B (Pretrained)",
+    ),
+    (
+        "LLaVA-OneVision-1.5-4B-Instruct",
+        "LLaVA-OneVision-4B (Instruct)",
+        "LLaVA-OneVision-1.5-4B-Base",
+        "LLaVA-OneVision-4B (Base)",
+    ),
+    (
+        "LLaVA-OneVision-1.5-8B-Instruct",
+        "LLaVA-OneVision-8B (Instruct)",
+        "LLaVA-OneVision-1.5-8B-Base",
+        "LLaVA-OneVision-8B (Base)",
+    ),
+    (
+        "InternVL2-8B",
+        "InternVL2-8B",
+        "InternVL2-8B-Pretrain",
+        "InternVL2-8B (Pretrained)",
+    ),
     (
         "cambrian-8b",
         "Cambrian-8B (Finetuned)",

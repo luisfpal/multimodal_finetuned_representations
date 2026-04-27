@@ -2,7 +2,6 @@ import random
 import numpy as np
 import torch
 from transformers import set_seed as hf_set_seed
-from typing import Union
 
 
 def seed_all(seed: int):

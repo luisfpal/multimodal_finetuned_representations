@@ -7,6 +7,11 @@ from dotenv import load_dotenv
 from safetensors.torch import load_file, save_file
 
 from src.residual_stream_tracer import residual_stream_tracer
+from utils.cambrian_bridge import (
+    build_cambrian_vision_variant_name,
+    cambrian_vision_selection_metadata,
+    normalize_cambrian_vision_encoder_selection,
+)
 from utils.cambrian_utils import is_cambrian_model
 from utils import (
     compute_cross_layers_residual_stream_similarities,
@@ -390,6 +395,17 @@ def main():
             "Mutates the dataset slug so results land in a separate directory."
         ),
     )
+    parser.add_argument(
+        "--cambrian-vision-encoders",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional Cambrian-only encoder selection. Omit to use the original "
+            "full Cambrian vision encoder set. Valid aliases: siglip, clip, "
+            "dinov2, convnext. Examples: --cambrian-vision-encoders siglip "
+            "or --cambrian-vision-encoders clip dinov2."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -405,7 +421,21 @@ def main():
             f"Valid options: {VALID_POOLING_METHODS}"
         )
 
-    if is_cambrian_model(model=None, model_name_or_path=args.model_name_or_path):
+    is_cambrian_requested = is_cambrian_model(
+        model=None,
+        model_name_or_path=args.model_name_or_path,
+    )
+    try:
+        args.cambrian_vision_encoders = normalize_cambrian_vision_encoder_selection(
+            args.cambrian_vision_encoders
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if args.cambrian_vision_encoders is not None and not is_cambrian_requested:
+        parser.error("--cambrian-vision-encoders is only valid for Cambrian models.")
+
+    if is_cambrian_requested:
         cambrian_non_last_pooling = [m for m in args.pooling_methods if m != "last"]
         if cambrian_non_last_pooling:
             parser.error(
@@ -460,6 +490,14 @@ def main():
             )
         dataset_slug = f"{dataset_slug}_{args.dataset_split}"
 
+    effective_downsample_size = args.downsample_size
+    if args.dataset_split and args.downsample_size is not None:
+        print(
+            "ℹ️  --downsample-size ignored because --dataset-split is active "
+            "(split selection takes precedence)."
+        )
+        effective_downsample_size = None
+
     sample_set_tag = (
         "repeated_images" if (is_mc and args.repeated_images) else "unique_images"
     )
@@ -487,6 +525,28 @@ def main():
     seed_all(args.seed)
 
     model_name = args.model_name_or_path.split("/")[-1]
+    model_variant_name = build_cambrian_vision_variant_name(
+        model_name,
+        args.cambrian_vision_encoders,
+    )
+    if (
+        args.cambrian_vision_encoders is not None
+        and model_variant_name == model_name
+    ):
+        parser.error(
+            "Cambrian vision encoder selection did not create a distinct model "
+            "variant name; refusing to risk cache/result collision."
+        )
+    selected_cambrian_metadata = cambrian_vision_selection_metadata(
+        args.cambrian_vision_encoders
+    )
+    if args.cambrian_vision_encoders is not None:
+        print(
+            "\n🧩 Cambrian vision encoders selected: "
+            f"{'+'.join(args.cambrian_vision_encoders)}"
+        )
+        print(f"    Results/cache model variant: {model_variant_name}")
+
     model_cache_dir = os.getenv(
         "HF_HUB_CACHE",
         os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
@@ -513,6 +573,7 @@ def main():
             dtype=MODEL_DTYPE,
             attn_implementation=ATTN_IMPLEMENTATION,
             device_map=DEVICE,
+            cambrian_vision_encoders=args.cambrian_vision_encoders,
         )
 
         print("\n📚 Preparing dataloaders...")
@@ -523,7 +584,7 @@ def main():
             "batch_size": args.batch_size,
             "cache_dir": datasets_cache_dir,
             "guide_text": args.guide_text,
-            "downsample_size": args.downsample_size,
+            "downsample_size": effective_downsample_size,
             "split": "train",
             "caption_source": args.caption_source,
         }
@@ -579,7 +640,7 @@ def main():
         missing_measures = find_missing_measures(
             args.similarity_measures,
             similarities_dir,
-            model_name,
+            model_variant_name,
             args.regression_type,
             args.dry_run,
             args.force or args.force_metrics_only,
@@ -594,7 +655,7 @@ def main():
             repr_dir = os.path.join(
                 os.path.expanduser(args.representations_dir),
                 "representations",
-                model_name,
+                model_variant_name,
                 dataset_n,
                 RESIDUAL_STREAM_TYPE,
                 pooling_method,
@@ -640,7 +701,8 @@ def main():
             )
 
         txt_metadata = {
-            "model": model_name,
+            "model": model_variant_name,
+            "model_variant_name": model_variant_name,
             "dataset": f"{dataset_prefix}_txt",
             "pooling_method": pooling_method_txt,
             "caption_source": args.caption_source,
@@ -650,7 +712,8 @@ def main():
             "repeated_images": str(sample_set_tag == "repeated_images"),
         }
         img_metadata = {
-            "model": model_name,
+            "model": model_variant_name,
+            "model_variant_name": model_variant_name,
             "dataset": f"{dataset_prefix}_img",
             "pooling_method": pooling_method_img,
             "caption_source": args.caption_source,
@@ -659,6 +722,8 @@ def main():
             "open_ended": str(bool(open_ended_tag)),
             "repeated_images": str(sample_set_tag == "repeated_images"),
         }
+        txt_metadata.update(selected_cambrian_metadata)
+        img_metadata.update(selected_cambrian_metadata)
 
         if txt_from_cache and img_from_cache:
             print(
@@ -697,6 +762,8 @@ def main():
             "caption_source": args.caption_source,
             "semantic_filter": sem_tag,
         }
+        sim_metadata["model_variant_name"] = model_variant_name
+        sim_metadata.update(selected_cambrian_metadata)
         print("    ℹ️  Matrix orientation: Rows=Text, Columns=Image")
 
         for measure_name in missing_measures:
@@ -718,7 +785,7 @@ def main():
                     save_path = os.path.join(
                         similarities_dir,
                         build_similarity_filename(
-                            model_name,
+                            model_variant_name,
                             measure_name,
                             args.regression_type,
                         ),
