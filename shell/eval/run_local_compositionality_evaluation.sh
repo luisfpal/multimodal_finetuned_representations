@@ -22,7 +22,7 @@ set -e
 # USER CONFIGURATION
 # =============================================================================
 
-PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/compositionality_evaluation.py"
 
 # Default model (override with first argument)
@@ -39,18 +39,38 @@ SUGARCREPE_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/sugar-
 # =============================================================================
 
 MODEL_TO_EVAL="${1:-$DEFAULT_MODEL_NAME}"
-BENCHMARK="${2:-all}"
-LIMIT="${3:-}"
+BENCHMARK="all"
+LIMIT=""
+EXTRA_ARGS=""
+
+shift || true
+for arg in "$@"; do
+    case "$arg" in
+        --*)
+            EXTRA_ARGS="$EXTRA_ARGS $arg"
+            ;;
+        *)
+            if [ -z "$BENCHMARK_SET" ]; then
+                BENCHMARK="$arg"
+                BENCHMARK_SET=1
+            elif [ -z "$LIMIT" ]; then
+                LIMIT="$arg"
+            fi
+            ;;
+    esac
+done
+EXTRA_ARGS="${EXTRA_ARGS# }"
 
 if [ -z "$MODEL_TO_EVAL" ]; then
     echo "Error: No model specified."
-    echo "Usage: bash $0 [MODEL] [BENCHMARK] [LIMIT]"
+    echo "Usage: bash $0 [MODEL] [BENCHMARK] [LIMIT] [--no-image]"
     exit 1
 fi
 
 echo "Model:     $MODEL_TO_EVAL"
 echo "Benchmark: $BENCHMARK"
 [ -n "$LIMIT" ] && echo "Limit:     $LIMIT samples"
+[ -n "$EXTRA_ARGS" ] && echo "Extra:     $EXTRA_ARGS"
 
 # =============================================================================
 # ENVIRONMENT SETUP
@@ -120,6 +140,9 @@ setup_cuda
 # =============================================================================
 
 MODEL_SUBDIR=$(basename "$MODEL_TO_EVAL" | sed 's/\//_/g')
+if [[ "$EXTRA_ARGS" == *"--no-image"* ]]; then
+    MODEL_SUBDIR="${MODEL_SUBDIR}_noimage"
+fi
 OUTPUT_DIR="$PROJECT_ROOT/evals/$MODEL_SUBDIR/compositionality"
 
 mkdir -p "$OUTPUT_DIR"
@@ -143,7 +166,7 @@ args=(
 )
 [ -n "$LIMIT" ] && args+=(--limit "$LIMIT")
 
-python "$PYTHON_SCRIPT" "${args[@]}"
+python "$PYTHON_SCRIPT" "${args[@]}" $EXTRA_ARGS
 
 elapsed=$(( SECONDS - start_time ))
 echo ""

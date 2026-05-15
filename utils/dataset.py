@@ -27,6 +27,7 @@ from .constants import (
     MMBENCH_ANSWER_CHOICES,
     MME_ANSWER_CHOICES,
     MMLU_ANSWER_CHOICES,
+    MMSTAR_ANSWER_CHOICES,
     SHORT_CAPTION_PROMPT,
     SQA_ANSWER_CHOICES,
     SYSTEM_ROLE,
@@ -48,6 +49,7 @@ MULTIPLE_CHOICE_BENCHMARKS = [
     "ai2d",
     "pope",
     "seed",
+    "mmstar",
 ]
 
 
@@ -78,6 +80,9 @@ def get_hf_dataset_split(
         if "mmlu" in dataset_path_or_name.lower():
             # MMLU dataset requires a specific name argument
             dataset_kwargs["name"] = "all"
+        elif "scienceqa" in dataset_path_or_name.lower():
+            # ScienceQA has FULL and IMG configs; we use the image-only subset
+            dataset_kwargs["name"] = "ScienceQA-IMG"
 
         dataset = load_dataset(**dataset_kwargs)
 
@@ -136,6 +141,7 @@ class MultipleChoiceDatasetBenchmark(Dataset):
             "ai2d",
             "pope",
             "seed",
+            "mmstar",
         ]
 
         self.dataset_path_or_name = dataset_path_or_name.lower()
@@ -264,6 +270,8 @@ class MultipleChoiceDatasetBenchmark(Dataset):
                 choice_data = question_data.get(choice, None)
                 if choice_data is not None:
                     choices_list.append(choice_data)
+        elif "mmstar" in self.dataset_path_or_name:
+            choices_list = MMSTAR_ANSWER_CHOICES
 
         # hint or subject for mmlu, scienceqa and mmbench
         context_text = question_data.get("hint", None)
@@ -697,7 +705,7 @@ class OpenVQADataset(Dataset):
             q_text = unique_qa_dict["question"]
             a_text = unique_qa_dict["answer"]
         else:
-            # Flat schema (GQA, TextVQA)
+            # Flat schema (GQA, TextVQA, CountBench)
             q_text = question_data["question"]
             if (
                 "textvqa" in self.dataset_path_or_name.lower()
@@ -716,6 +724,8 @@ class OpenVQADataset(Dataset):
                     a_text = c.most_common(1)[0][0]
                 else:
                     a_text = ""
+            elif "countbench" in self.dataset_path_or_name.lower():
+                a_text = str(question_data["number"])
             else:
                 a_text = question_data["answer"]
 
@@ -856,31 +866,54 @@ def _is_llava_family_processor(processor: Any) -> bool:
 
 
 def _processor_has_default_system(processor: Any) -> bool:
-    """Return True if the processor's chat template injects a system message by default.
+    """Return True if callers should skip injecting SYSTEM_ROLE into conversations.
 
-    Probes by rendering a minimal user-only conversation and checking whether
-    the word "system" appears in the output.  Result is cached per processor
-    class so the probe runs at most once per type.
+    This is True when either (a) the chat template already injects a system
+    message by default (LLaVA-OneVision's Qwen2 tokenizer), or (b) the chat
+    template cannot accept SYSTEM_ROLE's list-of-dicts content format
+    (Pixtral's Mistral-style template concatenates system content directly onto
+    a string). In both cases the caller should NOT prepend SYSTEM_ROLE.
+
+    Result is cached per processor class so the probe runs at most once per type.
     """
     cls_name = processor.__class__.__name__
     if cls_name in _DEFAULT_SYSTEM_CACHE:
         return _DEFAULT_SYSTEM_CACHE[cls_name]
-    tokenizer = getattr(processor, "tokenizer", processor)
-    apply_fn = getattr(tokenizer, "apply_chat_template", None)
+
+    # Prefer the processor's own chat template — for some multimodal processors
+    # (e.g. Pixtral) the template lives on the processor, not the tokenizer.
+    proc_apply = getattr(processor, "apply_chat_template", None)
+    tokenizer = getattr(processor, "tokenizer", None)
+    tok_apply = getattr(tokenizer, "apply_chat_template", None) if tokenizer is not None else None
+    apply_fn = proc_apply or tok_apply
     if apply_fn is None:
         _DEFAULT_SYSTEM_CACHE[cls_name] = False
         return False
+
+    user_msg = {"role": "user", "content": [{"type": "text", "text": "?"}]}
     try:
-        probe = apply_fn(
-            [{"role": "user", "content": [{"type": "text", "text": "?"}]}],
-            tokenize=False,
-            add_generation_prompt=False,
-        )
-        result = "system" in probe.lower()
+        probe = apply_fn([user_msg], tokenize=False, add_generation_prompt=False)
     except Exception:
-        result = False
-    _DEFAULT_SYSTEM_CACHE[cls_name] = result
-    return result
+        probe = ""
+    if "system" in probe.lower():
+        _DEFAULT_SYSTEM_CACHE[cls_name] = True
+        return True
+
+    # Template didn't auto-inject a system message. Check whether it can handle
+    # our SYSTEM_ROLE format (list-of-dicts content). If it can't, return True
+    # so callers skip injection rather than crashing.
+    system_role = {
+        "role": "system",
+        "content": [{"type": "text", "text": "probe"}],
+    }
+    try:
+        apply_fn([system_role, user_msg], tokenize=False, add_generation_prompt=False)
+    except Exception:
+        _DEFAULT_SYSTEM_CACHE[cls_name] = True
+        return True
+
+    _DEFAULT_SYSTEM_CACHE[cls_name] = False
+    return False
 
 
 def _build_llava_prompts(
@@ -1179,6 +1212,7 @@ def get_dataloader(
         or "cocoqa" in dataset_path_or_name.lower()
         or "gqa" in dataset_path_or_name.lower()
         or "textvqa" in dataset_path_or_name.lower()
+        or "countbench" in dataset_path_or_name.lower()
     ):
         dataset = OpenVQADataset(
             dataset_path_or_name=dataset_path_or_name,

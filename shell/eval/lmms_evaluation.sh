@@ -24,6 +24,17 @@ MODEL_CACHE_DIR="$HF_HOME/hub"
 export HF_HOME
 export HF_HUB_CACHE="$MODEL_CACHE_DIR"
 export HF_DATASETS_CACHE="$HF_HOME/datasets"
+
+# Force lmms-eval datasets cache to a writable node-local path.
+LOCAL_CACHE_ROOT="${LMMS_LOCAL_CACHE:-${SLURM_TMPDIR:-/tmp/$USER}}"
+if ! mkdir -p "$LOCAL_CACHE_ROOT" 2>/dev/null; then
+    LOCAL_CACHE_ROOT="$HOME/scratch/lmms_local_cache"
+    mkdir -p "$LOCAL_CACHE_ROOT"
+fi
+export LMMS_LOCAL_CACHE="$LOCAL_CACHE_ROOT"
+export LMMS_EVAL_DATASETS_CACHE="${LMMS_EVAL_DATASETS_CACHE:-$LOCAL_CACHE_ROOT/lmms_eval_hf_datasets}"
+mkdir -p "$LMMS_EVAL_DATASETS_CACHE"
+
 export LMMS_EVAL_USE_CACHE="True"
 export LMMS_EVAL_HOME="$HOME/scratch/lmms_eval_cache"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"

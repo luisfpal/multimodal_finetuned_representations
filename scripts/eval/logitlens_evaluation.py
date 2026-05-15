@@ -18,7 +18,9 @@ from utils.constants import (
     AI2D_ANSWER_CHOICES,
     MMBENCH_ANSWER_CHOICES,
     MME_ANSWER_CHOICES,
+    MMSTAR_ANSWER_CHOICES,
     POPE_ANSWER_CHOICES,
+    SQA_ANSWER_CHOICES,
 )
 
 from utils import (
@@ -38,7 +40,7 @@ load_dotenv()
 
 # Configuration
 MODEL_DTYPE = torch.bfloat16
-ATTN_IMPLEMENTATION = "flash_attention_2"
+ATTN_IMPLEMENTATION = "sdpa"
 RESIDUAL_STREAM_TYPE = "output_layer"
 TOKENS_POOLING_METHOD = "last"
 DEFAULT_TOP_K_LOGITS = 10
@@ -114,6 +116,33 @@ DATASETS = {
         "downsample_size": 2000,
         "subsets": ["images_qa"],
         "split": "validation",
+        "type": "open_ended",
+        "eval_methods": ["logit_lens"],
+    },
+    "lmms-lab/ScienceQA": {
+        "guide_text": "Answer with the option's letter from the given choices directly",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "test",
+        "type": "multiple_choice",
+        "choices": SQA_ANSWER_CHOICES,  # A, B, C, D, E
+        "eval_methods": ["linear_probe", "logit_lens"],
+    },
+    "Lin-Chen/MMStar": {
+        "guide_text": "Answer with the option's letter from the given choices directly",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "val",
+        "type": "multiple_choice",
+        "choices": MMSTAR_ANSWER_CHOICES,  # A, B, C, D
+        "eval_methods": ["linear_probe", "logit_lens"],
+        "open_ended_prompt": True,  # options already embedded in question text
+    },
+    "vikhyatk/CountBenchQA": {
+        "guide_text": "Answer with just a number.",
+        "downsample_size": 2000,
+        "subsets": ["images_qa"],
+        "split": "test",
         "type": "open_ended",
         "eval_methods": ["logit_lens"],
     },
@@ -578,6 +607,7 @@ def main():
                 "filter_mmbench_4_choices": config.get(
                     "filter_mmbench_4_choices", False
                 ),
+                "open_ended": config.get("open_ended_prompt", False),
             }
 
             # Set specific subset flags

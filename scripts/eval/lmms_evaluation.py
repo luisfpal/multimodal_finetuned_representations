@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 import os
+import re
 import sys
 import time
 from typing import Optional
@@ -46,9 +47,59 @@ except ImportError:
 
 RANDOM_SEED = NUMPY_RANDOM_SEED = TORCH_RANDOM_SEED = FEWSHOT_RANDOM_SEED = 42
 
+
+def _expand_path(path: str) -> str:
+    return os.path.expanduser(os.path.expandvars(path))
+
+
+def configure_lmms_datasets_cache() -> None:
+    """Configure a writable local datasets cache path for lmms-eval."""
+    explicit_cache = os.environ.get("LMMS_EVAL_DATASETS_CACHE", "").strip()
+    if explicit_cache:
+        resolved = _expand_path(explicit_cache)
+        os.makedirs(resolved, exist_ok=True)
+        print(f"[blue]LMMS_EVAL_DATASETS_CACHE: {resolved}[/blue]")
+        return
+
+    user_name = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
+    candidates = [
+        os.environ.get("LMMS_LOCAL_CACHE", "").strip(),
+        os.environ.get("SLURM_TMPDIR", "").strip(),
+        f"/tmp/{user_name}",
+        "~/scratch/lmms_local_cache",
+    ]
+
+    local_root = None
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate_path = _expand_path(candidate)
+        try:
+            os.makedirs(candidate_path, exist_ok=True)
+            if os.access(candidate_path, os.W_OK):
+                local_root = candidate_path
+                break
+        except OSError:
+            continue
+
+    if local_root is None:
+        raise RuntimeError(
+            "Unable to find a writable local cache directory. "
+            "Set LMMS_EVAL_DATASETS_CACHE to a writable path."
+        )
+
+    datasets_cache = os.path.join(local_root, "lmms_eval_hf_datasets")
+    os.makedirs(datasets_cache, exist_ok=True)
+
+    os.environ.setdefault("LMMS_LOCAL_CACHE", local_root)
+    os.environ["LMMS_EVAL_DATASETS_CACHE"] = datasets_cache
+
+    print(f"[blue]LMMS_LOCAL_CACHE:        {os.environ['LMMS_LOCAL_CACHE']}[/blue]")
+    print(f"[blue]LMMS_EVAL_DATASETS_CACHE: {datasets_cache}[/blue]")
+
 # Task-specific sample limits (default for quick evaluation/testing; full dataset sizes in inline comments)
 TASK_LIMITS = {
-    # "scienceqa_img": 25,  # 2018 samples
+    "scienceqa_img": 5000,  # 2018 samples
     "mme": 5000,  # 2374 samples
     # "textvqa_val": 5000,  # 5000 samples
     "pope": 5000,  # 9000 samples
@@ -60,16 +111,69 @@ TASK_LIMITS = {
     "vizwiz_vqa_val": 5000,  # 4320 samples
     "vqav2_val": 5000,  # 214000 samples
     "ai2d": 5000,  # 500 samples
-    # "cv_bench": 5000,  # 1000 samples
+    "cv_bench": 5000,  # 1000 samples
     # "flickr30k": 5000,  # 1000 samples (test)
     # "coco2017_cap_val": 5000,  # 5000 samples
     # "llava_in_the_wild": 15,  # 60 samples, heavy post processing
-    # "flickr30k": 50,  # 1000 samples (test)
-    # "coco2017_cap_val": 25,  # 5000 samples
-    # "mmmu_val": 5000,
+    "flickr30k": 5000,  # 1000 samples (test)
+    "coco2017_cap_val": 5000,  # 5000 samples
+    "mmmu_val": 5000,
+    "naturalbench": 7600,  # 7600 docs (1900 samples × 4 q/i combinations); aggregator asserts exact count
+    "illusionvqa_comprehension": 5000,
+    "illusionvqa_soft_localization": 5000,
+    "vlmsareblind": 5000,
+    "hallusion_bench_image": 5000,
+    "blink": 5000,
+    "mmvp": 5000,
+    "vlms_are_biased": 5000,
+    "chartqa": 5000,  # 2500 samples
+    "docvqa_val": 5000,  # 5349 samples
+    "infovqa_val": 5000,  # 2801 samples
+    "mmstar": 5000,  # 1500 samples
+    "mmmu_pro_standard": 5000,  # 1730 samples
+    "mmmu_pro_vision": 5000,  # 1730 samples
+    "realworldqa": 5000,  # 765 samples
+    "countbench": 5000,  # 540 samples
+    "mathvista_testmini": 5000,  # 1000 samples (GPT judge required)
 }
 
-LLM_JUDGE_TASKS = {"mmvet", "mmbench_en_dev", "mmbench_cn_dev", "llava_in_the_wild"}
+LLM_JUDGE_TASKS = {"mmvet", "mmbench_en_dev", "mmbench_cn_dev", "llava_in_the_wild", "hallusion_bench_image", "mathvista_testmini"}
+
+SINGLE_IMAGE_FILTER_TASKS = {"mmmu_val", "mmmu_pro_standard"}
+
+
+def _count_image_tokens(doc) -> int:
+    prompt = doc.get("question", "") or ""
+    opts = doc.get("options")
+    if opts:
+        prompt = f"{prompt} {opts}"
+    return len(set(re.findall(r"<image \d+>", prompt)))
+
+
+def install_single_image_filter() -> None:
+    """Filter SINGLE_IMAGE_FILTER_TASKS to drop samples that reference >1 image."""
+    from lmms_eval.api.task import ConfigurableTask
+
+    if getattr(ConfigurableTask, "_single_image_filter_installed", False):
+        return
+
+    original_download = ConfigurableTask.download
+
+    def patched_download(self, dataset_kwargs=None):
+        original_download(self, dataset_kwargs)
+        task_name = getattr(self.config, "task", None)
+        if task_name in SINGLE_IMAGE_FILTER_TASKS:
+            split = self.config.test_split or self.config.validation_split
+            before = len(self.dataset[split])
+            keep_fn = lambda d: _count_image_tokens(d) <= 1
+            self.dataset[split] = self.dataset[split].filter(keep_fn)
+            if hasattr(self, "dataset_no_image") and split in self.dataset_no_image:
+                self.dataset_no_image[split] = self.dataset_no_image[split].filter(keep_fn)
+            after = len(self.dataset[split])
+            print(f"[yellow]Filtered {task_name}: {before} → {after} (single-image only)[/yellow]")
+
+    ConfigurableTask.download = patched_download
+    ConfigurableTask._single_image_filter_installed = True
 
 # Model name → backend mapping (order matters: more specific patterns first)
 MODEL_BACKEND_REGISTRY = [
@@ -78,6 +182,7 @@ MODEL_BACKEND_REGISTRY = [
     ("onevision", "llava_onevision1_5"),
     ("cambrian", "cambrian"),
     ("llava", "llava_hf"),
+    ("pixtral", "llava_hf"),
 ]
 
 def infer_backend(model_name: str) -> str:
@@ -175,7 +280,7 @@ def save_responses(
     )
 
     with open(os.path.join(output_dir, f"{filename}.json"), "w") as f:
-        json.dump(output, f, indent=2)
+        json.dump(output, f, indent=2, default=str)
 
 
 # =============================================================================
@@ -286,7 +391,7 @@ def run_evaluation(args: argparse.Namespace) -> float:
         if backend == "llava_onevision1_5":
             patch_onevision(model_instance.model, layers_to_skip=range(num_layers))
         elif backend == "llava_hf":
-            patch_llava(layers_to_skip=range(num_layers))
+            patch_llava(model_instance.model, layers_to_skip=range(num_layers))
         elif backend == "internvl2":
             patch_internvl(model_instance._model, layers_to_skip=range(num_layers))
         elif backend == "cambrian":
@@ -388,6 +493,8 @@ def main() -> None:
     parser.add_argument("--trust-remote-code", action="store_true")
 
     args = parser.parse_args()
+    configure_lmms_datasets_cache()
+    install_single_image_filter()
     args.backend = infer_backend(args.model_name_or_path)
     print(f"[cyan]Backend: {args.backend}[/cyan]")
 

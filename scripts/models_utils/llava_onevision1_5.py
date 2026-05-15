@@ -199,6 +199,7 @@ class LlavaOneVision1_5Custom(lmms):
             # Remove unsupported kwargs
             gen_kwargs.pop("temperature", None)
             gen_kwargs.pop("top_p", None)
+            gen_kwargs.pop("image_aspect_ratio", None)
 
             max_new_tokens = gen_kwargs.pop("max_new_tokens", 1024)
             gen_kwargs["max_new_tokens"] = max_new_tokens

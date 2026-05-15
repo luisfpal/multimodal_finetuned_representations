@@ -31,22 +31,40 @@ DEFAULT_MODEL_NAME="lbasile/llava_7b_6_16"
 
 # Tasks to evaluate (uncomment to enable)
 TASKS=(
-    "scienceqa_img"
+    # "scienceqa_img"
+    # # "vlms_are_biased"
     # "mme"
-    # "textvqa_val"
+    # # "textvqa_val"
     # "pope"
     # "gqa"
-    # "seedbench"
-    # "mmbench_en_dev"
-    # "llava_in_the_wild"
-    # "vizwiz_vqa_val"
-    # "vqav2_val"
-    # "mmbench_cn_dev"
-    # "docvqa_val"
+    "seedbench"
+    "mmbench_en_dev"
+    # # # # "llava_in_the_wild"
+    # # "vizwiz_vqa_val"
+    "vqav2_val"
+    "mmbench_cn_dev"
+    # # # # # "docvqa_val"
     # "ai2d"
     # "mmmu_val"
+    # "cv_bench"
     # "coco2017_cap_val"
     # "flickr30k"
+    # "naturalbench"
+    # # "illusionvqa_comprehension"
+    # # "illusionvqa_soft_localization"
+    # "vlmsareblind"
+    # # "hallusion_bench_image"
+    # "blink"
+    # "mmvp"
+    # "chartqa"
+    # "docvqa_val"
+    # "infovqa_val"
+    # "mmstar"
+    # "mmmu_pro_standard"
+    # "mmmu_pro_vision"
+    # "realworldqa"
+    # "countbench"
+    # "mathvista_testmini"
 )
 
 # =============================================================================
@@ -63,7 +81,7 @@ echo "Model: $MODEL_TO_EVAL"
 # PATHS
 # =============================================================================
 
-PROJECT_ROOT="/u/dssc/lpalaciosflores/multimodal_finetuned_representations"
+PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/lmms_evaluation.py"
 VENV="$PROJECT_ROOT/.venv"
 
@@ -71,7 +89,8 @@ VENV="$PROJECT_ROOT/.venv"
 # ENVIRONMENT
 # =============================================================================
 
-# Virtual environment
+# Strip conda from PATH and activate project venv
+export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v miniconda3 | paste -sd ':')
 if [ -f "$VENV/bin/activate" ]; then
     source "$VENV/bin/activate"
 fi
@@ -168,4 +187,4 @@ echo "All tasks complete for $MODEL_TO_EVAL in $(( SECONDS - overall_start ))s."
 # COMPOSITIONALITY BENCHMARKS (ARO + BiVLC + SugarCrepe)
 # Results saved under evals/<model>/compositionality/ (not lmms_eval/)
 # =============================================================================
-bash "$PROJECT_ROOT/shell/eval/run_local_compositionality_evaluation.sh" "$MODEL_TO_EVAL"
+# bash "$PROJECT_ROOT/shell/eval/run_local_compositionality_evaluation.sh" "$MODEL_TO_EVAL" "all" "" $EXTRA_ARGS

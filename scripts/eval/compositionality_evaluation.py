@@ -49,7 +49,7 @@ from tqdm import tqdm
 # ARO Order subtasks use nltk.word_tokenize (via TextShuffler) which needs punkt_tab.
 # Auto-download once; subsequent calls are no-ops.
 nltk.download("punkt_tab", quiet=True)
-
+from utils import seed_all
 from utils.cambrian_utils import (
     is_cambrian_model,
     apply_chat_template as apply_cambrian_chat_template,
@@ -64,6 +64,51 @@ from utils.internvl_utils import (
     get_pixel_values,
 )
 from utils.model_utils import load_hf_model_and_processor_or_tokenizer
+from utils.patch_llava import patch as patch_llava
+from utils.patch_internvl import patch as patch_internvl
+from utils.patch_onevision import patch as patch_onevision
+from utils.patch_cambrian import patch as patch_cambrian
+
+MODEL_BACKEND_REGISTRY = [
+    ("internvl3", "internvl3.5"),
+    ("internvl", "internvl2"),
+    ("onevision", "llava_onevision1_5"),
+    ("cambrian", "cambrian"),
+    ("llava", "llava_hf"),
+    ("pixtral", "llava_hf"),
+]
+
+
+def infer_backend(model_name: str) -> str:
+    name_lower = model_name.lower()
+    for pattern, backend in MODEL_BACKEND_REGISTRY:
+        if pattern in name_lower:
+            return backend
+    raise ValueError(
+        f"Cannot infer backend for '{model_name}'. "
+        f"Known patterns: {[p for p, _ in MODEL_BACKEND_REGISTRY]}"
+    )
+
+
+def _num_language_layers(model, backend: str) -> int:
+    if backend == "cambrian":
+        return model.config.num_hidden_layers
+    return model.language_model.config.num_hidden_layers
+
+
+def apply_no_image_patch(model, backend: str) -> None:
+    num_layers = _num_language_layers(model, backend)
+    layers = range(num_layers)
+    if backend == "llava_onevision1_5":
+        patch_onevision(model, layers_to_skip=layers)
+    elif backend == "llava_hf":
+        patch_llava(model, layers_to_skip=layers)
+    elif backend in ("internvl2", "internvl3.5"):
+        patch_internvl(model, layers_to_skip=layers)
+    elif backend == "cambrian":
+        patch_cambrian(model, layers_to_skip=layers)
+    else:
+        raise ValueError(f"--no-image not supported for backend: {backend}")
 
 # =============================================================================
 # CONSTANTS
@@ -117,11 +162,11 @@ DEFAULT_SUGARCREPE_ROOT = str(Path.home() / "scratch" / "datasets" / "sugar-crep
 # Default sample limits per subtask (full dataset sizes in comments).
 # CLI --limit overrides these.
 TASK_LIMITS = {
-    # "flickr30k_order": 5000,  # 4885 samples
-    # "coco_order": 5000,       # 25010 samples
-    # "vg_relation": 5000,      # 23937 samples
-    # "vg_attribution": 5000,   # 28748 samples
-    # "bivlc": 5000,            # 2933 samples
+    "flickr30k_order": 5000,  # 4885 samples
+    "coco_order": 5000,       # 25010 samples
+    "vg_relation": 5000,      # 23937 samples
+    "vg_attribution": 5000,   # 28748 samples
+    "bivlc": 5000,            # 2933 samples
     # SugarCrepe per-category limits (comment out to use full dataset)
     # "add_obj": 2062,          # 2062 samples
     # "add_att": 692,           # 692 samples
@@ -240,7 +285,6 @@ def _build_llava_prompt(
     conv: list = [{"role": "user", "content": user_content}]
     if include_system:
         conv.insert(0, SYSTEM_ROLE)
-
     prompt_text = processor.apply_chat_template(
         conv, tokenize=False, add_generation_prompt=True
     )
@@ -346,7 +390,14 @@ def _get_mcq_logits_llava(
 ) -> tuple[int, str, str]:
     """Constrained logits MCQ for LLaVA. Returns (predicted_idx, predicted_letter, prompt)."""
     prompt_text, inputs = _build_llava_prompt(processor, image, question)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    model_dtype = next(model.parameters()).dtype
+    moved = {}
+    for k, v in inputs.items():
+        v = v.to(model.device)
+        if v.is_floating_point():
+            v = v.to(model_dtype)
+        moved[k] = v
+    inputs = moved
 
     with torch.no_grad():
         outputs = model(**inputs)
@@ -368,6 +419,25 @@ def _get_mcq_logits_internvl(
     cleaned_prompt, input_ids, attention_mask, inputs_embeds = _build_internvl_inputs(
         model, tokenizer, image, question
     )
+
+    from utils.internvl_utils import IMG_CONTEXT_TOKEN
+    model.img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+
+    if (input_ids == model.img_context_token_id).any():
+        image_limits = []
+        image_attention_mask = torch.ones_like(input_ids, dtype=torch.int)
+        for i in range(input_ids.shape[0]):
+            indices = torch.where(input_ids[i] == model.img_context_token_id)[0]
+            if indices.numel() > 0:
+                start = indices[0].item() - 1
+                end = indices[-1].item() + 1
+                image_limits.append((start, end))
+                image_attention_mask[i, start : end + 1] = 0
+            else:
+                image_limits.append(None)
+
+        model.language_model.model.image_limits = image_limits
+        model.language_model.model.image_attention_mask = image_attention_mask
 
     with torch.no_grad():
         if inputs_embeds is not None:
@@ -405,7 +475,6 @@ def _get_mcq_logits_cambrian(
 
     input_ids = prepared["tokenized"]["input_ids"]
     attention_mask = prepared["tokenized"]["attention_mask"]
-
     forward_kwargs: dict[str, Any] = {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
@@ -414,7 +483,7 @@ def _get_mcq_logits_cambrian(
     if prepared["image_tensors"] is not None:
         forward_kwargs["images"] = prepared["image_tensors"]
         forward_kwargs["image_sizes"] = prepared["image_sizes"]
-
+    
     with torch.inference_mode():
         outputs = model(**forward_kwargs)
 
@@ -1045,6 +1114,7 @@ def run_aro_evaluation(
     args: argparse.Namespace,
     model_identifier: str,
 ) -> None:
+    seed_all(42)
     """Run full ARO evaluation (mcq_logits method)."""
     print("[bold magenta]=== ARO Compositionality Benchmark ===[/bold magenta]")
 
@@ -1087,6 +1157,7 @@ def run_bivlc_evaluation(
     args: argparse.Namespace,
     model_identifier: str,
 ) -> None:
+    seed_all(42)
     """Run full BiVLC evaluation (mcq_logits method, I2T direction)."""
     print("[bold magenta]=== BiVLC Compositionality Benchmark ===[/bold magenta]")
 
@@ -1127,6 +1198,8 @@ def run_sugarcrepe_evaluation(
       - One aggregate JSONL entry with per_category, per_type, and mean accuracy
         in paper-standard column order (Add-Obj/Add-Att/Rep-Obj/Rep-Att/Rep-Rel/Swap-Obj/Swap-Att).
     """
+
+    seed_all(42)
     print("[bold magenta]=== SugarCrepe Compositionality Benchmark ===[/bold magenta]")
 
     output_dir = os.path.join(args.output_dir, "sugarcrepe")
@@ -1298,6 +1371,11 @@ def main() -> None:
         default=None,
         help="Limit number of samples per subtask/category (for debugging)",
     )
+    parser.add_argument(
+        "--no-image",
+        action="store_true",
+        help="Skip vision layers for text-only (image-blind) evaluation",
+    )
     args = parser.parse_args()
 
     # Print configuration
@@ -1334,6 +1412,11 @@ def main() -> None:
     model.eval()
     model_identifier = args.model_name_or_path.replace("/", "_")
     print(f"[green]✓ Model loaded: {model.__class__.__name__}[/green]")
+
+    if args.no_image:
+        backend = infer_backend(args.model_name_or_path)
+        apply_no_image_patch(model, backend)
+        print(f"[yellow]✓ No-image patch applied ({backend})[/yellow]")
     print()
 
     os.makedirs(args.output_dir, exist_ok=True)

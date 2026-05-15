@@ -1,3 +1,4 @@
+import gc
 import sys
 import os
 
@@ -273,7 +274,7 @@ class InternVL2Custom(lmms):
                         "cache_dir"
                     ),  # Will fallback to env var if None
                     device_map=self.device_map,
-                    attn_implementation="flash_attention_2",
+                    attn_implementation="sdpa",
                     skip_processor=False,
                 )
                 # Safety patch in case pre-instantiation missed it
@@ -436,16 +437,25 @@ class InternVL2Custom(lmms):
                     pixel_values = None
                     num_patches_list = None
                     
-                response, history = self.model.chat(
-                    self.tokenizer,
-                    pixel_values,
-                    contexts,
-                    gen_kwargs,
-                    num_patches_list=num_patches_list,
-                    history=None,
-                    return_history=True,
-                )
-                
+                try:
+                    response, history = self.model.chat(
+                        self.tokenizer,
+                        pixel_values,
+                        contexts,
+                        gen_kwargs,
+                        num_patches_list=num_patches_list,
+                        history=None,
+                        return_history=True,
+                    )
+                except torch.OutOfMemoryError:
+                    eval_logger.warning(
+                        f"OOM on task={task} doc_id={doc_id}; skipping sample."
+                    )
+                    del pixel_values, visuals
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    response = ""
+
             elif self.modality == "video":
                 assert len(visuals) == 1, (
                     f"Only one video is supported, but got {len(visuals)} videos."

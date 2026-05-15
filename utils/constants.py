@@ -38,6 +38,7 @@ MMLU_ANSWER_CHOICES = ["A", "B", "C", "D"]
 MMBENCH_ANSWER_CHOICES = ["A", "B", "C", "D"]
 MME_ANSWER_CHOICES = ["Yes", "No"]
 AI2D_ANSWER_CHOICES = ["A", "B", "C", "D"]
+MMSTAR_ANSWER_CHOICES = ["A", "B", "C", "D"]
 POPE_ANSWER_CHOICES = ["Yes", "No"]
 COCOQA_VI_DIGITS_MAP = {
     "1": "one",

@@ -127,8 +127,8 @@ def _get_vl_model_classes(
             return classes["processor"], classes["model"]
     if "onevision" in model_name_lower:
         return AutoProcessor, AutoModelForCausalLM
-    if "llava" in model_name_lower:
-        return LlavaProcessor, LlavaForConditionalGeneration
+    if "llava" in model_name_lower or 'pixtral' in model_name_lower:
+        return AutoProcessor, LlavaForConditionalGeneration
     raise ValueError(
         f"Model type for '{model_name_or_path}' is not supported. "
         f"Supported types: {', '.join(SUPPORTED_VL_MODELS.keys())}"
@@ -298,7 +298,7 @@ def load_hf_model_and_processor_or_tokenizer(
     text_model: bool = False,
     device_map: str = "auto",
     dtype: torch.dtype = torch.bfloat16,
-    attn_implementation: str = "flash_attention_2",
+    attn_implementation: str = "sdpa",
     low_cpu_mem_usage: bool = True,
     use_fast: bool = True,
     skip_model: bool = False,
