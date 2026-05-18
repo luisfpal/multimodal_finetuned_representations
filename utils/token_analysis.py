@@ -118,3 +118,78 @@ def find_caption_token_span(
         )
 
     return start_tok, end_tok
+
+
+# Delimiter for pile-10k "Continue this text" prompts.
+# Three newlines are used so the boundary is unambiguous across all model chat
+# templates (LLaVA 1.5, LLaVA OV, InternVL2, Cambrian all use at most \n\n).
+_USER_TEXT_PREAMBLE = "Continue this text:\n\n\n"
+_USER_TEXT_DELIMITER = "\n\n\n"
+
+
+def find_user_text_span(
+    tokenizer: Any,
+    input_ids: np.ndarray,
+) -> tuple[int, int]:
+    """Find the (start, end) token indices of {text_context} in a pile-10k prompt.
+
+    The prompt is expected to contain the unique substring
+    ``"Continue this text:\\n\\n\\n{text_context}\\n\\n\\n"``.
+    The function locates the preamble by substring search, then finds the next
+    ``\\n\\n\\n`` delimiter.  Both char positions are mapped to token indices via
+    binary search — identical strategy to ``find_caption_token_span``.
+
+    Args:
+        tokenizer: Any HuggingFace tokenizer with ``.decode()``.
+        input_ids: 1-D array of token IDs for a single sequence.
+
+    Returns:
+        ``(start, end)`` — exclusive end, Python-slice convention.
+
+    Raises:
+        RuntimeError: If the preamble or closing delimiter is not found.
+    """
+    input_ids = np.asarray(input_ids)
+    decoded = tokenizer.decode(input_ids.tolist(), skip_special_tokens=False)
+
+    preamble_pos = decoded.find(_USER_TEXT_PREAMBLE)
+    if preamble_pos == -1:
+        raise RuntimeError(
+            f"Preamble {_USER_TEXT_PREAMBLE!r} not found in decoded sequence.\n"
+            f"  Text (first 300 chars): {decoded[:300]!r}"
+        )
+    char_start = preamble_pos + len(_USER_TEXT_PREAMBLE)
+
+    # Use rfind to locate the CLOSING delimiter — the last \n\n\n before the assistant
+    # turn.  find(char_start) would match the FIRST \n\n\n after char_start, which can
+    # be INSIDE text_context when the tokenizer's truncation boundary leaves text_context
+    # starting with \n\n\n (e.g. a sample that begins with blank lines).  rfind is safe
+    # because model templates never produce \n\n\n in the assistant suffix.
+    char_end = decoded.rfind(_USER_TEXT_DELIMITER)
+    if char_end <= char_start:
+        raise RuntimeError(
+            f"Closing delimiter {_USER_TEXT_DELIMITER!r} not found after preamble.\n"
+            f"  char_start={char_start}, rfind returned char_end={char_end}\n"
+            f"  Text around preamble: {decoded[preamble_pos:preamble_pos + 200]!r}"
+        )
+
+    full_len = len(input_ids)
+    tok_start = _char_to_token(tokenizer, input_ids, char_start, full_len)
+
+    T_end = _char_to_token(tokenizer, input_ids, char_end - 1, full_len)
+    # BPE tokenizers can merge the last chars of text_context with the leading \n\n\n
+    # delimiter into a single token (e.g., "incomes.\n\n\n"). If so, decode(0..T_end)
+    # overshoots char_end. Exclude that boundary-spanning token so the span stays
+    # within text_context. This is model-agnostic: no class-name checks needed.
+    if _decode_length(tokenizer, input_ids, T_end + 1) > char_end:
+        tok_end = T_end
+    else:
+        tok_end = T_end + 1
+
+    # Safety guard: T_end + 1 can still be <= tok_start when T_end < tok_start (e.g.
+    # empty text_context after tokenizer truncation). tok_start + 1 guarantees a
+    # non-empty span in all cases since tok_start + 1 > tok_start unconditionally.
+    if tok_end <= tok_start:
+        tok_end = tok_start + 1
+
+    return tok_start, tok_end

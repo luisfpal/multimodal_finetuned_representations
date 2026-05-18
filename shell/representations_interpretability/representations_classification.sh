@@ -3,29 +3,29 @@
 set -euo pipefail
 
 MODELS=(
+    # "nyu-visionx/cambrian-8b"
+    # "l11p/llava-v1.5-7b-pretrained-lbasile"
+    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+    # "lbasile/llava_13b"
+    # "lmms-lab/LLaVA-OneVision-1.5-4B-Instruct"
+    # "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
+
+    # "lbasile/cambrian-8b-pretrained"
     "lbasile/llava_7b"
-    "l11p/llava-v1.5-7b-pretrained-lbasile"
+    # "OpenGVLab/InternVL2-8B"
+    # "l11p/llava-v1.5-13b-pretrained-lbasile"
+    # "lmms-lab/LLaVA-OneVision-1.5-4B-Base"
+    # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+
     # "lbasile/llava_7b_frozen"
     # "lbasile/llava_7b_0_16"
     # "lbasile/llava_7b_16_32"
     # "lbasile/llava_7b_6_16"
     # "lbasile/llava_7b_6_17_complementary"
 
-    "lbasile/llava_13b"
-    "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "lbasile/llava_13b_6_21"
     # "lbasile/llava_13b_6_21_complementary"
 
-    "lmms-lab/LLaVA-OneVision-1.5-4B-Instruct"
-    "lmms-lab/LLaVA-OneVision-1.5-4B-Base"
-    "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
-    "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
-
-    "OpenGVLab/InternVL2-8B"
-    "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
-
-    "nyu-visionx/cambrian-8b"
-    "lbasile/cambrian-8b-pretrained"
 )
 
 # Dataset entries are "dataset|split|experiment_family".
@@ -39,16 +39,19 @@ DATASET_EXPERIMENTS=(
     # "lmms-lab/MMMU|test|fixed"
     # "timm/mini-imagenet|validation|captioning"
     # "timm/mini-imagenet|validation|mcq_option_width"
-    # "timm/mini-imagenet|validation|mcq_filter_classes"
+    "timm/mini-imagenet|validation|mcq_filter_classes"
     # "RitAreaSciencePark/imagenet_short_text_100_classes_x_100_samples|train|captioning"
     # "RitAreaSciencePark/imagenet_short_text_100_classes_x_100_samples|train|mcq_option_width"
     # "RitAreaSciencePark/imagenet_short_text_100_classes_x_100_samples|train|mcq_filter_classes"
     # "ethz/food101|validation|mcq_option_width"   # generic_mcq keeps all 101 classes, 100 samples/class
-    # "ethz/food101|validation|mcq_filter_classes"
+    "ethz/food101|validation|mcq_filter_classes"
     # "tanganke/sun397|test|mcq_option_width"       # generic_mcq keeps 200 seeded classes, 50 samples/class
-    # "tanganke/sun397|test|mcq_filter_classes"
+    "tanganke/sun397|test|mcq_filter_classes"
     # "flwrlabs/caltech101|train|mcq_option_width"  # generic_mcq keeps the full imbalanced train split
     "flwrlabs/caltech101|train|mcq_filter_classes"
+    "dpdl-benchmark/oxford_flowers102|test|mcq_filter_classes"   # imbalanced (min 20, max 238, 102 classes); use generic_mcq_top_filter
+    "torch-uncertainty/Places365|train|mcq_filter_classes"        # balanced 100/class, 365 classes; use generic_mcq_filter
+    "tanganke/dtd|train|mcq_filter_classes"                       # balanced 80/class, 47 classes; use generic_mcq_filter
 )
 
 TOKENS_POOLING_METHODS=(
@@ -60,8 +63,8 @@ TOKENS_POOLING_METHODS=(
 METRICS=(
     # "logistic_regression"
     "label_overlap"
-    "clip_neighborhood_overlap"
-    "accuracy"
+    # "clip_neighborhood_overlap"
+    # "accuracy"
     # "knn"
     # "homogeneity"
 )
@@ -74,18 +77,20 @@ PROMPT_MODES=(
     # mcq_filter_classes: mcq_nocat_filter animal_mcq_filter generic_mcq_filter generic_mcq_top_filter
     # "mcq_nocat_filter"
     # "animal_mcq_filter"
-    # "generic_mcq_filter"
+    "generic_mcq_filter"
     "generic_mcq_top_filter"
     # "describe"
     # "generic_mcq"
     # "animal_mcq"
     # "mcq_nocat"
+    # "describe"
+    # "continuation"
 )
 
 # MCQ sweep axes. The same --n-choices flag is intentionally fed from different
 # lists depending on family, because the meaning is different.
 MCQ_OPTION_COUNTS_LIST=("")        # n = number of answer options
-MCQ_FILTER_CLASS_COUNTS_LIST=("20")  # n = number of filtered classes/options
+MCQ_FILTER_CLASS_COUNTS_LIST=("10")  # n = number of filtered classes/options
 SUBSAMPLE_SIZE_LIST=("")         # "" means no subsample; ignored by filter modes
 
 DEFAULT_GUIDE_TEXT="Answer with the option's letter from the given choices directly."
@@ -93,10 +98,11 @@ MAX_SAMPLES="${MAX_SAMPLES:-}"
 GUIDE_TEXT="${GUIDE_TEXT:-$DEFAULT_GUIDE_TEXT}"
 SAVE_REPRESENTATIONS="${SAVE_REPRESENTATIONS:-true}"
 FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-true}"
+FORCE_METRICS_ONLY="${FORCE_METRICS_ONLY:-false}"
 REPRESENTATIONS_ONLY="${REPRESENTATIONS_ONLY:-false}"
 METRICS_ONLY="${METRICS_ONLY:-false}"
 CLUSTER_LABELS="${CLUSTER_LABELS:-false}"
-SAVE_PROMPTS="${SAVE_PROMPTS:-false}"
+SAVE_PROMPTS="${SAVE_PROMPTS:-true}"
 AUTO_ACCURACY_FOR_SYNTHETIC_MCQ="${AUTO_ACCURACY_FOR_SYNTHETIC_MCQ:-true}"
 
 # Label source for representation metrics: "class_name" or "option_letter".
@@ -175,7 +181,8 @@ is_mcq_prompt() {
 
 is_synthetic_mcq_dataset() {
     case "$1" in
-        *mini-imagenet*|*imagenet_short_text*|*food101*|*sun397*|*caltech101*) return 0 ;;
+        *mini-imagenet*|*imagenet_short_text*|*food101*|*sun397*|*caltech101*|\
+*oxford_flowers102*|*Places365*|*places365*|*dtd*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -199,15 +206,21 @@ prompt_supported_for_dataset() {
                 *) return 1 ;;
             esac
             ;;
-        *food101*|*sun397*)
+        *food101*|*sun397*|*Places365*|*places365*)
             case "$prompt_mode" in
                 generic_mcq|generic_mcq_filter) return 0 ;;
                 *) return 1 ;;
             esac
             ;;
-        *caltech101*)
+        *caltech101*|*oxford_flowers102*)
             case "$prompt_mode" in
                 generic_mcq|generic_mcq_top_filter) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *dtd*)
+            case "$prompt_mode" in
+                generic_mcq|generic_mcq_filter) return 0 ;;
                 *) return 1 ;;
             esac
             ;;
@@ -273,6 +286,11 @@ run_or_print() {
         "$PYTHON_BIN" "$PY_SCRIPT" "$@"
     fi
 }
+
+if is_true "$FORCE_RECOMPUTE" && is_true "$FORCE_METRICS_ONLY"; then
+    echo "❌ FORCE_RECOMPUTE and FORCE_METRICS_ONLY cannot both be true." >&2
+    exit 1
+fi
 
 START_EPOCH=$(date +%s)
 START_HUMAN=$(date '+%Y-%m-%d %H:%M:%S %Z')
@@ -389,13 +407,19 @@ for MODEL_NAME in "${MODELS[@]}"; do
 
                                 if is_true "$FORCE_RECOMPUTE"; then
                                     CMD_ARGS+=(--force-recompute-representations)
+                                    CMD_ARGS+=(--force-recompute-metrics)
+                                fi
+
+                                if is_true "$FORCE_METRICS_ONLY"; then
+                                    CMD_ARGS+=(--metrics-only)
+                                    CMD_ARGS+=(--force-recompute-metrics)
                                 fi
 
                                 if is_true "$REPRESENTATIONS_ONLY"; then
                                     CMD_ARGS+=(--representations-only)
                                 fi
 
-                                if is_true "$METRICS_ONLY"; then
+                                if is_true "$METRICS_ONLY" && ! is_true "$FORCE_METRICS_ONLY"; then
                                     CMD_ARGS+=(--metrics-only)
                                 fi
 

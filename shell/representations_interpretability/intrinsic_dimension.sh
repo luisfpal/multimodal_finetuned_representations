@@ -1,179 +1,130 @@
 #!/bin/bash
-# This script runs intrinsic-dimension analysis on paired text/image representations.
+# Compute intrinsic dimension from pre-cached representations (last pooling, unique_images).
+# Representations must be extracted first via multimodality_similarity.py.
 
 set -e
 
-# --- Configuration Section ---
-DATASETS=(
-    # "l11p/MME-test-captioned"
-    # "l11p/POPE-test-captioned"
-    "l11p/MMBench_EN-dev-captioned"
-    "l11p/SEED-Bench-images-captioned"
-    # "l11p/GQA-val-balanced-noyesno-captioned"
-    # "l11p/COCOQA-restval-ICQA"
-    # "l11p/VQAv2-COCO-restval-ICQ"
+# ── Dataset run matrix ───────────────────────────────────────────────────────
+# Format: "dataset_path_or_name|caption_source|dataset_split|downsample_size|repeated_images|open_ended"
+# Fields 4 (downsample_size) and 5 (repeated_images) are unused for ID — kept for format
+# compatibility with multimodality_similarity.sh.
+DATASET_RUNS=(
+    # "l11p/MME-test-captioned|synthetic|||false|false"
+    # "l11p/POPE-test-captioned|synthetic|||false|false"
+    # "l11p/MMBench_EN-dev-captioned|synthetic|||false|true"
+    # "l11p/SEED-Bench-images-captioned|synthetic|||false|true"
+    # "l11p/GQA-val-balanced-noyesno-captioned|synthetic|||false|true"
+    "l11p/COCOQA-restval-ICQA|human|split01||false|true"
+    "l11p/VQAv2-COCO-restval-ICQ|human|split01||false|true"
 )
 
-# Human captions only apply to COCOQA/VQAv2; overridden per dataset below.
-CAPTION_SOURCE="synthetic"
-
-TOKENS_POOLING_METHODS=(
-    "last"
-    "mean_context"
-    "mean_image_last_caption"
-    # "last_image_last_caption"
+# ── Dataset capability map ───────────────────────────────────────────────────
+# Format: "kind|caption_policy|split_support"
+#   kind: openvqa | mc_openended | mc_yesno
+#   caption_policy: human_or_synthetic | synthetic_only
+#   split_support: true | false
+declare -A DATASET_PROFILE=(
+    ["l11p/MMBench_EN-dev-captioned"]="mc_openended|synthetic_only|false"
+    ["l11p/SEED-Bench-images-captioned"]="mc_openended|synthetic_only|false"
+    ["l11p/MME-test-captioned"]="mc_yesno|synthetic_only|false"
+    ["l11p/POPE-test-captioned"]="mc_yesno|synthetic_only|false"
+    ["l11p/GQA-val-balanced-noyesno-captioned"]="openvqa|synthetic_only|false"
+    ["l11p/COCOQA-restval-ICQA"]="openvqa|human_or_synthetic|true"
+    ["l11p/VQAv2-COCO-restval-ICQ"]="openvqa|human_or_synthetic|true"
 )
 
+# ── ID algorithm ─────────────────────────────────────────────────────────────
 ID_ALGORITHM="scaling_gride"  # scaling_gride | MLE | twoNN
-ID_NN_RANK="16"
+ID_NN_RANK="8"
 ID_NN_RANGE_MAX="100"
 ID_FRACTION="0.9"
 
-# Processing parameters
-BATCH_SIZE="1"
-SEED="42"
-
-GUIDE_TEXT_OPENENDED="Answer the question using a single word or phrase."
-GUIDE_TEXT_MULTICHOICE="Answer with the option's letter from the given choices directly."
-
+# ── Models ───────────────────────────────────────────────────────────────────
 MODELS=(
     "lbasile/llava_7b"
     "l11p/llava-v1.5-7b-pretrained-lbasile"
-    # "OpenGVLab/InternVL2-8B"
-    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
-    # "lbasile/llava_13b"
-    # "l11p/llava-v1.5-13b-pretrained-lbasile"
+    "nyu-visionx/cambrian-8b"
+    "lbasile/cambrian-8b-pretrained"
+    "lbasile/llava_13b"
+    "l11p/llava-v1.5-13b-pretrained-lbasile"
+    "OpenGVLab/InternVL2-8B"
+    "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+    "lmms-lab/LLaVA-OneVision-1.5-4B-Base"
+    "lmms-lab/LLaVA-OneVision-1.5-4B-Instruct"
+    "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
+    "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
 )
 
-# Configuration from environment (set by launch_job.sh)
-DOWNSAMPLE_SIZE="${DOWNSAMPLE_SIZE:-}"
-DATASET_SPLIT="${DATASET_SPLIT:-}"
-REPEATED_IMAGES="${REPEATED_IMAGES:-false}"
-OPEN_ENDED="${OPEN_ENDED:-false}"
+# ── Environment (override via env vars or set by launch_job.sh) ──────────────
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
-SAVE_REPRESENTATIONS="${SAVE_REPRESENTATIONS:-true}"
 FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-false}"
 DRY_RUN="${DRY_RUN:-false}"
 
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
 RESULTS_DIR="$PROJECT_DIR/results"
-
-FILENAME="intrinsic_dimension.py"
-FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/$FILENAME"
+FILEPATH="$PROJECT_DIR/scripts/representations_interpretability/intrinsic_dimension.py"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+source "$PROJECT_DIR/.venv/bin/activate"
 
 START_EPOCH=$(date +%s)
 START_HUMAN=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
 echo "====== Intrinsic Dimension Analysis ======"
-echo "Results directory: $RESULTS_DIR"
-echo "Started at: $START_HUMAN"
+echo "Representations dir: $REPRESENTATIONS_DIR"
+echo "Results dir:         $RESULTS_DIR"
+echo "Algorithm:           $ID_ALGORITHM (k=$ID_NN_RANK, range_max=$ID_NN_RANGE_MAX, fraction=$ID_FRACTION)"
+echo "Started at:          $START_HUMAN"
 
-for POOLING_METHOD in "${TOKENS_POOLING_METHODS[@]}"; do
+for MODEL_NAME in "${MODELS[@]}"; do
     echo -e "\n════════════════════════════════════════════════════════════════"
-    echo "⚙️  Pooling Method: $POOLING_METHOD"
+    echo "🤖 Model: $MODEL_NAME"
     echo "════════════════════════════════════════════════════════════════"
 
-    for MODEL_NAME in "${MODELS[@]}"; do
-        echo -e "\n────────────────────────────────────────────────────────────────"
-        echo "🤖 Processing Model: $MODEL_NAME"
-        echo "────────────────────────────────────────────────────────────────"
+    for DATASET_RUN in "${DATASET_RUNS[@]}"; do
+        IFS='|' read -r DATASET_PATH_OR_NAME RUN_CAPTION_SOURCE RUN_DATASET_SPLIT _ _ RUN_OPEN_ENDED <<< "$DATASET_RUN"
 
-        VENV="$PROJECT_DIR/.venv"
-        source "$VENV/bin/activate"
+        echo -e "\n  🌍 Dataset: $DATASET_PATH_OR_NAME"
 
-        for DATASET_PATH_OR_NAME in "${DATASETS[@]}"; do
-            echo -e "\n  🌍 Dataset: $DATASET_PATH_OR_NAME"
+        PROFILE="${DATASET_PROFILE[$DATASET_PATH_OR_NAME]:-}"
+        if [ -z "$PROFILE" ]; then
+            echo "❌ Unknown dataset: $DATASET_PATH_OR_NAME"
+            echo "   Add it to DATASET_PROFILE as: kind|caption_policy|split_support."
+            exit 1
+        fi
+        IFS='|' read -r DATASET_KIND CAPTION_POLICY SPLIT_SUPPORT <<< "$PROFILE"
 
-            IS_MC_DATASET=false
-            IS_MC_OPENENDED_CAPABLE=false
-            IS_OPENVQA_DATASET=false
-            IS_OPENVQA_SPLIT_CAPABLE=false
-            if [[ "$DATASET_PATH_OR_NAME" == *"MMBench"* ]] || \
-               [[ "$DATASET_PATH_OR_NAME" == *"SEED"* ]]; then
-                IS_MC_DATASET=true
-                IS_MC_OPENENDED_CAPABLE=true
-            elif [[ "$DATASET_PATH_OR_NAME" == *"MME"* ]] || \
-                 [[ "$DATASET_PATH_OR_NAME" == *"POPE"* ]]; then
-                IS_MC_DATASET=true
-            elif [[ "$DATASET_PATH_OR_NAME" == *"COCOQA"* ]] || \
-                 [[ "$DATASET_PATH_OR_NAME" == *"VQAv2"* ]] || \
-                 [[ "$DATASET_PATH_OR_NAME" == *"GQA"* ]]; then
-                IS_OPENVQA_DATASET=true
-            fi
+        EFFECTIVE_OPEN_ENDED=false
+        if [ "$DATASET_KIND" = "mc_openended" ] && [ "$RUN_OPEN_ENDED" = "true" ]; then
+            EFFECTIVE_OPEN_ENDED=true
+        fi
 
-            if [[ "$DATASET_PATH_OR_NAME" == *"COCOQA"* ]] || \
-               [[ "$DATASET_PATH_OR_NAME" == *"VQAv2"* ]]; then
-                IS_OPENVQA_SPLIT_CAPABLE=true
-            fi
+        EFFECTIVE_DATASET_SPLIT=""
+        if [ "$SPLIT_SUPPORT" = "true" ] && [ -n "$RUN_DATASET_SPLIT" ]; then
+            EFFECTIVE_DATASET_SPLIT="$RUN_DATASET_SPLIT"
+        fi
 
-            if [ "$IS_OPENVQA_DATASET" = "true" ]; then
-                GUIDE_TEXT="$GUIDE_TEXT_OPENENDED"
-            elif [ "$IS_MC_OPENENDED_CAPABLE" = "true" ]; then
-                if [ "$OPEN_ENDED" = "true" ]; then
-                    GUIDE_TEXT="$GUIDE_TEXT_OPENENDED"
-                else
-                    GUIDE_TEXT="$GUIDE_TEXT_MULTICHOICE"
-                fi
-            else
-                GUIDE_TEXT="$GUIDE_TEXT_MULTICHOICE"
-            fi
-            echo "    📝 Guide: $GUIDE_TEXT"
+        CMD_ARGS=(
+            --results-dir "$RESULTS_DIR"
+            --representations-dir "$REPRESENTATIONS_DIR"
+            --dataset-path-or-name "$DATASET_PATH_OR_NAME"
+            --model-name-or-path "$MODEL_NAME"
+            --caption-source "$RUN_CAPTION_SOURCE"
+            --id-algorithm "$ID_ALGORITHM"
+            --id-nn-rank "$ID_NN_RANK"
+            --id-nn-range-max "$ID_NN_RANGE_MAX"
+            --id-fraction "$ID_FRACTION"
+        )
 
-            EFFECTIVE_CAPTION_SOURCE="$CAPTION_SOURCE"
-            if [[ "$DATASET_PATH_OR_NAME" != *"COCOQA"* ]] && [[ "$DATASET_PATH_OR_NAME" != *"VQAv2"* ]]; then
-                EFFECTIVE_CAPTION_SOURCE="synthetic"
-            fi
+        [ "$EFFECTIVE_OPEN_ENDED" = "true" ]    && CMD_ARGS+=(--open-ended)
+        [ -n "$EFFECTIVE_DATASET_SPLIT" ]        && CMD_ARGS+=(--dataset-split "$EFFECTIVE_DATASET_SPLIT")
+        [ "$FORCE_RECOMPUTE" = "true" ]          && CMD_ARGS+=(--force)
+        [ "$DRY_RUN" = "true" ]                  && CMD_ARGS+=(--dry-run)
 
-            CMD_ARGS=(
-                --results-dir "$RESULTS_DIR"
-                --representations-dir "$REPRESENTATIONS_DIR"
-                --dataset-path-or-name "$DATASET_PATH_OR_NAME"
-                --model-name-or-path "$MODEL_NAME"
-                --batch-size "$BATCH_SIZE"
-                --seed "$SEED"
-                --guide-text "$GUIDE_TEXT"
-                --caption-source "$EFFECTIVE_CAPTION_SOURCE"
-                --pooling-methods "$POOLING_METHOD"
-                --id-algorithm "$ID_ALGORITHM"
-                --id-nn-rank "$ID_NN_RANK"
-                --id-nn-range-max "$ID_NN_RANGE_MAX"
-                --id-fraction "$ID_FRACTION"
-            )
+        python3 "$FILEPATH" "${CMD_ARGS[@]}"
 
-            if [ -n "$DOWNSAMPLE_SIZE" ]; then
-                CMD_ARGS+=(--downsample-size "$DOWNSAMPLE_SIZE")
-            fi
-
-            if [ "$SAVE_REPRESENTATIONS" = "true" ]; then
-                CMD_ARGS+=(--save-representations)
-            fi
-
-            if [ "$FORCE_RECOMPUTE" = "true" ]; then
-                CMD_ARGS+=(--force)
-            fi
-
-            if [ "$DRY_RUN" = "true" ]; then
-                CMD_ARGS+=(--dry-run)
-            fi
-
-            if [ "$REPEATED_IMAGES" = "true" ] && [ "$IS_MC_DATASET" = "true" ]; then
-                CMD_ARGS+=(--repeated-images)
-            fi
-
-            if [ "$OPEN_ENDED" = "true" ] && [ "$IS_MC_OPENENDED_CAPABLE" = "true" ]; then
-                CMD_ARGS+=(--open-ended)
-            fi
-
-            if [ -n "$DATASET_SPLIT" ] && [ "$IS_OPENVQA_SPLIT_CAPABLE" = "true" ]; then
-                CMD_ARGS+=(--dataset-split "$DATASET_SPLIT")
-            fi
-
-            python3 "$FILEPATH" "${CMD_ARGS[@]}"
-
-            echo "    ✅ Done: $MODEL_NAME | $POOLING_METHOD | $DATASET_PATH_OR_NAME"
-        done
+        echo "    ✅ Done: $MODEL_NAME | $DATASET_PATH_OR_NAME"
     done
 done
 
@@ -188,4 +139,4 @@ ELAPSED_HMS=$(printf '%02d:%02d:%02d' \
 echo ""
 echo "====== Intrinsic Dimension Analysis Complete ======"
 echo "Finished at: $END_HUMAN"
-echo "Elapsed: $ELAPSED_HMS"
+echo "Elapsed:     $ELAPSED_HMS"

@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# SLURM launcher for compositionality evaluation (ARO + BiVLC).
+# SLURM launcher for compositionality evaluation (ARO + BiVLC + SugarCrepe).
 #
 # Evaluates generative VLMs on compositionality benchmarks using
-# constrained logits scoring (mcq_logits).
+# constrained MCQ answer-letter logits.
 #
 # Usage:
 #   1. Configure MODELS, BENCHMARK, ARO_SUBTASKS, and SLURM settings below.
@@ -13,15 +13,15 @@
 # =============================================================================
 # SLURM SETTINGS
 # =============================================================================
-ACCOUNT="dssc"
+ACCOUNT="lade"
 JOB_NAME="experiment"
-PARTITION="DGX"
-GPU_TYPE="A100"
-NUM_GPUS=1
+PARTITION="H100"
+GPU_TYPE="H100"
+NUM_GPUS=3
 CPUS=12
-MEM="48GB"
-TIME="03:00:00"
-NODELIST="dgx002"
+MEM="64GB"
+TIME="08:00:00"
+NODELIST=""
 EXCLUDE=""
 
 # =============================================================================
@@ -38,35 +38,35 @@ PYTHON_SCRIPT_PATH="$PROJECT_ROOT/$PYTHON_SCRIPT"
 MODELS=(
     # "lbasile/llava_7b"
     # "l11p/llava-v1.5-7b-pretrained-lbasile"
-    # "lbasile/llava_7b_frozen"
-    # "lbasile/llava_7b_0_16"
-    # "lbasile/llava_7b_16_32"
-    # "lbasile/llava_7b_6_16"
-    # "lbasile/llava_7b_6_17_complementary"
-    # "lbasile/llava_13b_6_21"
-    # "lbasile/llava_13b_6_21_complementary"
-    # "lbasile/llava_13b"
-    # "l11p/llava-v1.5-13b-pretrained-lbasile"
     # "OpenGVLab/InternVL2-8B"
-    "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
-    "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
-    "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
+    # "OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
+    # "lmms-lab/LLaVA-OneVision-1.5-8B-Instruct"
+    "/orfeo/cephfs/scratch/area/ddoimo/models/hub/Meta-Llama-3-90B-instruct"
+    # "lmms-lab/LLaVA-OneVision-1.5-8B-Base"
     # "nyu-visionx/cambrian-8b"
     # "lbasile/cambrian-8b-pretrained"
 )
 
-# =============================================================================
-# DATA PATHS
-# =============================================================================
-ARO_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/vision-language-models-are-bows"
-SUGARCREPE_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/sugar-crepe"
+# Llama Vision 90B option:
+#   Uncomment the local model path above and use these resources:
+#   NUM_GPUS=3
+#   CPUS=16
+#   MEM="256GB"
+#   PARTITION="H100"
+#   GPU_TYPE="H100"
 
 # =============================================================================
 # EVALUATION PARAMETERS
 # =============================================================================
 
-# Benchmark to evaluate: "aro", "bivlc", "sugarcrepe" or "all"
-BENCHMARK="sugarcrepe"
+# Benchmark to evaluate: "aro", "bivlc", "sugarcrepe", or "all"
+BENCHMARK="all"
+
+# Evaluation method: "mcq" or "mcq_logits" (both use constrained MCQ logits)
+EVAL_METHOD="mcq_logits"
+
+# Attention implementation: "auto" picks sdpa for Mllama, flash_attention_2 otherwise
+ATTN_IMPLEMENTATION="auto"
 
 # Sample limit (empty = no limit, use for debugging)
 LIMIT=""
@@ -74,22 +74,14 @@ LIMIT=""
 # ARO subtasks to evaluate (comment out subtasks you want to skip)
 # Order subtasks require images — run: bash shell/data/download_aro_images.sh
 ARO_SUBTASKS=(
-    "flickr30k_order"
-    "coco_order"
     "vg_relation"
     "vg_attribution"
+    "coco_order"
+    "flickr30k_order"
 )
 
-# SugarCrepe categories to evaluate (comment out any to skip)
-SUGARCREPE_CATEGORIES=(
-    "add_obj"
-    "add_att"
-    "replace_obj"
-    "replace_att"
-    "replace_rel"
-    "swap_obj"
-    "swap_att"
-)
+# ARO data root (where ARO annotations and images are downloaded)
+ARO_DATA_ROOT="$HOME/scratch/datasets/vision-language-models-are-bows"
 
 # =============================================================================
 # CACHE DIRECTORIES
@@ -107,9 +99,6 @@ for m in "${MODELS[@]}"; do _MODELS_STR+="\"$m\" "; done
 
 _ARO_SUBTASKS_STR=""
 for s in "${ARO_SUBTASKS[@]}"; do _ARO_SUBTASKS_STR+="\"$s\" "; done
-
-_SUGARCREPE_CATEGORIES_STR=""
-for c in "${SUGARCREPE_CATEGORIES[@]}"; do _SUGARCREPE_CATEGORIES_STR+="\"$c\" "; done
 
 # =============================================================================
 # BUILD JOB COMMANDS
@@ -165,7 +154,6 @@ cd "$PROJECT_ROOT"
 # ─── Reconstruct arrays from serialized strings ─────────────────────────────
 eval "MODELS=($_MODELS_STR)"
 eval "ARO_SUBTASKS=($_ARO_SUBTASKS_STR)"
-eval "SUGARCREPE_CATEGORIES=($_SUGARCREPE_CATEGORIES_STR)"
 
 # ─── Run Evaluation ──────────────────────────────────────────────────────────
 for MODEL_TO_EVAL in "${MODELS[@]}"; do
@@ -177,21 +165,29 @@ for MODEL_TO_EVAL in "${MODELS[@]}"; do
     echo "  COMPOSITIONALITY EVALUATION"
     echo "  Model:     $MODEL_TO_EVAL"
     echo "  Benchmark: $BENCHMARK"
+    echo "  Method:    $EVAL_METHOD"
     echo "================================================================"
 
     args=(
         --model-name-or-path "$MODEL_TO_EVAL"
         --output-dir "$OUTPUT_DIR"
         --benchmark "$BENCHMARK"
+        --eval-method "$EVAL_METHOD"
         --datasets-cache-dir "$DATASETS_CACHE_DIR"
+        --model-cache-dir "$MODEL_CACHE_DIR"
+        --attn-implementation "$ATTN_IMPLEMENTATION"
         --aro-data-root "$ARO_DATA_ROOT"
-        --sugarcrepe-data-root "$SUGARCREPE_DATA_ROOT"
     )
     [ ${#ARO_SUBTASKS[@]} -gt 0 ] && args+=(--aro-subtasks "${ARO_SUBTASKS[@]}")
-    [ ${#SUGARCREPE_CATEGORIES[@]} -gt 0 ] && args+=(--sugarcrepe-categories "${SUGARCREPE_CATEGORIES[@]}")
     [ -n "$LIMIT" ] && args+=(--limit "$LIMIT")
 
-    python "$SNAPSHOT_PYTHON_SCRIPT" "${args[@]}"
+    if ! python "$SNAPSHOT_PYTHON_SCRIPT" "${args[@]}"; then
+        echo ""
+        echo "================================================================"
+        echo "  FAILED: $MODEL_TO_EVAL"
+        echo "================================================================"
+        exit 1
+    fi
 
     echo ""
     echo "================================================================"
@@ -238,12 +234,12 @@ export HF_HOME="$HF_HOME"
 export MODEL_CACHE_DIR="$MODEL_CACHE_DIR"
 export DATASETS_CACHE_DIR="$DATASETS_CACHE_DIR"
 export BENCHMARK="$BENCHMARK"
+export EVAL_METHOD="$EVAL_METHOD"
+export ATTN_IMPLEMENTATION="$ATTN_IMPLEMENTATION"
 export LIMIT="$LIMIT"
 export ARO_DATA_ROOT="$ARO_DATA_ROOT"
-export SUGARCREPE_DATA_ROOT="$SUGARCREPE_DATA_ROOT"
 export _MODELS_STR="$_MODELS_STR"
 export _ARO_SUBTASKS_STR="$_ARO_SUBTASKS_STR"
-export _SUGARCREPE_CATEGORIES_STR="$_SUGARCREPE_CATEGORIES_STR"
 export SNAPSHOT_PYTHON_SCRIPT="/tmp/compositionality_evaluation_\${SLURM_JOB_ID}.py"
 
 cat <<'PYTHON_SNAPSHOT_EOF' > "\$SNAPSHOT_PYTHON_SCRIPT"
@@ -266,6 +262,8 @@ echo "================================================================"
 echo "  COMPOSITIONALITY EVALUATION LAUNCHER"
 printf "  Models:    %s\n" "${MODELS[*]}"
 printf "  Benchmark: %s\n" "$BENCHMARK"
+printf "  Method:    %s\n" "$EVAL_METHOD"
+printf "  Attention: %s\n" "$ATTN_IMPLEMENTATION"
 printf "  Snapshot:  %s\n" "$PYTHON_SCRIPT"
 printf "  GPUs:      %s x %s\n" "$NUM_GPUS" "$GPU_TYPE"
 echo "================================================================"
@@ -281,5 +279,3 @@ else
     echo "Submission failed: $JOB_OUTPUT"
     exit 1
 fi
-
-

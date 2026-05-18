@@ -38,6 +38,19 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+_project_root_env = os.environ.get("PROJECT_ROOT")
+if _project_root_env:
+    PROJECT_ROOT = Path(_project_root_env).expanduser().resolve()
+else:
+    _script_path = Path(__file__).resolve()
+    PROJECT_ROOT = (
+        _script_path.parents[2]
+        if len(_script_path.parents) > 2
+        else Path.cwd().resolve()
+    )
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import nltk
 import torch
 from datasets import load_dataset
@@ -45,10 +58,6 @@ from PIL import Image
 from rich import print
 from torch.utils.data import Dataset
 from tqdm import tqdm
-
-# ARO Order subtasks use nltk.word_tokenize (via TextShuffler) which needs punkt_tab.
-# Auto-download once; subsequent calls are no-ops.
-nltk.download("punkt_tab", quiet=True)
 
 from utils.cambrian_utils import (
     is_cambrian_model,
@@ -63,7 +72,11 @@ from utils.internvl_utils import (
     get_combined_embeddings,
     get_pixel_values,
 )
-from utils.model_utils import load_hf_model_and_processor_or_tokenizer
+from utils.model_utils import (
+    is_mllama_model_name_or_path,
+    load_hf_model_and_processor_or_tokenizer,
+    resolve_attn_implementation_for_model,
+)
 
 # =============================================================================
 # CONSTANTS
@@ -79,7 +92,7 @@ DEFAULT_ARO_DATA_ROOT = str(
 )
 # ARO source code (dataset_zoo/) lives here — checked into the repo under third_party/
 ARO_SOURCE_ROOT = str(
-    Path(__file__).parents[2] / "third_party" / "vision-language-models-are-bows"
+    PROJECT_ROOT / "third_party" / "vision-language-models-are-bows"
 )
 
 ARO_SUBTASKS = ("flickr30k_order", "coco_order", "vg_relation", "vg_attribution")
@@ -117,11 +130,11 @@ DEFAULT_SUGARCREPE_ROOT = str(Path.home() / "scratch" / "datasets" / "sugar-crep
 # Default sample limits per subtask (full dataset sizes in comments).
 # CLI --limit overrides these.
 TASK_LIMITS = {
-    # "flickr30k_order": 5000,  # 4885 samples
-    # "coco_order": 5000,       # 25010 samples
-    # "vg_relation": 5000,      # 23937 samples
-    # "vg_attribution": 5000,   # 28748 samples
-    # "bivlc": 5000,            # 2933 samples
+    "flickr30k_order": 5000,  # 4885 samples
+    "coco_order": 5000,       # 25010 samples
+    "vg_relation": 5000,      # 23937 samples
+    "vg_attribution": 5000,   # 28748 samples
+    "bivlc": 5000,            # 2933 samples
     # SugarCrepe per-category limits (comment out to use full dataset)
     # "add_obj": 2062,          # 2062 samples
     # "add_att": 692,           # 692 samples
@@ -197,6 +210,8 @@ def _shuffle_captions(
 
 def detect_model_type(model_name_or_path: str) -> str:
     """Detect model family from model name/path string."""
+    if is_mllama_model_name_or_path(model_name_or_path):
+        return "mllama"
     name_lower = model_name_or_path.lower()
     if "cambrian" in name_lower:
         return "cambrian"
@@ -211,6 +226,11 @@ def detect_model_type(model_name_or_path: str) -> str:
 def is_internvl_model(model: torch.nn.Module) -> bool:
     """Check if model is InternVL by class name."""
     return "intern" in model.__class__.__name__.lower()
+
+
+def is_mllama_model(model: torch.nn.Module) -> bool:
+    """Check if model is Mllama / Llama Vision by class name."""
+    return "mllama" in model.__class__.__name__.lower()
 
 
 # =============================================================================
@@ -248,6 +268,37 @@ def _build_llava_prompt(
     proc_kwargs = {"text": prompt_text, "return_tensors": "pt", "padding": False}
     if image is not None:
         proc_kwargs["images"] = image
+
+    inputs = processor(**proc_kwargs)
+    inputs = {k: v for k, v in inputs.items() if isinstance(v, torch.Tensor)}
+    return prompt_text, inputs
+
+
+def _build_mllama_prompt(
+    processor: Any,
+    image: Optional[Image.Image],
+    question: str,
+) -> tuple[str, dict]:
+    """Build Llama Vision prompt and processor inputs for MCQ."""
+    user_content: list = []
+    if image is not None:
+        user_content.append({"type": "image"})
+    user_content.append({"type": "text", "text": question})
+
+    prompt_text = processor.apply_chat_template(
+        [{"role": "user", "content": user_content}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+    proc_kwargs = {
+        "text": [prompt_text],
+        "return_tensors": "pt",
+        "padding": False,
+        "add_special_tokens": False,
+    }
+    if image is not None:
+        proc_kwargs["images"] = [[image]]
 
     inputs = processor(**proc_kwargs)
     inputs = {k: v for k, v in inputs.items() if isinstance(v, torch.Tensor)}
@@ -357,6 +408,25 @@ def _get_mcq_logits_llava(
     return predicted_idx, letter, prompt_text
 
 
+def _get_mcq_logits_mllama(
+    model: torch.nn.Module,
+    processor: Any,
+    image: Optional[Image.Image],
+    question: str,
+    answer_token_ids: list[int],
+) -> tuple[int, str, str]:
+    """Constrained logits MCQ for Llama Vision / Mllama."""
+    prompt_text, inputs = _build_mllama_prompt(processor, image, question)
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+    with torch.no_grad():
+        outputs = model(**inputs, use_cache=False)
+
+    last_logits = outputs.logits[0, -1, :]
+    predicted_idx, letter = _pick_answer_from_logits(last_logits, answer_token_ids)
+    return predicted_idx, letter, prompt_text
+
+
 def _get_mcq_logits_internvl(
     model: torch.nn.Module,
     tokenizer: Any,
@@ -442,6 +512,10 @@ def get_mcq_logits(
         return _get_mcq_logits_internvl(
             model, processor_or_tokenizer, image, question, answer_token_ids
         )
+    if is_mllama_model(model):
+        return _get_mcq_logits_mllama(
+            model, processor_or_tokenizer, image, question, answer_token_ids
+        )
     return _get_mcq_logits_llava(
         model, processor_or_tokenizer, image, question, answer_token_ids
     )
@@ -473,6 +547,14 @@ def _ensure_aro_on_sys_path() -> None:
         )
     if ARO_SOURCE_ROOT not in sys.path:
         sys.path.insert(0, ARO_SOURCE_ROOT)
+
+
+def _ensure_nltk_punkt_tab() -> None:
+    """Ensure ARO Order text shuffling can use nltk.word_tokenize."""
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+    except LookupError:
+        nltk.download("punkt_tab", quiet=True)
 
 
 class AROVGDataset(Dataset):
@@ -539,6 +621,7 @@ class AROOrderDataset(Dataset):
 
         self.subtask = subtask
         _ensure_aro_on_sys_path()
+        _ensure_nltk_punkt_tab()
         data_path = os.path.expanduser(aro_data_root)
 
         from dataset_zoo import COCO_Order, Flickr30k_Order
@@ -1293,12 +1376,41 @@ def main() -> None:
         help="Cache directory for datasets (default: $HF_DATASETS_CACHE)",
     )
     parser.add_argument(
+        "--model-cache-dir",
+        type=str,
+        default=os.environ.get("HF_HUB_CACHE"),
+        help="Cache directory for model weights (default: $HF_HUB_CACHE)",
+    )
+    parser.add_argument(
+        "--attn-implementation",
+        type=str,
+        default="auto",
+        help=(
+            "Attention implementation. Use auto to choose sdpa for Mllama "
+            "and flash_attention_2 otherwise."
+        ),
+    )
+    parser.add_argument(
+        "--eval-method",
+        type=str,
+        default="mcq",
+        choices=["mcq", "mcq_logits"],
+        help="Compatibility flag; compositionality currently uses MCQ logits only.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Limit number of samples per subtask/category (for debugging)",
     )
     args = parser.parse_args()
+    try:
+        args.attn_implementation = resolve_attn_implementation_for_model(
+            args.model_name_or_path,
+            args.attn_implementation,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Print configuration
     print(
@@ -1312,6 +1424,8 @@ def main() -> None:
     )
     print(f"[cyan]Model:     {args.model_name_or_path}[/cyan]")
     print(f"[cyan]Benchmark: {args.benchmark}[/cyan]")
+    print(f"[cyan]Method:    mcq_logits[/cyan]")
+    print(f"[cyan]Attention: {args.attn_implementation}[/cyan]")
     if args.benchmark in ("sugarcrepe", "all"):
         print(f"[cyan]SugarCrepe: {args.sugarcrepe_data_root}[/cyan]")
     if args.limit:
@@ -1328,8 +1442,8 @@ def main() -> None:
     print("[dim]Loading model...[/dim]")
     model, processor_or_tokenizer = load_hf_model_and_processor_or_tokenizer(
         model_name_or_path=args.model_name_or_path,
-        # attn_implementation="sdpa",
-        # dtype=torch.float16,
+        cache_dir=args.model_cache_dir,
+        attn_implementation=args.attn_implementation,
     )
     model.eval()
     model_identifier = args.model_name_or_path.replace("/", "_")
@@ -1340,14 +1454,14 @@ def main() -> None:
     overall_start = time.time()
 
     # Run benchmarks
-    if args.benchmark in ("bivlc", "all"):
-        try:
-            run_bivlc_evaluation(model, processor_or_tokenizer, args, model_identifier)
-        except Exception as e:
-            print(f"[red]✗ BiVLC evaluation failed: {e}[/red]")
-            import traceback
+    # if args.benchmark in ("bivlc", "all"):
+    #     try:
+    #         run_bivlc_evaluation(model, processor_or_tokenizer, args, model_identifier)
+    #     except Exception as e:
+    #         print(f"[red]✗ BiVLC evaluation failed: {e}[/red]")
+    #         import traceback
 
-            traceback.print_exc()
+    #         traceback.print_exc()
 
     if args.benchmark in ("aro", "all"):
         try:

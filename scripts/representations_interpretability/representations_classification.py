@@ -97,7 +97,10 @@ def get_representations_and_labels(
     is_imagenet_animals = "imagenet_short_text" in dataset_name.lower()
     _dn_lower = dataset_name.lower()
     is_generic_classification = any(
-        ds in _dn_lower for ds in ("food101", "sun397", "caltech101")
+        ds in _dn_lower for ds in (
+            "food101", "sun397", "caltech101",
+            "oxford_flowers102", "places365", "dtd",
+        )
     )
     is_dataset_with_modes = is_mini_imagenet or is_imagenet_animals or is_generic_classification
 
@@ -127,6 +130,15 @@ def get_representations_and_labels(
         if "caltech101" in _dn_lower and split != "train":
             print(f"  [caltech101] Overriding split '{split}' → 'train'")
             split = "train"
+        if "oxford_flowers102" in _dn_lower and split != "test":
+            print(f"  [oxford_flowers102] Overriding split '{split}' → 'test'")
+            split = "test"
+        if "places365" in _dn_lower and split != "train":
+            print(f"  [places365] Overriding split '{split}' → 'train'")
+            split = "train"
+        if _dn_lower.split("/")[-1] == "dtd" and split != "train":
+            print(f"  [dtd] Overriding split '{split}' → 'train'")
+            split = "train"
         if prompt_mode not in MCQ_MODES:
             guide_text = ""
         n_shots = 0
@@ -152,9 +164,7 @@ def get_representations_and_labels(
     sample_ids = list(dataset.sample_ids)
     sample_signature = _build_sample_signature(sample_ids=sample_ids, labels=labels)
     prompt_signature = dataset.prompt_signature
-    prompt_signature_required = (
-        prompt_mode == "describe" and (is_mini_imagenet or is_imagenet_animals)
-    )
+    prompt_signature_required = False
 
     if (
         representation_cache_path is not None
@@ -193,9 +203,9 @@ def get_representations_and_labels(
             if is_valid_cache:
                 if save_prompts_path is not None:
                     print(
-                        f"  [prompts] Representations loaded from cache — "
-                        f"prompts were saved in the original run. "
-                        f"Re-run with --force-recompute-representations to regenerate."
+                        "  [prompts] Representations loaded from cache — "
+                        "prompts were saved in the original run. "
+                        "Re-run with --force-recompute-representations to regenerate."
                     )
                 if collect_predictions:
                     print(
@@ -386,6 +396,12 @@ def _effective_dataset_split(dataset_name: str, split: str) -> str:
         return "test"
     if "caltech101" in lower_name:
         return "train"
+    if "oxford_flowers102" in lower_name:
+        return "test"
+    if "places365" in lower_name:
+        return "train"
+    if lower_name.split("/")[-1] == "dtd":
+        return "train"
     return split
 
 
@@ -486,6 +502,14 @@ def parse_args() -> argparse.Namespace:
         default=True,
     )
     parser.add_argument("--force-recompute-representations", action="store_true")
+    parser.add_argument(
+        "--force-recompute-metrics",
+        action="store_true",
+        help=(
+            "Force metric recomputation: overwrite existing output files. "
+            "Without this flag, a metric is skipped when its output file already exists."
+        ),
+    )
     parser.add_argument(
         "--metrics",
         type=str,
@@ -835,7 +859,13 @@ def main() -> None:
     is_food101 = "food101" in args.dataset_name.lower()
     is_sun397 = "sun397" in args.dataset_name.lower()
     is_caltech101 = "caltech101" in args.dataset_name.lower()
-    is_generic_classification = is_food101 or is_sun397 or is_caltech101
+    is_oxford_flowers102 = "oxford_flowers102" in args.dataset_name.lower()
+    is_places365 = "places365" in args.dataset_name.lower()
+    is_dtd = args.dataset_name.lower().split("/")[-1] == "dtd"
+    is_generic_classification = (
+        is_food101 or is_sun397 or is_caltech101
+        or is_oxford_flowers102 or is_places365 or is_dtd
+    )
     is_dataset_with_modes = is_mini_imagenet or is_imagenet_animals or is_generic_classification
     is_mcq = args.prompt_mode in MCQ_MODES and is_dataset_with_modes
 
@@ -845,7 +875,7 @@ def main() -> None:
             f"got --prompt-mode={args.prompt_mode!r}"
         )
     mode_active = (
-        (is_mini_imagenet and args.prompt_mode != "describe")
+        is_mini_imagenet
         or is_imagenet_animals
         or is_generic_classification
     )
@@ -979,6 +1009,23 @@ def main() -> None:
         if metric_name == "accuracy":
             continue  # handled separately below — needs layer_predictions, not representations
 
+        metric_file_suffix = metrics_suffix + (
+            label_overlap_suffix if metric_name == "label_overlap" else ""
+        )
+        out_path = _build_output_path(
+            results_base=results_base,
+            dataset_name=args.dataset_name,
+            split=args.split,
+            model_name=args.model_name,
+            pooling_method=args.tokens_pooling_method,
+            metric_name=metric_name,
+            suffix=metric_file_suffix,
+        )
+
+        if not args.force_recompute_metrics and out_path.exists():
+            print(f"\n  Skipping {metric_name}: output already exists at {out_path}")
+            continue
+
         print(f"\nComputing metric: {metric_name}")
 
         if metric_name == "logistic_regression":
@@ -1001,19 +1048,6 @@ def main() -> None:
             )
         else:  # homogeneity
             layer_results = homogeneity_score_per_layer(representations, y)
-
-        metric_file_suffix = metrics_suffix + (
-            label_overlap_suffix if metric_name == "label_overlap" else ""
-        )
-        out_path = _build_output_path(
-            results_base=results_base,
-            dataset_name=args.dataset_name,
-            split=args.split,
-            model_name=args.model_name,
-            pooling_method=args.tokens_pooling_method,
-            metric_name=metric_name,
-            suffix=metric_file_suffix,
-        )
 
         _save_metric_results(
             out_path=out_path,
