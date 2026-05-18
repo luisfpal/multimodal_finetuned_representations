@@ -6,7 +6,7 @@ import torch
 from dotenv import load_dotenv
 from safetensors.torch import load_file, save_file
 
-from src.residual_stream_tracer import residual_stream_tracer
+from src.residual_stream_tracer import VALID_TOKENS_POOLING_METHODS, residual_stream_tracer
 from utils.cambrian_bridge import (
     build_cambrian_vision_variant_name,
     cambrian_vision_selection_metadata,
@@ -16,11 +16,16 @@ from utils.cambrian_utils import is_cambrian_model
 from utils import (
     compute_cross_layers_residual_stream_similarities,
     get_dataloader,
+    get_dataloader_for_captioning,
     load_hf_model_and_processor_or_tokenizer,
     seed_all,
 )
 from utils.dataset import MULTIPLE_CHOICE_BENCHMARKS, get_hf_dataset_split
-from utils.metrics_utils import preprocess_data
+from utils.clip_utils import CLIP_MODEL_ID, extract_clip_embeddings
+from utils.metrics_utils import (
+    compute_clip_residual_stream_similarities_per_layer,
+    preprocess_data,
+)
 from utils.semantic_filter_utils import (
     CaptionSemanticScorer,
     compute_semantic_keep_indices,
@@ -33,26 +38,15 @@ load_dotenv()
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MODEL_DTYPE = torch.bfloat16 if DEVICE.type == "cuda" else torch.float32
 ATTN_IMPLEMENTATION = "flash_attention_2" if DEVICE.type == "cuda" else "sdpa"
+# ATTN_IMPLEMENTATION = "eager"
 RESIDUAL_STREAM_TYPE = "output_layer"
 
-# ── Pooling method registry ────────────────────────────────────────────────
-# Single source of truth for all pooling methods accepted by this script.
-#
-# Virtual methods split img/txt at dispatch time; pass-through methods send
-# the same name to both tracers.  To add a new virtual method, register it
-# here — VALID_POOLING_METHODS and the help text are derived automatically.
-#
-# Format: virtual_method -> (txt_concrete, img_concrete)
-VIRTUAL_POOLING_DISPATCH: dict[str, tuple[str, str]] = {
-    "mean_context": ("mean_text_context", "mean_image"),
-    "mean_image_last_caption": ("last_caption", "mean_image"),
-    "last_image_last_caption": ("last_caption", "last_image"),
-}
-_PASS_THROUGH_POOLING_METHODS: list[str] = ["last", "mean", "none"]
-VALID_POOLING_METHODS: list[str] = _PASS_THROUGH_POOLING_METHODS + list(
-    VIRTUAL_POOLING_DISPATCH.keys()
-)
-TOKENS_POOLING_METHODS_DEFAULT: list[str] = ["last", "mean_context"]
+# ── Pooling spec format ────────────────────────────────────────────────────
+# Pooling methods are specified as "img_method|txt_method" (or a bare method
+# name to use the same for both modalities).  Each individual method must be
+# one of VALID_TOKENS_POOLING_METHODS from residual_stream_tracer.py.
+# Use parse_pooling_spec() to split a spec into (img_method, txt_method).
+TOKENS_POOLING_METHODS_DEFAULT: list[str] = ["last|last", "mean_image|mean_text_context"]
 # ──────────────────────────────────────────────────────────────────────────
 
 SIMILARITY_MEASURES_DEFAULT = [
@@ -81,6 +75,25 @@ def build_similarity_filename(
     if measure_name in REGRESSION_SIMILARITY_MEASURES:
         return f"{model_name}_{measure_name}_reg-{regression_type}.safetensors"
     return f"{model_name}_{measure_name}.safetensors"
+
+
+def parse_pooling_spec(spec: str) -> tuple[str, str]:
+    """Parse a pooling spec into (img_method, txt_method).
+
+    Accepts "img_method|txt_method" or a bare method name (applied to both
+    modalities).  Validates each method against VALID_TOKENS_POOLING_METHODS.
+    """
+    if "|" in spec:
+        img_m, txt_m = spec.split("|", 1)
+    else:
+        img_m = txt_m = spec
+    for m in (img_m, txt_m):
+        if m not in VALID_TOKENS_POOLING_METHODS:
+            raise ValueError(
+                f"Unknown pooling method '{m}' in spec '{spec}'. "
+                f"Valid methods: {VALID_TOKENS_POOLING_METHODS}"
+            )
+    return img_m, txt_m
 
 
 def resolve_semantic_filter(
@@ -222,48 +235,212 @@ def find_missing_measures(
     return missing
 
 
-def preprocess_and_save_pair(
-    res_txt: torch.Tensor,
-    res_img: torch.Tensor,
-    repr_path_txt: str,
-    repr_path_img: str,
-    txt_metadata: dict,
-    img_metadata: dict,
-    save: bool,
+def save_raw_representation(
+    tensor: torch.Tensor,
+    path: str,
+    metadata: dict,
     dry_run: bool,
     force: bool,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Preprocess both representations per layer (float32 + dedup), then save."""
-    print("  👉 Preprocessing representations...")
-    proc_txt, proc_img = [], []
-    for layer_idx in range(res_txt.shape[0]):
-        t, i = preprocess_data(
-            res_txt[layer_idx],
-            res_img[layer_idx],
-            output_format="tensor",
-            remove_duplicates=True,
-        )
-        proc_txt.append(t.cpu())
-        proc_img.append(i.cpu())
-    res_txt = torch.stack(proc_txt, dim=0)
-    res_img = torch.stack(proc_img, dim=0)
-    print(f"  ✅ Shape after preprocessing: {res_txt.shape}")
+) -> None:
+    """Save a raw (unprocessed) representation tensor to a safetensors file.
 
-    if save and not dry_run:
-        for tensor, path, metadata in [
-            (res_txt, repr_path_txt, txt_metadata),
-            (res_img, repr_path_img, img_metadata),
-        ]:
-            if force or not os.path.exists(path):
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                valid_meta = {k: str(v) for k, v in metadata.items()}
-                try:
-                    save_file({"residual_stream": tensor}, path, metadata=valid_meta)
-                    print(f"  💾 Saved: {path}")
-                except Exception as e:
-                    print(f"  ❌ Error saving {path}: {type(e).__name__}: {e}")
+    Skipped when dry_run is set or the file already exists and force is False.
+    The tensor is saved as-is (CPU copy); preprocessing happens at metric-compute
+    time inside the individual measure functions (which each call preprocess_data).
+    """
+    if dry_run or (not force and os.path.exists(path)):
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    valid_meta = {k: str(v) for k, v in metadata.items()}
+    try:
+        save_file({"residual_stream": tensor.cpu()}, path, metadata=valid_meta)
+        print(f"  💾 Saved raw: {path}")
+    except Exception as e:
+        print(f"  ❌ Error saving {path}: {type(e).__name__}: {e}")
 
-    return res_txt, res_img
+
+def run_pair_analysis(
+    res_a: torch.Tensor,
+    res_b: torch.Tensor,
+    modality_a: str,
+    modality_b: str,
+    pooling_spec: str,
+    pooling_method_a: str,
+    pooling_method_b: str,
+    similarities_dir: str,
+    model_variant_name: str,
+    missing_measures: list[str],
+    args: argparse.Namespace,
+    extra_metadata: dict,
+) -> None:
+    """Compute and save all similarity measures for a (A, B) representation pair.
+
+    Shared by the standard text-vs-image path and the img-img path.
+    ``modality_a`` / ``modality_b`` are free-form strings stored in metadata
+    (e.g. "text", "image").
+    """
+    pooling_dir_name = pooling_spec.replace("|", "--")
+    sim_metadata = {
+        "task": args.task,
+        "row_modality": modality_a,
+        "col_modality": modality_b,
+        "description": (
+            f"Rows represent {modality_a} layers, Columns represent {modality_b} layers"
+        ),
+        "pooling_method": pooling_dir_name,
+        "pooling_method_a": pooling_method_a,
+        "pooling_method_b": pooling_method_b,
+        "model_variant_name": model_variant_name,
+    }
+    if args.task != "captioning":
+        sim_metadata["caption_source"] = args.caption_source
+    # extra_metadata may contain "semantic_filter" (sem_tag), cambrian metadata, etc.
+    sim_metadata.update(extra_metadata)
+    print(
+        f"    ℹ️  Matrix orientation: Rows={modality_a.capitalize()}, "
+        f"Columns={modality_b.capitalize()}"
+    )
+
+    for measure_name in missing_measures:
+        print(f"    👉  Computing: {measure_name}")
+        try:
+            sim_results = compute_cross_layers_residual_stream_similarities(
+                res_a,
+                res_b,
+                similarity_measures=[measure_name],
+                maxk=30,
+                regression_type=args.regression_type,
+            )
+            measure_val = sim_results[measure_name]
+            print(f"    ✅ Shape: {measure_val.shape}")
+            if not args.dry_run:
+                measure_metadata = dict(sim_metadata)
+                if measure_name in REGRESSION_SIMILARITY_MEASURES:
+                    measure_metadata["regression_type"] = args.regression_type
+                save_path = os.path.join(
+                    similarities_dir,
+                    build_similarity_filename(
+                        model_variant_name,
+                        measure_name,
+                        args.regression_type,
+                    ),
+                )
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                save_file(
+                    {f"{measure_name}": measure_val},
+                    save_path,
+                    metadata={k: str(v) for k, v in measure_metadata.items()},
+                )
+                print(f"    💾 Saved: {save_path}")
+        except Exception as e:
+            print(f"    ❌ Error computing {measure_name}: {type(e).__name__}: {e}")
+            print(
+                f"    ⚠️  Skipping {measure_name} and continuing with next measure..."
+            )
+
+
+# ── CLIP measure configuration ─────────────────────────────────────────────
+# These three measures are computed for EACH of the two modalities (img, txt),
+# giving 6 files in total per pooling-spec run.
+_CLIP_MEASURES = [
+    "neighborhood_overlap",
+    "information_imbalance",          # repr[layer] → clip
+    "information_imbalance_reversed",  # clip → repr[layer]
+]
+
+# (modality_tag, measure_name) → file-key / filename suffix
+_CLIP_RESULT_KEYS: dict[tuple[str, str], str] = {
+    ("img", "neighborhood_overlap"):            "img_clip_neighborhood_overlap",
+    ("txt", "neighborhood_overlap"):            "txt_clip_neighborhood_overlap",
+    ("img", "information_imbalance"):           "img_to_clip_information_imbalance",
+    ("txt", "information_imbalance"):           "txt_to_clip_information_imbalance",
+    ("img", "information_imbalance_reversed"):  "clip_to_img_information_imbalance",
+    ("txt", "information_imbalance_reversed"):  "clip_to_txt_information_imbalance",
+}
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def run_clip_analysis(
+    res_txt: torch.Tensor,
+    res_img: torch.Tensor,
+    clip_embeddings: torch.Tensor,
+    clip_results_dir: str,
+    model_variant_name: str,
+    args: argparse.Namespace,
+    pooling_spec: str,
+    pooling_method_img: str,
+    pooling_method_txt: str,
+    extra_metadata: dict,
+) -> None:
+    """Compute per-layer CLIP similarity metrics for both modalities and save.
+
+    For each of (img, txt) and each of the three measures in ``_CLIP_MEASURES``,
+    calls ``compute_clip_residual_stream_similarities_per_layer`` and saves a
+    ``(num_layers,)`` tensor to a dedicated safetensors file.
+
+    Args:
+        res_txt: Preprocessed text representations, shape (num_layers, N, D).
+        res_img: Preprocessed image representations, shape (num_layers, N, D).
+        clip_embeddings: CLIP features filtered by valid_indices, shape (N, clip_dim).
+        clip_results_dir: Directory for result files (created if needed).
+        model_variant_name: Used as filename prefix.
+        args: Script arguments (for dry_run, task, regression_type).
+        pooling_spec: Raw spec string e.g. "mean_image|last_caption".
+        pooling_method_img: Concrete image pooling method.
+        pooling_method_txt: Concrete text pooling method.
+        extra_metadata: Additional fields merged into each file's metadata
+            (e.g. semantic_filter tag, cambrian variant info).
+    """
+    os.makedirs(clip_results_dir, exist_ok=True)
+
+    base_meta = {
+        "clip_model": CLIP_MODEL_ID,
+        "pooling_method": pooling_spec.replace("|", "--"),
+        "pooling_method_img": pooling_method_img,
+        "pooling_method_txt": pooling_method_txt,
+        "model_variant_name": model_variant_name,
+        "task": args.task,
+    }
+    if args.task != "captioning":
+        base_meta["caption_source"] = args.caption_source
+    base_meta.update(extra_metadata)
+
+    for modality_tag, representations in [("img", res_img), ("txt", res_txt)]:
+        try:
+            results = compute_clip_residual_stream_similarities_per_layer(
+                representations,
+                clip_embeddings,
+                similarity_measures=_CLIP_MEASURES,
+            )
+        except Exception as e:
+            print(
+                f"    ❌ Error computing CLIP metrics for {modality_tag}: "
+                f"{type(e).__name__}: {e}"
+            )
+            print(f"    ⚠️  Skipping CLIP metrics for {modality_tag}...")
+            continue
+
+        for measure, values in results.items():
+            key = _CLIP_RESULT_KEYS[(modality_tag, measure)]
+            if args.dry_run:
+                print(f"    [dry-run] CLIP {key}: shape={tuple(values.shape)}")
+                continue
+            save_path = os.path.join(
+                clip_results_dir,
+                f"{model_variant_name}_{key}.safetensors",
+            )
+            meta = {
+                **base_meta,
+                "modality": modality_tag,
+                "measure": measure,
+                "direction": key,
+            }
+            save_file(
+                {key: values},
+                save_path,
+                metadata={k: str(v) for k, v in meta.items()},
+            )
+            print(f"    💾 Saved CLIP: {save_path}")
 
 
 def main():
@@ -277,6 +454,13 @@ def main():
         help="Base directory for storing representations (e.g., $HOME/scratch)",
     )
     parser.add_argument("--dataset-path-or-name", type=str, required=True)
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="vqa",
+        choices=["vqa", "captioning"],
+        help="Experiment task. 'vqa' preserves the existing QA path; 'captioning' uses ImageCaptioningDataset.",
+    )
     parser.add_argument("--model-name-or-path", type=str, required=True)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
@@ -292,8 +476,9 @@ def main():
         nargs="+",
         default=TOKENS_POOLING_METHODS_DEFAULT,
         help=(
-            f"List of pooling methods to use. "
-            f"Valid: {VALID_POOLING_METHODS}. "
+            "Pooling specs in 'img_method|txt_method' format (or a bare method "
+            "name to use the same for both modalities).  "
+            f"Valid individual methods: {VALID_TOKENS_POOLING_METHODS}.  "
             f"Default: {TOKENS_POOLING_METHODS_DEFAULT}"
         ),
     )
@@ -315,13 +500,46 @@ def main():
     )
     parser.add_argument("--save-representations", action="store_true")
     parser.add_argument(
+        "--img-img-pair",
+        action="store_true",
+        help=(
+            "Run image-vs-image comparison instead of the default text-vs-image. "
+            "Both representations are extracted from the image dataloader using the "
+            "img_method and txt_method from each pooling spec respectively.  "
+            "Results are saved under 'img_img_comparison/' to avoid collision with "
+            "the default 'multimodality_comparison/' directory."
+        ),
+    )
+    parser.add_argument(
+        "--enable-clip-metrics",
+        action="store_true",
+        help=(
+            "Compute per-layer CLIP similarity metrics (neighborhood_overlap and "
+            "information_imbalance in both directions) for the text and image "
+            "representations against CLIP image embeddings.  Results are saved "
+            "under 'clip_multimodality_comparison/' alongside the standard "
+            "'multimodality_comparison/' directory.  Only applies to the standard "
+            "text-vs-image path (not --img-img-pair)."
+        ),
+    )
+    parser.add_argument(
         "--caption-source",
         type=str,
         default="synthetic",
         choices=["human", "synthetic"],
         help=(
             "Caption source: 'human' for datasets with human captions (COCOQA, VQAv2-ICQ), "
-            "'synthetic' for datasets with only synthetic captions (MME, MMBench, GQA, etc.)."
+            "or 'synthetic' for datasets with only synthetic captions (MME, MMBench, GQA, etc.). "
+            "Ignored for --task captioning."
+        ),
+    )
+    parser.add_argument(
+        "--captioning-image-dir",
+        type=str,
+        default=None,
+        help=(
+            "Directory containing COCO train2014 images for LLaVA-Instruct captioning. "
+            "Defaults to COCO_TRAIN2014_DIR or the project ORFEO path."
         ),
     )
     parser.add_argument(
@@ -412,14 +630,13 @@ def main():
     if args.force and args.force_metrics_only:
         parser.error("--force and --force-metrics-only are mutually exclusive.")
 
-    invalid_pooling = [
-        m for m in args.pooling_methods if m not in VALID_POOLING_METHODS
-    ]
-    if invalid_pooling:
-        parser.error(
-            f"Invalid --pooling-methods: {invalid_pooling}. "
-            f"Valid options: {VALID_POOLING_METHODS}"
-        )
+    # Validate and pre-parse all pooling specs so errors surface early.
+    try:
+        parsed_specs: list[tuple[str, str]] = [
+            parse_pooling_spec(spec) for spec in args.pooling_methods
+        ]
+    except ValueError as exc:
+        parser.error(str(exc))
 
     is_cambrian_requested = is_cambrian_model(
         model=None,
@@ -434,14 +651,6 @@ def main():
 
     if args.cambrian_vision_encoders is not None and not is_cambrian_requested:
         parser.error("--cambrian-vision-encoders is only valid for Cambrian models.")
-
-    if is_cambrian_requested:
-        cambrian_non_last_pooling = [m for m in args.pooling_methods if m != "last"]
-        if cambrian_non_last_pooling:
-            parser.error(
-                "Cambrian currently supports only --pooling-methods last. "
-                f"Received unsupported methods: {cambrian_non_last_pooling}"
-            )
 
     if args.dry_run:
         print("\n🧪 DRY-RUN MODE — no caching, no saving, fresh computation only")
@@ -480,6 +689,16 @@ def main():
     dataset_slug = args.dataset_path_or_name.split("/")[-1].replace("-", "_").lower()
     is_mc = any(b in dataset_slug for b in MULTIPLE_CHOICE_BENCHMARKS)
 
+    if args.task == "captioning":
+        if args.dataset_split:
+            parser.error("--dataset-split is only valid for the VQA task.")
+        if args.enable_semantic_filter:
+            parser.error("--enable-semantic-filter is not implemented for captioning.")
+        if args.open_ended:
+            parser.error("--open-ended is only valid for multiple-choice VQA datasets.")
+        if args.repeated_images:
+            parser.error("--repeated-images is only valid for multiple-choice VQA datasets.")
+
     if args.dataset_split:
         if is_mc:
             parser.error("--dataset-split is only valid for OpenVQA datasets, not MC.")
@@ -498,9 +717,16 @@ def main():
         )
         effective_downsample_size = None
 
-    sample_set_tag = (
-        "repeated_images" if (is_mc and args.repeated_images) else "unique_images"
-    )
+    if args.task == "captioning":
+        sample_set_tag = (
+            f"top{effective_downsample_size}_responses"
+            if effective_downsample_size
+            else "all_instances"
+        )
+    else:
+        sample_set_tag = (
+            "repeated_images" if (is_mc and args.repeated_images) else "unique_images"
+        )
     open_ended_tag = "open_ended" if (is_mc and args.open_ended) else ""
 
     # Warn when flags are inapplicable (shell already guards these, but be explicit)
@@ -515,11 +741,14 @@ def main():
             "multiple-choice benchmark."
         )
 
-    dataset_prefix = (
-        f"{dataset_slug}_{open_ended_tag}_{args.caption_source}"
-        if open_ended_tag
-        else f"{dataset_slug}_{args.caption_source}"
-    )
+    if args.task == "captioning":
+        dataset_prefix = f"{dataset_slug}_detail_23k"
+    else:
+        dataset_prefix = (
+            f"{dataset_slug}_{open_ended_tag}_{args.caption_source}"
+            if open_ended_tag
+            else f"{dataset_slug}_{args.caption_source}"
+        )
     sem_tag = SEMANTIC_FILTER_TAG if args.enable_semantic_filter else ""
 
     seed_all(args.seed)
@@ -577,64 +806,107 @@ def main():
         )
 
         print("\n📚 Preparing dataloaders...")
-        dl_args = {
-            "dataset_path_or_name": args.dataset_path_or_name,
-            "seed": args.seed,
-            "processor": processor,
-            "batch_size": args.batch_size,
-            "cache_dir": datasets_cache_dir,
-            "guide_text": args.guide_text,
-            "downsample_size": effective_downsample_size,
-            "split": "train",
-            "caption_source": args.caption_source,
-        }
+        if args.task == "captioning":
+            dl_args = {
+                "dataset_path_or_name": args.dataset_path_or_name,
+                "processor": processor,
+                "batch_size": args.batch_size,
+                "downsample_size": effective_downsample_size,
+                "image_dir": args.captioning_image_dir,
+            }
+            if "intern" in model.__class__.__name__.lower() or is_cambrian_model(
+                model=model
+            ):
+                dl_args["model"] = model
+            if is_cambrian_model(model=model):
+                dl_args["num_workers"] = 0
 
-        if args.enable_semantic_filter:
-            allowed_indices, _ = resolve_semantic_filter(
-                args, results_dir, dataset_slug, datasets_cache_dir
-            )
-            if allowed_indices is not None:
-                dl_args["allowed_indices"] = allowed_indices
+            if not args.img_img_pair:
+                print(f"  - Loading {dataset_prefix}_txt...")
+                dl_txt = get_dataloader_for_captioning(texts_qa=True, **dl_args)
+            print(f"  - Loading {dataset_prefix}_img...")
+            dl_img = get_dataloader_for_captioning(images_qa=True, **dl_args)
+        else:
+            dl_args = {
+                "dataset_path_or_name": args.dataset_path_or_name,
+                "seed": args.seed,
+                "processor": processor,
+                "batch_size": args.batch_size,
+                "cache_dir": datasets_cache_dir,
+                "guide_text": args.guide_text,
+                "downsample_size": effective_downsample_size,
+                "split": "train",
+                "caption_source": args.caption_source,
+            }
 
-        if is_mc and not args.repeated_images:
-            dl_args["unique_images"] = True
-        if open_ended_tag:
-            dl_args["open_ended"] = True
-        if args.dataset_split:
-            dl_args["dataset_split"] = args.dataset_split
-        if "intern" in model.__class__.__name__.lower() or is_cambrian_model(
-            model=model
-        ):
-            dl_args["model"] = model
-        if is_cambrian_model(model=model):
-            dl_args["num_workers"] = 0
+            if args.enable_semantic_filter:
+                allowed_indices, _ = resolve_semantic_filter(
+                    args, results_dir, dataset_slug, datasets_cache_dir
+                )
+                if allowed_indices is not None:
+                    dl_args["allowed_indices"] = allowed_indices
 
-        print(f"  - Loading {dataset_prefix}_txt...")
-        dl_txt = get_dataloader(texts_qa=True, **dl_args)
-        print(f"  - Loading {dataset_prefix}_img...")
-        dl_img = get_dataloader(images_qa=True, **dl_args)
+            if is_mc and not args.repeated_images:
+                dl_args["unique_images"] = True
+            if open_ended_tag:
+                dl_args["open_ended"] = True
+            if args.dataset_split:
+                dl_args["dataset_split"] = args.dataset_split
+            if "intern" in model.__class__.__name__.lower() or is_cambrian_model(
+                model=model
+            ):
+                dl_args["model"] = model
+            if is_cambrian_model(model=model):
+                dl_args["num_workers"] = 0
+
+            if not args.img_img_pair:
+                print(f"  - Loading {dataset_prefix}_txt...")
+                dl_txt = get_dataloader(texts_qa=True, **dl_args)
+            print(f"  - Loading {dataset_prefix}_img...")
+            dl_img = get_dataloader(images_qa=True, **dl_args)
 
         extraction_runtime_initialized = True
         return model, processor, dl_txt, dl_img
 
-    for pooling_method in args.pooling_methods:
+    def get_repr_path(dataset_n: str, method: str) -> str:
+        """Build and create the cache path for a representation."""
+        repr_dir = os.path.join(
+            os.path.expanduser(args.representations_dir),
+            "representations",
+            model_variant_name,
+            dataset_n,
+            RESIDUAL_STREAM_TYPE,
+            method,
+            sample_set_tag,
+        )
+        os.makedirs(repr_dir, exist_ok=True)
+        return os.path.join(repr_dir, "representations.safetensors")
+
+    last_similarities_dir = None
+
+    for pooling_spec, (pooling_method_img, pooling_method_txt) in zip(
+        args.pooling_methods, parsed_specs
+    ):
+        pooling_dir_name = pooling_spec.replace("|", "--")
+        comparison_root = "img_img_comparison" if args.img_img_pair else "multimodality_comparison"
         analysis_dir = os.path.join(
             results_dir,
-            "multimodality_comparison",
+            comparison_root,
             dataset_prefix,
-            pooling_method,
+            pooling_dir_name,
             sem_tag,
             sample_set_tag,
         )
         similarities_dir = os.path.join(analysis_dir, "similarities")
         os.makedirs(similarities_dir, exist_ok=True)
-
-        pooling_method_txt, pooling_method_img = VIRTUAL_POOLING_DISPATCH.get(
-            pooling_method, (pooling_method, pooling_method)
-        )
+        last_similarities_dir = similarities_dir
 
         print(f"\n{'-' * 80}")
-        print(f"🔍 Analysis: {RESIDUAL_STREAM_TYPE} | {pooling_method}")
+        print(f"🔍 Analysis: {RESIDUAL_STREAM_TYPE} | {pooling_spec}")
+        if args.img_img_pair:
+            print(f"    Mode: image-vs-image ({pooling_method_img} | {pooling_method_txt})")
+        else:
+            print(f"    img={pooling_method_img}, txt={pooling_method_txt}")
         print(f"{'-' * 80}")
 
         missing_measures = find_missing_measures(
@@ -646,164 +918,171 @@ def main():
             args.force or args.force_metrics_only,
         )
         if not missing_measures:
-            print(f"    ⏩ All measures computed for {pooling_method}. Skipping...")
+            print(f"    ⏩ All measures computed for {pooling_spec}. Skipping...")
             continue
         print(f"    ⚠️  Missing/forced measures: {missing_measures}")
 
-        # Closure: captures pooling_method, sample_set_tag from loop scope
-        def get_repr_path(dataset_n: str) -> str:
-            repr_dir = os.path.join(
-                os.path.expanduser(args.representations_dir),
-                "representations",
-                model_variant_name,
-                dataset_n,
-                RESIDUAL_STREAM_TYPE,
-                pooling_method,
-                sample_set_tag,
+        if args.img_img_pair:
+            # ── Image-vs-image path ─────────────────────────────────────────
+            repr_path_a = get_repr_path(f"{dataset_prefix}_img", pooling_method_img)
+            repr_path_b = get_repr_path(f"{dataset_prefix}_img", pooling_method_txt)
+
+            res_a = load_representation_from_cache(repr_path_a, args.dry_run, args.force)
+            res_b = load_representation_from_cache(repr_path_b, args.dry_run, args.force)
+            a_from_cache = res_a is not None
+            b_from_cache = res_b is not None
+
+            if not a_from_cache or not b_from_cache:
+                model, processor, dl_txt, dl_img = ensure_extraction_runtime()
+
+            if not a_from_cache:
+                print(f"  👉 Extracting Image Representations (A: {pooling_method_img})...")
+                res_a = extract_representation(dl_img, model, processor, pooling_method_img)
+            if not b_from_cache:
+                print(f"  👉 Extracting Image Representations (B: {pooling_method_txt})...")
+                res_b = extract_representation(dl_img, model, processor, pooling_method_txt)
+
+            base_meta = {
+                "model": model_variant_name,
+                "model_variant_name": model_variant_name,
+                "task": args.task,
+                "semantic_filter": sem_tag,
+                "type": RESIDUAL_STREAM_TYPE,
+                "open_ended": str(bool(open_ended_tag)),
+                "repeated_images": str(sample_set_tag == "repeated_images"),
+            }
+            if args.task != "captioning":
+                base_meta["caption_source"] = args.caption_source
+            meta_a = {**base_meta, "dataset": f"{dataset_prefix}_img", "pooling_method": pooling_method_img}
+            meta_b = {**base_meta, "dataset": f"{dataset_prefix}_img", "pooling_method": pooling_method_txt}
+            meta_a.update(selected_cambrian_metadata)
+            meta_b.update(selected_cambrian_metadata)
+
+            if not a_from_cache and args.save_representations:
+                save_raw_representation(res_a, repr_path_a, meta_a, args.dry_run, args.force)
+            if not b_from_cache and args.save_representations:
+                save_raw_representation(res_b, repr_path_b, meta_b, args.dry_run, args.force)
+
+            if args.representations_only:
+                print("  ⏭️  --representations-only: skipping similarity computation.")
+                del res_a, res_b
+                gc.collect()
+                torch.cuda.empty_cache()
+                continue
+
+            print("  👉 Computing Similarities (image-vs-image)...")
+            run_pair_analysis(
+                res_a, res_b,
+                modality_a="image", modality_b="image",
+                pooling_spec=pooling_spec,
+                pooling_method_a=pooling_method_img,
+                pooling_method_b=pooling_method_txt,
+                similarities_dir=similarities_dir,
+                model_variant_name=model_variant_name,
+                missing_measures=missing_measures,
+                args=args,
+                extra_metadata={**selected_cambrian_metadata, "semantic_filter": sem_tag},
             )
-            os.makedirs(repr_dir, exist_ok=True)
-            return os.path.join(repr_dir, "representations.safetensors")
 
-        repr_path_txt = get_repr_path(f"{dataset_prefix}_txt")
-        repr_path_img = get_repr_path(f"{dataset_prefix}_img")
-
-        res_txt = load_representation_from_cache(
-            repr_path_txt,
-            args.dry_run,
-            args.force,
-        )
-        res_img = load_representation_from_cache(
-            repr_path_img,
-            args.dry_run,
-            args.force,
-        )
-        txt_from_cache = res_txt is not None
-        img_from_cache = res_img is not None
-
-        if not txt_from_cache or not img_from_cache:
-            model, processor, dl_txt, dl_img = ensure_extraction_runtime()
-
-        if not txt_from_cache:
-            print("  👉 Extracting Text Representations...")
-            res_txt = extract_representation(
-                dl_txt,
-                model,
-                processor,
-                pooling_method_txt,
-            )
-        if not img_from_cache:
-            print("  👉 Extracting Image Representations...")
-            res_img = extract_representation(
-                dl_img,
-                model,
-                processor,
-                pooling_method_img,
-            )
-
-        txt_metadata = {
-            "model": model_variant_name,
-            "model_variant_name": model_variant_name,
-            "dataset": f"{dataset_prefix}_txt",
-            "pooling_method": pooling_method_txt,
-            "caption_source": args.caption_source,
-            "semantic_filter": sem_tag,
-            "type": RESIDUAL_STREAM_TYPE,
-            "open_ended": str(bool(open_ended_tag)),
-            "repeated_images": str(sample_set_tag == "repeated_images"),
-        }
-        img_metadata = {
-            "model": model_variant_name,
-            "model_variant_name": model_variant_name,
-            "dataset": f"{dataset_prefix}_img",
-            "pooling_method": pooling_method_img,
-            "caption_source": args.caption_source,
-            "semantic_filter": sem_tag,
-            "type": RESIDUAL_STREAM_TYPE,
-            "open_ended": str(bool(open_ended_tag)),
-            "repeated_images": str(sample_set_tag == "repeated_images"),
-        }
-        txt_metadata.update(selected_cambrian_metadata)
-        img_metadata.update(selected_cambrian_metadata)
-
-        if txt_from_cache and img_from_cache:
-            print(
-                "  ⏩ Skipping preprocessing: text and image representations "
-                "loaded from cache."
-            )
         else:
-            res_txt, res_img = preprocess_and_save_pair(
-                res_txt,
-                res_img,
-                repr_path_txt,
-                repr_path_img,
-                txt_metadata,
-                img_metadata,
-                args.save_representations,
-                args.dry_run,
-                args.force,
+            # ── Standard text-vs-image path ─────────────────────────────────
+            repr_path_txt = get_repr_path(f"{dataset_prefix}_txt", pooling_method_txt)
+            repr_path_img = get_repr_path(f"{dataset_prefix}_img", pooling_method_img)
+
+            res_txt = load_representation_from_cache(repr_path_txt, args.dry_run, args.force)
+            res_img = load_representation_from_cache(repr_path_img, args.dry_run, args.force)
+            txt_from_cache = res_txt is not None
+            img_from_cache = res_img is not None
+
+            if not txt_from_cache or not img_from_cache:
+                model, processor, dl_txt, dl_img = ensure_extraction_runtime()
+
+            if not txt_from_cache:
+                print("  👉 Extracting Text Representations...")
+                res_txt = extract_representation(dl_txt, model, processor, pooling_method_txt)
+            if not img_from_cache:
+                print("  👉 Extracting Image Representations...")
+                res_img = extract_representation(dl_img, model, processor, pooling_method_img)
+
+            base_meta = {
+                "model": model_variant_name,
+                "model_variant_name": model_variant_name,
+                "task": args.task,
+                "semantic_filter": sem_tag,
+                "type": RESIDUAL_STREAM_TYPE,
+                "open_ended": str(bool(open_ended_tag)),
+                "repeated_images": str(sample_set_tag == "repeated_images"),
+            }
+            if args.task != "captioning":
+                base_meta["caption_source"] = args.caption_source
+            txt_metadata = {**base_meta, "dataset": f"{dataset_prefix}_txt", "pooling_method": pooling_method_txt}
+            img_metadata = {**base_meta, "dataset": f"{dataset_prefix}_img", "pooling_method": pooling_method_img}
+            txt_metadata.update(selected_cambrian_metadata)
+            img_metadata.update(selected_cambrian_metadata)
+
+            if not txt_from_cache and args.save_representations:
+                save_raw_representation(res_txt, repr_path_txt, txt_metadata, args.dry_run, args.force)
+            if not img_from_cache and args.save_representations:
+                save_raw_representation(res_img, repr_path_img, img_metadata, args.dry_run, args.force)
+
+            if args.representations_only:
+                print("  ⏭️  --representations-only: skipping similarity computation.")
+                del res_txt, res_img
+                gc.collect()
+                torch.cuda.empty_cache()
+                continue
+
+            print("  👉 Computing Similarities...")
+            run_pair_analysis(
+                res_txt, res_img,
+                modality_a="text", modality_b="image",
+                pooling_spec=pooling_spec,
+                pooling_method_a=pooling_method_txt,
+                pooling_method_b=pooling_method_img,
+                similarities_dir=similarities_dir,
+                model_variant_name=model_variant_name,
+                missing_measures=missing_measures,
+                args=args,
+                extra_metadata={**selected_cambrian_metadata, "semantic_filter": sem_tag},
             )
 
-        if args.representations_only:
-            print("  ⏭️  --representations-only: skipping similarity computation.")
-            del res_txt, res_img
-            gc.collect()
-            torch.cuda.empty_cache()
-            continue
-
-        # ── Compute Similarities ───────────────────────────────────────────────
-        print("  👉 Computing Similarities...")
-        sim_metadata = {
-            "row_modality": "text",
-            "col_modality": "image",
-            "description": "Rows represent text layers, Columns represent image layers",
-            "pooling_method": pooling_method,
-            "pooling_method_text": pooling_method_txt,
-            "pooling_method_image": pooling_method_img,
-            "caption_source": args.caption_source,
-            "semantic_filter": sem_tag,
-        }
-        sim_metadata["model_variant_name"] = model_variant_name
-        sim_metadata.update(selected_cambrian_metadata)
-        print("    ℹ️  Matrix orientation: Rows=Text, Columns=Image")
-
-        for measure_name in missing_measures:
-            print(f"    👉  Computing: {measure_name}")
-            try:
-                sim_results = compute_cross_layers_residual_stream_similarities(
-                    res_txt,
-                    res_img,
-                    similarity_measures=[measure_name],
-                    maxk=30,
-                    regression_type=args.regression_type,
+            if args.enable_clip_metrics:
+                # Compute the sample indices that survive txt-img deduplication.
+                # Using layer 0 is sufficient: all layers share the same valid mask.
+                _, _, valid_indices = preprocess_data(
+                    res_txt[0], res_img[0],
+                    output_format="tensor",
+                    remove_duplicates=True,
+                    return_indices=True,
                 )
-                measure_val = sim_results[measure_name]
-                print(f"    ✅ Shape: {measure_val.shape}")
-                if not args.dry_run:
-                    measure_metadata = dict(sim_metadata)
-                    if measure_name in REGRESSION_SIMILARITY_MEASURES:
-                        measure_metadata["regression_type"] = args.regression_type
-                    save_path = os.path.join(
-                        similarities_dir,
-                        build_similarity_filename(
-                            model_variant_name,
-                            measure_name,
-                            args.regression_type,
-                        ),
-                    )
-                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                    save_file(
-                        {f"{measure_name}": measure_val},
-                        save_path,
-                        metadata=measure_metadata,
-                    )
-                    print(f"    💾 Saved: {save_path}")
-            except Exception as e:
-                print(f"    ❌ Error computing {measure_name}: {type(e).__name__}: {e}")
-                print(
-                    f"    ⚠️  Skipping {measure_name} and continuing with next measure..."
+                print("  👉 Computing CLIP Similarities...")
+                model, processor, dl_txt, dl_img = ensure_extraction_runtime()
+                clip_raw = extract_clip_embeddings(dl_img, DEVICE)
+                clip_filtered = clip_raw[valid_indices]
+                clip_results_dir = os.path.join(
+                    results_dir,
+                    "clip_multimodality_comparison",
+                    dataset_prefix,
+                    pooling_dir_name,
+                    sem_tag,
+                    sample_set_tag,
+                    "similarities",
+                )
+                run_clip_analysis(
+                    res_txt[:, valid_indices, :],
+                    res_img[:, valid_indices, :],
+                    clip_filtered,
+                    clip_results_dir=clip_results_dir,
+                    model_variant_name=model_variant_name,
+                    args=args,
+                    pooling_spec=pooling_spec,
+                    pooling_method_img=pooling_method_img,
+                    pooling_method_txt=pooling_method_txt,
+                    extra_metadata={**selected_cambrian_metadata, "semantic_filter": sem_tag},
                 )
 
-        del res_txt, res_img
+            res_txt, res_img = None, None  # let GC collect
+
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -812,7 +1091,8 @@ def main():
         gc.collect()
         torch.cuda.empty_cache()
 
-    print(f"\n✅ All analyses complete. Results saved to {similarities_dir}")
+    out_dir = last_similarities_dir or results_dir
+    print(f"\n✅ All analyses complete. Results saved to {out_dir}")
 
 
 if __name__ == "__main__":

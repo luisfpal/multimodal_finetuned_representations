@@ -44,7 +44,7 @@ PLOTS_DIR = PROJECT_ROOT / "plots" / "representations_classification" / "paper_f
 
 POOLING_METHOD = "last"
 FAMILY = "mcq_filter_classes"
-N_CHOICES = (10, 20)
+N_CHOICES = (10,)
 DPI_PNG = 200
 CLASS_FRACTION = 0.3
 MAXK: int | None = None
@@ -94,6 +94,9 @@ DATASET_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("food101", "validation", "generic_mcq_filter", "Food101"),
     ("sun397", "test", "generic_mcq_filter", "SUN397"),
     ("caltech101", "train", "generic_mcq_top_filter", "Caltech101"),
+    ("oxford_flowers102", "test", "generic_mcq_top_filter", "Oxford Flowers 102"),
+    ("places365", "train", "generic_mcq_filter", "Places365"),
+    ("dtd", "train", "generic_mcq_filter", "DTD"),
 )
 
 PALETTE = (
@@ -152,7 +155,10 @@ def _warn(message: str) -> None:
 
 def _prompt_suffix(dataset_slug: str, prompt_mode: str) -> str:
     is_imagenet_animals = "imagenet_short_text" in dataset_slug
-    is_generic = any(ds in dataset_slug for ds in ("food101", "sun397", "caltech101"))
+    is_generic = any(
+        ds in dataset_slug
+        for ds in ("food101", "sun397", "caltech101", "oxford_flowers102", "places365", "dtd")
+    )
     if prompt_mode != "describe" or is_imagenet_animals or is_generic:
         return f"_{prompt_mode}"
     return ""
@@ -246,10 +252,13 @@ def collect_model_curves(
         if missing:
             _warn(
                 f"{model.label} / n={n_choices}: missing {len(missing)} dataset(s); "
-                "skipping model mean."
+                "plotting available datasets."
             )
             for item in missing:
                 print(f"  - {item}")
+
+        if not dataset_curves:
+            _warn(f"{model.label} / n={n_choices}: no dataset curves found; skipping model.")
             continue
 
         mean_std = _strict_mean_std(

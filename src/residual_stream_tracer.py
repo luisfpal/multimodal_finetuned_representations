@@ -16,9 +16,11 @@ from typing_extensions import deprecated
 from utils import ModelType, ProcessorType, sample_image_and_text_positions
 from utils.cambrian_utils import is_cambrian_model
 from utils.context_pooling_utils import (
+    get_end_user_role_indices,
     get_image_token_indices,
     get_text_context_indices,
     get_tokenizer_from_processor,
+    get_user_text_indices,
     resolve_image_token_ids,
 )
 from utils.internvl_utils import (
@@ -32,6 +34,7 @@ VALID_RESIDUAL_STREAM_TYPES = [
     "output_layer",
     "post_mlp",
     "heads_projection",
+    "post_input_layernorm",
 ]
 VALID_TOKENS_POOLING_METHODS = [
     "mean",
@@ -40,9 +43,24 @@ VALID_TOKENS_POOLING_METHODS = [
     "sample",
     "mean_image",
     "last_image",
+    "end_image",
+    "last10_image",
+    "last_img_and_next",
     "mean_text_context",
     "last_caption",
+    "end_user_role",
+    "last_user_text",
 ]
+
+# All pooling methods that operate on image-token positions.
+# Used to route through the Cambrian expansion path and index computation.
+_IMAGE_BASED_POOLING_METHODS: frozenset[str] = frozenset([
+    "mean_image",
+    "last_image",
+    "end_image",
+    "last10_image",
+    "last_img_and_next",
+])
 
 HOOK_BASED_TRACER_DEPRECATION_MSG = (
     "Hook-based residual stream tracers are deprecated and kept only as reference. "
@@ -257,9 +275,10 @@ class ResidualStreamTracer(abc.ABC):
             seq_len = int(sequence_lengths[idx])
             current_input_ids = input_ids[idx, -seq_len:]
 
-            if self.tokens_pooling_method in ["mean_image", "last_image"]:
-                # Both mean_image and last_image use the same image-token span;
-                # mean vs last distinction is resolved downstream in _pool_tokens.
+            if self.tokens_pooling_method in _IMAGE_BASED_POOLING_METHODS:
+                # All image-based methods share the same image-token span; the
+                # specific pooling logic (mean, last, last10, +1, etc.) is resolved
+                # downstream in _pool_tokens.
                 pooling_indices.append(
                     get_image_token_indices(
                         current_input_ids,
@@ -283,6 +302,17 @@ class ResidualStreamTracer(abc.ABC):
                 # print(
                 #     f"Decoded text context for sample {self.counter + idx}: {decoded_caption_text!r}"
                 # )
+            elif self.tokens_pooling_method == "end_user_role":
+                pooling_indices.append(
+                    get_end_user_role_indices(current_input_ids)
+                )
+            elif self.tokens_pooling_method == "last_user_text":
+                pooling_indices.append(
+                    get_user_text_indices(
+                        current_input_ids,
+                        tokenizer=self.tokenizer,
+                    )
+                )
             else:
                 raise ValueError(
                     f"Unsupported pooling method for context indices: "
@@ -314,12 +344,13 @@ class ResidualStreamTracer(abc.ABC):
                 **sampling_args,
             )
 
-        if self.tokens_pooling_method in [
-            "mean_image",
-            "last_image",
+        if self.tokens_pooling_method in (
+            *_IMAGE_BASED_POOLING_METHODS,
             "mean_text_context",
             "last_caption",
-        ]:
+            "end_user_role",
+            "last_user_text",
+        ):
             source_input_ids = batch_input_ids
             if source_input_ids is None:
                 source_input_ids = getattr(batch_inputs, "input_ids", None)
@@ -346,14 +377,7 @@ class ResidualStreamTracer(abc.ABC):
             Pooled tensor or original tensor if no pooling
         """
         if (
-            self.tokens_pooling_method
-            in [
-                "sample",
-                "mean_image",
-                "last_image",
-                "mean_text_context",
-                "last_caption",
-            ]
+            self.tokens_pooling_method not in ("mean", "last", "none")
             and pooling_indices is None
         ):
             raise ValueError(
@@ -441,6 +465,87 @@ class ResidualStreamTracer(abc.ABC):
                     f"Unsupported tensor dimensions for {self.tokens_pooling_method} pooling: {hidden_states.ndim}"
                 )
 
+        elif self.tokens_pooling_method == "end_image":
+            # Single token immediately after the last image token.
+            if len(pooling_indices) == 0:
+                raise ValueError(
+                    "Empty pooling indices for 'end_image' — no image tokens found."
+                )
+            idx_next = pooling_indices[-1] + 1
+            if ndims == 3:
+                return hidden_states[:, idx_next, :]
+            elif ndims == 2:
+                return hidden_states[idx_next, :]
+            else:
+                raise ValueError(
+                    f"Unsupported tensor dimensions for end_image pooling: {ndims}"
+                )
+
+        elif self.tokens_pooling_method == "last10_image":
+            # Mean over the last (up to) 10 image tokens.
+            if len(pooling_indices) == 0:
+                raise ValueError(
+                    "Empty pooling indices for 'last10_image' — no image tokens found."
+                )
+            last10 = pooling_indices[-10:]
+            if ndims == 3:
+                return hidden_states[:, last10, :].mean(dim=1)
+            elif ndims == 2:
+                return hidden_states[last10, :].mean(dim=0)
+            else:
+                raise ValueError(
+                    f"Unsupported tensor dimensions for last10_image pooling: {ndims}"
+                )
+
+        elif self.tokens_pooling_method == "last_img_and_next":
+            # Mean of the last image token and the token immediately after it.
+            if len(pooling_indices) == 0:
+                raise ValueError(
+                    "Empty pooling indices for 'last_img_and_next' — no image tokens found."
+                )
+            pair = torch.stack(
+                [pooling_indices[-1], pooling_indices[-1] + 1]
+            )
+            if ndims == 3:
+                return hidden_states[:, pair, :].mean(dim=1)
+            elif ndims == 2:
+                return hidden_states[pair, :].mean(dim=0)
+            else:
+                raise ValueError(
+                    f"Unsupported tensor dimensions for last_img_and_next pooling: {ndims}"
+                )
+
+        elif self.tokens_pooling_method == "end_user_role":
+            # Mean over the anchor tokens at the end of the user role.
+            # Indices come from get_end_user_role_indices (model-auto-detected).
+            if len(pooling_indices) == 0:
+                raise ValueError(
+                    "Empty pooling indices for 'end_user_role' — anchor not found."
+                )
+            if ndims == 3:
+                return hidden_states[:, pooling_indices, :].mean(dim=1)
+            elif ndims == 2:
+                return hidden_states[pooling_indices, :].mean(dim=0)
+            else:
+                raise ValueError(
+                    f"Unsupported tensor dimensions for end_user_role pooling: {ndims}"
+                )
+
+        elif self.tokens_pooling_method == "last_user_text":
+            # Last token of {text_context} in a pile-10k 'Continue this text' prompt.
+            if len(pooling_indices) == 0:
+                raise ValueError(
+                    "Empty pooling indices for 'last_user_text' — text_context span not found."
+                )
+            if ndims == 3:
+                return hidden_states[:, pooling_indices[-3], :]
+            elif ndims == 2:
+                return hidden_states[pooling_indices[-3], :]
+            else:
+                raise ValueError(
+                    f"Unsupported tensor dimensions for last_user_text pooling: {ndims}"
+                )
+
         else:
             raise ValueError(
                 f"Invalid tokens pooling method: {self.tokens_pooling_method}"
@@ -485,7 +590,6 @@ class ResidualStreamTracer(abc.ABC):
         self.counter = 0
 
 
-@deprecated(HOOK_BASED_TRACER_DEPRECATION_MSG)
 class HookBasedResidualStreamTracer(ResidualStreamTracer):
     """
     Base class for residual stream tracers that use forward hooks.
@@ -669,8 +773,13 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
             "sample",
             "mean_image",
             "last_image",
+            "end_image",
+            "last10_image",
+            "last_img_and_next",
             "mean_text_context",
             "last_caption",
+            "end_user_role",
+            "last_user_text",
         ]:
             self._residual_stream = torch.zeros(
                 self.num_layers,
@@ -735,7 +844,7 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
 
             if (
                 is_expanded
-                and self.tokens_pooling_method in ("mean_image", "last_image")
+                and self.tokens_pooling_method in _IMAGE_BASED_POOLING_METHODS
                 and batch_length > 1
             ):
                 raise RuntimeError(
@@ -750,9 +859,12 @@ class ResidualStreamOutputLayerTracer(ResidualStreamTracer):
                 if pooling_indices is not None:
                     current_pooling_indices = pooling_indices[idx]
 
-                if is_expanded and self.tokens_pooling_method in ("mean_image", "last_image"):
+                if is_expanded and self.tokens_pooling_method in _IMAGE_BASED_POOLING_METHODS:
                     # Expansion-aware path: remap the single image placeholder to the full
-                    # visual block in the expanded sequence.
+                    # visual block in the expanded sequence.  All image-based pooling methods
+                    # (mean_image, last_image, end_image, last10_image, last_img_and_next)
+                    # receive the full visual_indices and apply their specific logic in
+                    # _pool_tokens (e.g. [-1]+1 for end_image, [-10:] for last10_image).
                     seq_len_i = int(sequence_lengths[idx].item())
                     V = hidden_states[0].shape[1] - seq_len_i + 1
                     img_pos_content = int(current_pooling_indices[0].item())
@@ -883,6 +995,7 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
             "last_image",
             "mean_text_context",
             "last_caption",
+            "last_user_text",
         ]:
             self._residual_stream = torch.zeros(
                 self.num_layers,
@@ -1045,6 +1158,7 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
             "last_image",
             "mean_text_context",
             "last_caption",
+            "last_user_text",
         ]:
             self._residual_stream = torch.zeros(
                 self.num_layers,
@@ -1213,6 +1327,90 @@ class ResidualStreamHeadsProjectionTracer(HookBasedResidualStreamTracer):
         super().clear()
 
 
+class ResidualStreamPostInputLayerNormTracer(HookBasedResidualStreamTracer):
+    """Extract residual stream at the output of the input LayerNorm (pre-attention).
+
+    Supports LLaVA 1.5, LLaVA OV, InternVL2, and Cambrian via architecture-aware
+    hook registration. Intended for use with 'last' and 'last_user_text' pooling
+    in pile-10k experiments; other pooling methods are structurally supported.
+    """
+
+    def _initialize_storage(self):
+        if self.tokens_pooling_method in [
+            "mean", "last", "sample", "mean_image", "last_image",
+            "mean_text_context", "last_caption", "last_user_text",
+        ]:
+            self._residual_stream = torch.zeros(
+                self.num_layers,
+                self.num_samples,
+                self.hidden_size,
+                device="cpu",
+                dtype=self.return_dtype,
+            )
+        elif self.tokens_pooling_method == "none":
+            self._residual_stream = {str(i): None for i in range(self.num_samples)}
+
+    def _initialize_none_pooling_storage(self, batch_length: int):
+        for idx in range(batch_length):
+            self._residual_stream[str(self.counter + idx)] = torch.zeros(
+                self.num_layers,
+                self.sequence_lengths[idx],
+                self.hidden_size,
+                device="cpu",
+                dtype=self.return_dtype,
+            )
+
+    def _get_input_layernorm(self, layer_idx: int) -> torch.nn.Module:
+        if is_cambrian_model(model=self.model):
+            return self.model.model.layers[layer_idx].input_layernorm
+        if "intern" in self.model.__class__.__name__.lower():
+            return self.model.language_model.model.layers[layer_idx].attention_norm
+        # LLaVA 1.5 (LlamaModel bare, .layers directly) and
+        # LLaVA OV (LLaVAOneVision1_5_TextModel, .layers directly)
+        return self.model.language_model.layers[layer_idx].input_layernorm
+
+    def _make_hook(self, layer_idx: int):
+        def hook(module, input, output):
+            # LayerNorm may return a tensor or (tensor, ...) depending on implementation.
+            x = (output[0] if isinstance(output, tuple) else output).to(torch.bfloat16)
+            batch_length = x.shape[0]
+            batch_result = []
+            for idx in range(batch_length):
+                pi = (
+                    self.current_batch_pooling_indices[idx]
+                    if self.current_batch_pooling_indices is not None
+                    else None
+                )
+                batch_result.append(
+                    self._pool_tokens(
+                        x[idx, -self.sequence_lengths[idx] :, :],
+                        pooling_indices=pi,
+                    ).to(device="cpu", dtype=self.return_dtype)
+                )
+            if self.tokens_pooling_method != "none":
+                stacked = torch.stack(batch_result, dim=0)
+                start = self.current_batch_start_idx
+                self._residual_stream[layer_idx, start : start + batch_length, :] = stacked
+            else:
+                for idx in range(batch_length):
+                    self._residual_stream[
+                        str(self.current_batch_start_idx + idx)
+                    ][layer_idx] = batch_result[idx]
+            del batch_result, x
+
+        return hook
+
+    def _trace(self):
+        print("🔗 Setting up input_layernorm hooks...")
+        for layer_idx in range(self.num_layers):
+            ln = self._get_input_layernorm(layer_idx)
+            self.handles.append(ln.register_forward_hook(self._make_hook(layer_idx)))
+        print(f"✅ Hooks registered for {self.num_layers} input_layernorm layers")
+        print(
+            f"\nThe estimated memory usage per token is {self.memory_usage_per_token:.2f} GB"
+        )
+
+
 def residual_stream_tracer(
     model: ModelType,
     processed_dataloader: DataLoader,
@@ -1228,6 +1426,7 @@ def residual_stream_tracer(
             "last_image",
             "mean_text_context",
             "last_caption",
+            "last_user_text",
         ]
     ] = "last",
     residual_stream_type: Literal[
@@ -1329,10 +1528,12 @@ def residual_stream_tracer(
             f"Must be one of: {VALID_RESIDUAL_STREAM_TYPES}"
         )
 
-    if is_cambrian_model(model=model) and residual_stream_type != "output_layer":
+    if is_cambrian_model(model=model) and residual_stream_type in [
+        "post_mlp", "heads_projection"
+    ]:
         raise ValueError(
-            "Cambrian residual stream tracing currently supports only "
-            "residual_stream_type='output_layer'. "
+            "Cambrian supports only residual_stream_type='output_layer' or "
+            "'post_input_layernorm'. "
             f"Received: '{residual_stream_type}'."
         )
 
@@ -1374,6 +1575,8 @@ def residual_stream_tracer(
         tracer = ResidualStreamPostMLPTracer(**tracer_kwargs)
     elif residual_stream_type == "heads_projection":
         tracer = ResidualStreamHeadsProjectionTracer(**tracer_kwargs)
+    elif residual_stream_type == "post_input_layernorm":
+        tracer = ResidualStreamPostInputLayerNormTracer(**tracer_kwargs)
 
     # Initialize progress tracking variables
     samples_processed = 0

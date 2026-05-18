@@ -5,7 +5,34 @@ from typing import Any, Optional
 import torch
 
 from .internvl_utils import IMG_CONTEXT_TOKEN
-from .token_analysis import find_caption_token_span
+from .token_analysis import find_caption_token_span, find_user_text_span
+
+# Per-model anchor sequences at the end of the user role (immediately before the
+# assistant turn).  Each entry specifies the full tail token-ID sequence and how
+# many of those tokens (counting from the start of the anchor) to include in the
+# pool.  The last anchor tokens (e.g. ":" in LLaVA 1.5) mark role boundaries and
+# are excluded from the pooled representation.
+#
+# Detection is done by matching the tail of the content-stripped input_ids against
+# these anchors in order.  The list is checked top-to-bottom; first match wins.
+END_USER_ROLE_CONFIGS: list[dict] = [
+    {   # LLaVA 1.5 — ASSISTANT: (▁A SS IST ANT :)
+        "anchor_ids": [319, 1799, 9047, 13566, 29901],
+        "n_pool": 4,   # exclude the final ':'
+    },
+    {   # LLaVA OneVision — <|im_end|> Ċ <|im_start|> assistant Ċ
+        "anchor_ids": [151645, 198, 151644, 77091, 198],
+        "n_pool": 3,   # first 3 of 5
+    },
+    {   # Cambrian-8B — <|eot_id|> <|start_header_id|> assistant <|end_header_id|>
+        "anchor_ids": [128009, 128006, 78191, 128007],
+        "n_pool": 2,   # first 2 of 4
+    },
+    {   # InternVL2-8B — <|im_end|> <|im_start|> ass istant (space)
+        "anchor_ids": [92542, 92543, 525, 11353, 364],
+        "n_pool": 2,   # first 2 of 5
+    },
+]
 
 
 def get_tokenizer_from_processor(processor: Optional[Any]) -> Optional[Any]:
@@ -76,6 +103,46 @@ def get_image_token_indices(
     return torch.nonzero(torch.isin(input_ids_1d, token_ids), as_tuple=True)[0]
 
 
+def get_end_user_role_indices(input_ids_1d: torch.Tensor) -> torch.Tensor:
+    """Return pooling indices for the end-of-user-role anchor of the current model.
+
+    Auto-detects the model by matching the tail of ``input_ids_1d`` against the
+    known per-model anchor sequences in ``END_USER_ROLE_CONFIGS``.  Raises
+    ``ValueError`` if no anchor matches, which catches wrong model or prompt-format
+    changes at extraction time rather than silently producing nonsense embeddings.
+
+    Args:
+        input_ids_1d: 1-D content-stripped token-ID tensor (padding already removed).
+
+    Returns:
+        1-D ``torch.long`` tensor of ``n_pool`` indices into ``input_ids_1d``.
+    """
+    if input_ids_1d.ndim != 1:
+        raise ValueError(
+            f"Expected 1D input_ids, got shape={tuple(input_ids_1d.shape)}"
+        )
+    for config in END_USER_ROLE_CONFIGS:
+        anchor = config["anchor_ids"]
+        n = len(anchor)
+        if len(input_ids_1d) < n:
+            continue
+        tail = input_ids_1d[-n:]
+        expected = torch.tensor(
+            anchor, dtype=input_ids_1d.dtype, device=input_ids_1d.device
+        )
+        if torch.equal(tail, expected):
+            n_pool = config["n_pool"]
+            start = len(input_ids_1d) - n
+            return torch.arange(
+                start, start + n_pool, dtype=torch.long, device=input_ids_1d.device
+            )
+    raise ValueError(
+        "end_user_role: could not find any known anchor sequence in the tail of "
+        f"input_ids.  Tail (last 6 tokens): {input_ids_1d[-6:].tolist()}.  "
+        "Supported models: LLaVA 1.5, LLaVA OneVision, Cambrian-8B, InternVL2-8B."
+    )
+
+
 def get_text_context_indices(
     input_ids_1d: torch.Tensor,
     tokenizer: Any,
@@ -92,6 +159,30 @@ def get_text_context_indices(
 
     try:
         start_idx, end_idx = find_caption_token_span(tokenizer, ids_np)
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+
+    return torch.arange(
+        start_idx, end_idx, dtype=torch.long, device=input_ids_1d.device
+    )
+
+
+def get_user_text_indices(
+    input_ids_1d: torch.Tensor,
+    tokenizer: Any,
+) -> torch.Tensor:
+    """Token indices spanning {text_context} in a pile-10k 'Continue this text' prompt.
+
+    Model-agnostic: the boundary is found in decoded text via substring search,
+    not in token IDs.  See ``find_user_text_span`` for the delimiter strategy.
+    """
+    if tokenizer is None:
+        raise ValueError("Tokenizer is required for last_user_text pooling")
+
+    ids_np = input_ids_1d.detach().cpu().numpy()
+
+    try:
+        start_idx, end_idx = find_user_text_span(tokenizer, ids_np)
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
 

@@ -9,10 +9,10 @@ ACCOUNT="dssc"
 JOB_NAME="experiment"
 PARTITION="DGX"
 GPU_TYPE="A100"
-NUM_GPUS=1              # Number of GPUs (requires at least 1 for CUDA models)
-CPUS=16
+NUM_GPUS=6             # Number of GPUs (requires at least 1 for CUDA models)
+CPUS=12
 MEM="64GB"
-TIME="03:00:00"
+TIME="12:00:00"
 NODELIST=""             # Empty = any available node
 EXCLUDE=""              # Empty = no exclusions
 
@@ -23,9 +23,15 @@ LOG_DIR="$PROJECT_ROOT/logs"
 
 # Script selection
 # SCRIPT_NAME="models_similarity.sh"  # For model vs model similarity analysis
-SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
+# SCRIPT_NAME="multimodality_similarity.sh"  # For multimodality similarity analysis
 # SCRIPT_NAME="similarity_encoder_decoder.sh"  # For encoder-decoder CKA analysis
 # SCRIPT_NAME="representations_classification.sh"  # For representations classification metrics
+# SCRIPT_NAME="intrinsic_dimension.sh"
+# SCRIPT_NAME="pile10k_representations.sh"
+# SCRIPT_NAME="llama_vision_similarity.sh"
+# SCRIPT_NAME="pile10k_intrinsic_dimension.sh"
+# SCRIPT_NAME="pile10k_id_scaling_full.sh"
+SCRIPT_NAME="llama_vision_representations_classification.sh"
 
 # Job Execution Script
 # =============================================================================

@@ -39,6 +39,9 @@ DPI            = 200
 
 # ── Threshold percentiles ─────────────────────────────────────────────────────
 # P1, P2, P3 define three marker-size buckets. See Section 3 for full explanation.
+# This is the global default; individual model pairs can override via a 6th
+# element in MODEL_PAIRS: (fine_id, fine_label, pre_id, pre_label, band, (p1,p2,p3))
+# Leave the 6th element absent or None to use the global default below.
 PERCENTILES: tuple[int, int, int] = (17, 34, 50)
 
 # ── Model pairs: comment/uncomment to include/exclude ────────────────────────
@@ -54,27 +57,38 @@ PERCENTILES: tuple[int, int, int] = (17, 34, 50)
 #   LLaMA-2 7B  → 32 layers    LLaMA-2 13B → 40 layers
 #   LLaMA-3 8B  → 32 layers    Qwen2 0.5B  → 24 layers  (OneVision 4B)
 #   InternLM2 7B → 32 layers
-MODEL_PAIRS: tuple[tuple[str, str, str, str, tuple[float, float] | None], ...] = (
+# Format per entry:
+#   (finetuned_id, finetuned_label, pretrained_id, pretrained_label,
+#    abstraction_band, percentiles)          ← last two are optional
+#
+# percentiles: (P1, P2, P3) ints to override the global PERCENTILES for this pair.
+#   Leave absent or set to None to use the global default.
+#   Example override: (..., (5.5, 17.5), (23, 32, 43))
+MODEL_PAIRS: tuple[tuple, ...] = (
     (
         "llava_7b",
         "finetuned (LLaVA 1.5 7B)",
         "llava-v1.5-7b-pretrained-lbasile",
         "pretrained (LLaVA 1.5 7B)",
         (5.5, 17.5),   # LLaMA-2 7B: 32 layers
+        # None,        # ← add (P1, P2, P3) here to override per-pair
+        (9, 30, 39),
     ),
     (
         "llava_13b",
         "finetuned (LLaVA 1.5 13B)",
         "llava-v1.5-13b-pretrained-lbasile",
         "pretrained (LLaVA 1.5 13B)",
-        (6.5, 21.5),   # LLaMA-2 13B: 40 layers — adjust if wrong
+        (6.5, 21.5),   # LLaMA-2 13B: 40 layers
+        (9, 32, 43),
     ),
     (
         "LLaVA-OneVision-1.5-4B-Instruct",
         "finetuned (LLaVA-OV 4B)",
         "LLaVA-OneVision-1.5-4B-Base",
         "pretrained (LLaVA-OV 4B)",
-        (4.5, 13.5),   # Qwen2 0.5B: 24 layers — adjust if wrong
+        (4.5, 13.5),   # Qwen2 0.5B: 24 layers
+        (4, 12, 17),
     ),
     (
         "LLaVA-OneVision-1.5-8B-Instruct",
@@ -82,13 +96,15 @@ MODEL_PAIRS: tuple[tuple[str, str, str, str, tuple[float, float] | None], ...] =
         "LLaVA-OneVision-1.5-8B-Base",
         "pretrained (LLaVA-OV 8B)",
         (5.5, 17.5),   # LLaMA-3 8B: 32 layers
+        (7, 13, 19),
     ),
     (
         "InternVL2-8B",
         "finetuned (InternVL2 8B)",
         "InternVL2-8B-Pretrain",
         "pretrained (InternVL2 8B)",
-        (5.5, 17.5),   # InternLM2 7B: 32 layers — adjust if wrong
+        (5.5, 17.5),   # InternLM2 7B: 32 layers
+        (10, 26, 41),
     ),
     (
         "cambrian-8b",
@@ -96,6 +112,7 @@ MODEL_PAIRS: tuple[tuple[str, str, str, str, tuple[float, float] | None], ...] =
         "cambrian-8b-pretrained",
         "pretrained (Cambrian 8B)",
         (5.5, 17.5),   # LLaMA-3 8B: 32 layers
+        (18, 31, 41),
     ),
 )
 
@@ -446,14 +463,19 @@ def build_paired_figure(
     pre_data:  tuple[np.ndarray | None, np.ndarray | None],
     fine_data: tuple[np.ndarray | None, np.ndarray | None],
     abstraction_band: tuple[float, float] | None,
+    percentiles: tuple[int, int, int] | None = None,
 ) -> plt.Figure:
     """
     Build a 1×2 figure (pretrained | finetuned) with shared threshold scale.
 
     Thresholds are computed by pooling data from both models (see Section 3).
+    Pass ``percentiles`` to override the global PERCENTILES for this pair.
     """
     geo = _compute_geometry()
-    thresholds = compute_pooled_thresholds(pre_data, fine_data)
+    thresholds = compute_pooled_thresholds(
+        pre_data, fine_data,
+        percentiles=percentiles if percentiles is not None else PERCENTILES,
+    )
 
     fig, axes = plt.subplots(
         nrows=1, ncols=2,
@@ -532,10 +554,15 @@ def main() -> None:
     written: list[Path] = []
     skipped: list[str]  = []
 
-    for fine_id, fine_label, pre_id, pre_label, abstraction_band in MODEL_PAIRS:
+    for entry in MODEL_PAIRS:
+        fine_id, fine_label, pre_id, pre_label, abstraction_band = entry[:5]
+        pair_pct: tuple[int, int, int] | None = entry[5] if len(entry) > 5 else None
+
         pair_slug = f"{_slugify(pre_id)}_vs_{_slugify(fine_id)}"
+        pct_used  = pair_pct if pair_pct is not None else PERCENTILES
         print(f"\n{'─' * 64}")
-        print(f"  {pre_id}  →  {fine_id}")
+        print(f"  {pre_id}  →  {fine_id}  "
+              f"[percentiles: P{pct_used[0]}/P{pct_used[1]}/P{pct_used[2]}]")
 
         print(f"  loading pretrained ({pre_id}) ...")
         pre_data = load_model_data(pre_id)
@@ -557,6 +584,7 @@ def main() -> None:
             pre_label=pre_label, fine_label=fine_label,
             pre_data=pre_data, fine_data=fine_data,
             abstraction_band=abstraction_band,
+            percentiles=pair_pct,
         )
 
         out_dir = PLOTS_DIR / pair_slug

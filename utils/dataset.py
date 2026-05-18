@@ -52,6 +52,117 @@ MULTIPLE_CHOICE_BENCHMARKS = [
     "mmstar",
 ]
 
+LLAVA_INSTRUCT_150K_NAME = "liuhaotian/LLaVA-Instruct-150K"
+LLAVA_INSTRUCT_DETAIL_FILE = "detail_23k.json"
+DEFAULT_COCO_TRAIN2014_DIR = Path(
+    os.getenv(
+        "COCO_TRAIN2014_DIR",
+        "/orfeo/cephfs/scratch/area/ddoimo/data/mscoco/train2014",
+    )
+)
+DEFAULT_HF_HUB_CACHE = Path(
+    os.getenv("HF_HUB_CACHE", str(Path.home() / "scratch" / "huggingface" / "hub"))
+)
+CAPTIONING_PROMPT = "Provide a one-sentence caption about the image."
+TEXTUAL_CAPTION_PREAMBLE = "This is a detailed description of an image:"
+
+
+def is_llava_instruct_150k(dataset_path_or_name: str) -> bool:
+    normalized = dataset_path_or_name.lower()
+    return (
+        normalized == LLAVA_INSTRUCT_150K_NAME.lower()
+        or "llava-instruct-150k" in normalized
+    )
+
+
+def _resolve_llava_instruct_detail_path() -> Path:
+    snapshots_dir = (
+        DEFAULT_HF_HUB_CACHE
+        / "datasets--liuhaotian--LLaVA-Instruct-150K"
+        / "snapshots"
+    )
+    matches = sorted(snapshots_dir.glob(f"*/{LLAVA_INSTRUCT_DETAIL_FILE}"))
+    if not matches:
+        raise FileNotFoundError(
+            f"Cached {LLAVA_INSTRUCT_DETAIL_FILE} not found under {snapshots_dir}. "
+            f"Download {LLAVA_INSTRUCT_150K_NAME} first or set HF_HUB_CACHE."
+        )
+    return max(matches, key=lambda path: path.stat().st_mtime)
+
+
+def load_llava_instruct_detail_records() -> list[dict[str, Any]]:
+    with _resolve_llava_instruct_detail_path().open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _first_gpt_response(example: dict[str, Any]) -> Optional[str]:
+    conversations = example.get("conversations")
+    if not isinstance(conversations, list):
+        return None
+    for turn in conversations:
+        if not isinstance(turn, dict) or turn.get("from") != "gpt":
+            continue
+        value = turn.get("value")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _resolve_coco_train2014_image_path(image_name: str, image_dir: Path) -> Path:
+    if image_name.startswith("COCO_train2014_"):
+        return image_dir / image_name
+    image_id = Path(image_name).stem
+    return image_dir / f"COCO_train2014_{image_id}.jpg"
+
+
+def _select_llava_caption_records(
+    dataset: list[dict[str, Any]],
+    image_dir: Path,
+    downsample_size: Optional[int],
+) -> list[dict[str, Any]]:
+    if downsample_size is not None and downsample_size <= 0:
+        raise ValueError(f"downsample_size must be positive, got {downsample_size}")
+    if not image_dir.exists():
+        raise FileNotFoundError(f"Image directory not found: {image_dir}")
+
+    records: list[dict[str, Any]] = []
+
+    for idx, example in enumerate(dataset):
+        caption = _first_gpt_response(example)
+        image_name = example.get("image")
+        if not caption or not isinstance(image_name, str):
+            continue
+        image_path = _resolve_coco_train2014_image_path(image_name, image_dir)
+        if not image_path.exists():
+            continue
+
+        record = {
+            "idx": idx,
+            "id": example.get("id"),
+            "image_name": image_name,
+            "image_path": str(image_path),
+            "caption": caption,
+            "gpt_response_length": len(caption),
+        }
+
+        records.append(record)
+
+    records.sort(key=lambda record: record["gpt_response_length"], reverse=True)
+    if downsample_size is not None:
+        records = records[:downsample_size]
+
+    if not records:
+        raise ValueError(
+            f"No usable {LLAVA_INSTRUCT_150K_NAME} caption records found. "
+            "Check the split, GPT responses, and image directory."
+        )
+    if downsample_size is not None and len(records) < downsample_size:
+        print(
+            f"Requested top {downsample_size} GPT responses but only found "
+            f"{len(records)} usable image-caption records."
+        )
+    return records
+
 
 def get_hf_dataset_split(
     dataset_path_or_name: str,
@@ -772,69 +883,67 @@ class OpenVQADataset(Dataset):
 
 
 class ImageCaptioningDataset(Dataset):
-    """
-    Dataset for captioning datasets.
-    Unnecessary to load it as a class but used for simplicity.
-
-    Args:
-        dataset_path_or_name: Path to the dataset directory or Hugging Face dataset identifier.
-        downsample_size: Maximum number of samples to use
-        seed: Random seed for reproducibility
-    """
+    """LLaVA-Instruct captioning dataset for text-vs-image comparisons."""
 
     def __init__(
         self,
         dataset_path_or_name: str,
         downsample_size: Optional[int] = None,
-        seed: int = SEED,
-        concatenate_captions_and_add_prompt: bool = False,
-        concatenate_captions: bool = False,
+        images_qa: bool = False,
+        texts_qa: bool = False,
+        image_dir: Optional[str] = None,
     ):
-        dataset_dir = os.path.expanduser(dataset_path_or_name)
-        self.concatenate_captions_and_add_prompt = concatenate_captions_and_add_prompt
-        self.concatenate_captions = concatenate_captions
-
-        if not os.path.exists(dataset_dir):
-            raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
-
-        try:
-            # Load the initial dataset
-            dataset = load_from_disk(dataset_dir)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load dataset from {dataset_dir}: {e}")
-
-        # Apply downsampling if requested and if dataset is larger than requested size
-        if downsample_size and downsample_size < len(dataset):
-            print(
-                f"Downsampling dataset from {len(dataset)} to {downsample_size} samples"
+        if images_qa == texts_qa:
+            raise ValueError("Exactly one of images_qa or texts_qa must be True.")
+        if not is_llava_instruct_150k(dataset_path_or_name):
+            raise ValueError(
+                f"Captioning only supports {LLAVA_INSTRUCT_150K_NAME}; "
+                f"got {dataset_path_or_name!r}."
             )
-            dataset = dataset.shuffle(seed=seed).select(range(downsample_size))
 
-        self.dataset = dataset
+        self.dataset_path_or_name = dataset_path_or_name
+        self.images_qa = images_qa
+        self.texts_qa = texts_qa
+        self.image_dir = (
+            Path(image_dir).expanduser() if image_dir else DEFAULT_COCO_TRAIN2014_DIR
+        )
+
+        raw_dataset = load_llava_instruct_detail_records()
+        self.dataset = _select_llava_caption_records(
+            dataset=raw_dataset,
+            image_dir=self.image_dir,
+            downsample_size=downsample_size,
+        )
+        print(
+            f"Loaded {len(self.dataset)} LLaVA-Instruct caption records "
+            f"from {LLAVA_INSTRUCT_DETAIL_FILE!r}"
+        )
 
     def __len__(self) -> int:
         return len(self.dataset)
 
+    def _build_textual_caption_prompt(self, caption: str) -> str:
+        return f"{TEXTUAL_CAPTION_PREAMBLE} {caption}\n\n{CAPTIONING_PROMPT}"
+
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         data = self.dataset[idx]
-        captions = data["captions"]
-        prompt = ""
-        if self.concatenate_captions_and_add_prompt:
-            prompt = f"Below are {len(captions)} numbered descriptions of the image. Please generate an additional description of the image. The caption should be a single sentence, not multiple sentences!!!\n\n"
-            for idx, caption in zip(range(len(captions)), captions):
-                prompt += f"{idx + 1}: {caption}\n"
-        elif self.concatenate_captions:
-            prompt = " ".join(captions)
-        else:
-            prompt = SHORT_CAPTION_PROMPT
 
+        caption = data["caption"]
+        prompt = (
+            self._build_textual_caption_prompt(caption)
+            if self.texts_qa
+            else f"\n{CAPTIONING_PROMPT}"
+        )
         sample = {
-            # for simplicity I add the prompt here
+            "idx": data["idx"],
             "user_prompt": prompt,
-            "captions": captions,
-            "image_id": extract_image_id(data["image_id"]),
-            "image": data["image"],
+            "captions": [caption],
+            "image_id": data.get("id") or Path(data["image_name"]).stem,
+            "image_path": data["image_path"],
+            "gpt_response_length": data["gpt_response_length"],
         }
+        if self.images_qa:
+            sample["image"] = Image.open(data["image_path"]).convert("RGB")
 
         return sample
 
@@ -1050,24 +1159,15 @@ def collate_vqa_batch(
 def collate_captioning_batch(
     batch,
     processor,
-    return_captions=False,
-    return_image_ids=False,
-    return_images=False,
     model: Optional[PreTrainedModel] = None,
 ):
-    # Sanity check
-    if return_image_ids and not return_captions:
-        raise ValueError(
-            "return_image_ids can only be True if return_captions is also True"
-        )
-
-    # Custom collate function to handle images and text
     user_prompts = [item["user_prompt"] for item in batch]
     captions = [item["captions"] for item in batch]
-    images = [item["image"] for item in batch]
+    images = [item.get("image", None) for item in batch]
     image_ids = [item["image_id"] for item in batch]
 
     if processor is not None:
+        has_images = any(image is not None for image in images)
         processor_kwargs = {
             "return_tensors": "pt",
             "padding": (True if len(user_prompts) > 1 else False),
@@ -1079,15 +1179,20 @@ def collate_captioning_batch(
                 images=images,
                 processor=processor,
             )
-            processor_kwargs["images"] = images
+            if has_images:
+                processor_kwargs["images"] = images
 
         elif model and "intern" in model.__class__.__name__.lower():
-            pixel_values, num_patches_list = get_pixel_values(images)
-            queries = apply_internvl_chat_template(
-                model=model,
-                text=user_prompts,
-                num_patches_list=num_patches_list,
-            )
+            if has_images:
+                pixel_values, num_patches_list = get_pixel_values(images)
+                queries = apply_internvl_chat_template(
+                    model=model,
+                    text=user_prompts,
+                    num_patches_list=num_patches_list,
+                )
+            else:
+                pixel_values = None
+                queries = apply_internvl_chat_template(model=model, text=user_prompts)
             processor_kwargs["text"] = queries
 
         elif model and is_cambrian_model(model=model):
@@ -1095,7 +1200,7 @@ def collate_captioning_batch(
                 model=model,
                 tokenizer=processor,
                 questions=user_prompts,
-                images=images,
+                images=images if has_images else None,
             )
             tokenized = prepared["tokenized"]
             prompts = prepared["prompts"]
@@ -1108,15 +1213,15 @@ def collate_captioning_batch(
         # Build return tuple based on requested data
         result = [tokenized]
         if model and "intern" in model.__class__.__name__.lower():
-            result.append(pixel_values)
+            if pixel_values is not None:
+                result.append(pixel_values)
+            else:
+                result.append(processor_kwargs["text"])
         if model and is_cambrian_model(model=model):
-            result.extend([image_tensors, image_sizes, prompts])
-        if return_captions:
-            result.append(captions)
-        if return_image_ids:
-            result.append(image_ids)
-        if return_images:
-            result.append(images)
+            if image_tensors is not None:
+                result.extend([image_tensors, image_sizes, prompts])
+            else:
+                result.append(prompts)
 
         return tuple(result) if len(result) > 1 else result[0]
 
@@ -1258,31 +1363,27 @@ def get_dataloader_for_captioning(
     batch_size: int = 1,
     num_workers: int = 4,
     downsample_size: Optional[int] = None,
-    seed: int = 42,
     processor: Optional[ProcessorType] = None,
-    return_captions: bool = False,
-    return_image_ids: bool = False,
-    return_images: bool = False,
-    concatenate_captions_and_add_prompt: bool = False,
-    concatenate_captions: bool = False,
+    images_qa: bool = False,
+    texts_qa: bool = False,
+    image_dir: Optional[str] = None,
     model: Optional[PreTrainedModel] = None,
 ):
     dataset = ImageCaptioningDataset(
         dataset_path_or_name=dataset_path_or_name,
         downsample_size=downsample_size,
-        seed=seed,
-        concatenate_captions_and_add_prompt=concatenate_captions_and_add_prompt,
-        concatenate_captions=concatenate_captions,
+        images_qa=images_qa,
+        texts_qa=texts_qa,
+        image_dir=image_dir,
     )
 
     collate_fn = partial(
         collate_captioning_batch,
         processor=processor,
-        return_captions=return_captions,
-        return_image_ids=return_image_ids,
-        return_images=return_images,
         model=model,
     )
+
+    pin_memory = not (model is not None and is_cambrian_model(model=model))
 
     return DataLoader(
         dataset,
@@ -1290,7 +1391,7 @@ def get_dataloader_for_captioning(
         num_workers=num_workers,
         shuffle=False,
         collate_fn=collate_fn,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
 
 
@@ -1354,10 +1455,27 @@ MCQ_FREE_MODES: frozenset[str] = frozenset({
 
 # Dataset-specific MCQ question text for generic HF classification datasets.
 _GENERIC_MCQ_QUESTIONS: dict[str, str] = {
-    "food101": "What food is shown in this image?",
-    "sun397": "What scene is shown in this image?",
-    "caltech101": "What object is shown in this image?",
+    "food101":           "What food is shown in this image?",
+    "sun397":            "What scene is shown in this image?",
+    "caltech101":        "What object is shown in this image?",
+    "oxford_flowers102": "What flower is shown in this image?",
+    "places365":         "What place or scene is shown in this image?",
+    "dtd":               "What texture is shown in this image?",
 }
+
+_GENERIC_DATASETS: tuple[str, ...] = (
+    "food101", "sun397", "caltech101",
+    "oxford_flowers102", "places365", "dtd",
+)
+
+
+def _detect_label_col(column_names: list[str]) -> str:
+    for name in ("label", "labels"):
+        if name in column_names:
+            return name
+    raise ValueError(
+        f"No label column found in dataset. Columns: {column_names}"
+    )
 
 _MCQ_CATALOG_PATH = (
     Path(__file__).resolve().parents[1] / "data" / "mini-imagenet" / "mini-imagenet_mcq_categorization.csv"
@@ -1528,8 +1646,9 @@ class ClassificationDataset(Dataset):
                     lambda x: self._imagenet_offset_to_class[x["offset"]] in self._animal_selected
                 )
             self.dataset = dataset
-        elif any(ds in self.dataset_name_lower for ds in ("food101", "sun397", "caltech101")):
-            lf = dataset.features["label"]
+        elif any(ds in self.dataset_name_lower for ds in _GENERIC_DATASETS):
+            self._label_col: str = _detect_label_col(dataset.column_names)
+            lf = dataset.features[self._label_col]
             self._class_names_list: list[str] = (
                 lf.names if hasattr(lf, "names") else [str(i) for i in range(lf.num_classes)]
             )
@@ -1548,8 +1667,17 @@ class ClassificationDataset(Dataset):
             raise ValueError(
                 "Unsupported dataset for classification pipeline: "
                 f"{dataset_name!r}. Supported: ScienceQA, MMMU, mini-imagenet, "
-                "imagenet_short_text, food101, sun397, caltech101."
+                "imagenet_short_text, food101, sun397, caltech101, "
+                "oxford_flowers102, places365, dtd."
             )
+
+        # Disable image decoding for all init loops — images are ZIP-backed on CephFS
+        # and decoding each costs ~0.3s (open zip + extract + decode JPEG). None of
+        # the loops below need the actual pixel data; they only read label/metadata fields.
+        from datasets import Image as HFImage
+        _has_img = "image" in self.dataset.column_names
+        if _has_img:
+            self.dataset = self.dataset.cast_column("image", HFImage(decode=False))
 
         # Compute labels before any subsampling (needed to stratify).
         pre_labels = [self._extract_label(instance) for instance in self.dataset]
@@ -1613,7 +1741,12 @@ class ClassificationDataset(Dataset):
             self._extract_sample_id(index=idx, instance=instance)
             for idx, instance in enumerate(self.dataset)
         ]
+
         self.prompt_signature = self._compute_prompt_signature()
+
+        # Re-enable image decoding so __getitem__ returns PIL Images for model inference.
+        if _has_img:
+            self.dataset = self.dataset.cast_column("image", HFImage(decode=True))
 
     def __len__(self) -> int:
         return len(self.dataset)
@@ -1641,10 +1774,29 @@ class ClassificationDataset(Dataset):
         return within_class_idx
 
     def _generic_label(self, instance: dict) -> str:
-        return self._class_names_list[instance["label"]]
+        return self._class_names_list[instance[self._label_col]]
 
     def _generic_labels(self, dataset: datasets.Dataset) -> list[str]:
-        return [self._generic_label(instance) for instance in dataset]
+        from datasets import Image as HFImage
+        _ds = dataset.cast_column("image", HFImage(decode=False)) if "image" in dataset.column_names else dataset
+        return [self._generic_label(instance) for instance in _ds]
+
+    @staticmethod
+    def _filter_no_decode(
+        dataset: datasets.Dataset,
+        fn: Any,
+        *,
+        num_proc: int = 8,
+    ) -> datasets.Dataset:
+        """Filter without decoding Image columns (avoids ZIP/network I/O for label-only filters)."""
+        from datasets import Image as HFImage
+        has_image = "image" in dataset.column_names
+        if has_image:
+            dataset = dataset.cast_column("image", HFImage(decode=False))
+        result = dataset.filter(fn, num_proc=num_proc)
+        if has_image:
+            result = result.cast_column("image", HFImage(decode=True))
+        return result
 
     def _prepare_generic_classification_dataset(
         self,
@@ -1689,10 +1841,7 @@ class ClassificationDataset(Dataset):
                     rng.sample(self._all_generic_classes, 200)
                 )
                 selected = set(self._generic_pool_classes)
-                dataset = dataset.filter(
-                    lambda x: self._generic_label(x) in selected,
-                    num_proc=8,
-                )
+                dataset = self._filter_no_decode(dataset, lambda x: self._generic_label(x) in selected)
             return dataset
 
         if prompt_mode == "generic_mcq_filter":
@@ -1706,10 +1855,7 @@ class ClassificationDataset(Dataset):
                 rng.sample(self._all_generic_classes, n_choices)
             )
             self._generic_pool_classes = sorted(self._generic_selected)
-            return dataset.filter(
-                lambda x: self._generic_label(x) in self._generic_selected,
-                num_proc=8,
-            )
+            return self._filter_no_decode(dataset, lambda x: self._generic_label(x) in self._generic_selected)
 
         if prompt_mode == "generic_mcq_top_filter":
             from .subsample import stratified_indices
@@ -1728,10 +1874,7 @@ class ClassificationDataset(Dataset):
             min_count = min(counts[class_name] for class_name in top_n)
             self._generic_selected = set(top_n)
             self._generic_pool_classes = sorted(self._generic_selected)
-            dataset = dataset.filter(
-                lambda x: self._generic_label(x) in self._generic_selected,
-                num_proc=8,
-            )
+            dataset = self._filter_no_decode(dataset, lambda x: self._generic_label(x) in self._generic_selected)
             filtered_labels = self._generic_labels(dataset)
             keep = stratified_indices(
                 filtered_labels,
@@ -1761,8 +1904,8 @@ class ClassificationDataset(Dataset):
             return self._mcq_catalog[wnid]["class_name"]   # always class_name
         if "imagenet_short_text" in self.dataset_name_lower:
             return self._imagenet_offset_to_class[instance["offset"]]
-        if any(ds in self.dataset_name_lower for ds in ("food101", "sun397", "caltech101")):
-            return self._class_names_list[instance["label"]]
+        if any(ds in self.dataset_name_lower for ds in _GENERIC_DATASETS):
+            return self._class_names_list[instance[self._label_col]]
         if self.label_granularity == "detailed":
             return str(instance.get("subfield", "")).strip()
         return self._extract_mmmu_subject(instance["id"])
@@ -1806,7 +1949,7 @@ class ClassificationDataset(Dataset):
             if self.prompt_mode == "describe":
                 return _format_describe_prompt(self._describe_starts[idx]), None
             return self._imagenet_animal_question, None  # continuation / animal_id
-        if any(ds in self.dataset_name_lower for ds in ("food101", "sun397", "caltech101")):
+        if any(ds in self.dataset_name_lower for ds in _GENERIC_DATASETS):
             if self.prompt_mode in ("generic_mcq", "generic_mcq_filter", "generic_mcq_top_filter"):
                 return self._build_generic_mcq(instance, idx)
             return self._generic_mcq_question, None

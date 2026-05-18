@@ -1,22 +1,23 @@
 import gc
+import json
 import os
 from collections.abc import Sequence
-from typing import Tuple, Type, Union, Optional
+from typing import Optional, Tuple, Type, Union
 
 import torch
 from transformers import (
-    LlavaProcessor,
-    LlavaForConditionalGeneration,
-    LlavaNextProcessor,
-    LlavaNextForConditionalGeneration,
-    AutoProcessor,
-    AutoModelForCausalLM,
     AutoModel,
+    AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
-    CLIPProcessor,
     CLIPModel,
+    CLIPProcessor,
+    LlavaForConditionalGeneration,
+    LlavaProcessor,
+    LlavaNextForConditionalGeneration,
+    LlavaNextProcessor,
+    MllamaForConditionalGeneration,
     # LlamaForCausalLM,
     # LlamaTokenizerFast
 )
@@ -87,6 +88,10 @@ SUPPORTED_VL_MODELS = {
         "processor": AutoProcessor,
         "model": AutoModelForImageTextToText,
     },
+    "mllama": {
+        "processor": AutoProcessor,
+        "model": MllamaForConditionalGeneration,
+    },
 }
 
 # Define types for clarity
@@ -95,6 +100,7 @@ ProcessorType = Union[
     LlavaNextProcessor,
     CLIPProcessor,
     AutoTokenizer,
+    AutoProcessor,
 ]
 ModelType = Union[
     LlavaForConditionalGeneration,
@@ -102,7 +108,56 @@ ModelType = Union[
     AutoModelForCausalLM,
     AutoModel,
     CLIPModel,
+    MllamaForConditionalGeneration,
 ]
+
+
+def is_mllama_model_name_or_path(model_name_or_path: str) -> bool:
+    """Return True for Llama Vision / Mllama checkpoints."""
+    model_name_lower = model_name_or_path.lower()
+    if "mllama" in model_name_lower:
+        return True
+    if "llama" in model_name_lower and "vision" in model_name_lower:
+        return True
+
+    config_path = os.path.join(os.path.expanduser(model_name_or_path), "config.json")
+    if not os.path.isfile(config_path):
+        return False
+
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    architectures = config.get("architectures", [])
+    if isinstance(architectures, str):
+        architectures = [architectures]
+    architecture_names = " ".join(str(name).lower() for name in architectures)
+    return (
+        str(config.get("model_type", "")).lower() == "mllama"
+        or "mllama" in architecture_names
+    )
+
+
+def resolve_attn_implementation_for_model(
+    model_name_or_path: str,
+    requested: str,
+) -> str:
+    """Resolve attention implementation for model-family constraints."""
+    if requested == "auto":
+        return (
+            "sdpa"
+            if is_mllama_model_name_or_path(model_name_or_path)
+            else "flash_attention_2"
+        )
+
+    if is_mllama_model_name_or_path(model_name_or_path) and requested != "sdpa":
+        raise ValueError(
+            "Mllama / Llama Vision models support only "
+            f"`sdpa` attention, got `{requested}`."
+        )
+    return requested
 
 
 def _get_vl_model_classes(
@@ -121,6 +176,9 @@ def _get_vl_model_classes(
     Raises:
         ValueError: If the model type is not supported.
     """
+    if is_mllama_model_name_or_path(model_name_or_path):
+        return AutoProcessor, MllamaForConditionalGeneration
+
     model_name_lower = model_name_or_path.lower()
     for key, classes in SUPPORTED_VL_MODELS.items():
         if key in model_name_lower:
@@ -298,7 +356,7 @@ def load_hf_model_and_processor_or_tokenizer(
     text_model: bool = False,
     device_map: str = "auto",
     dtype: torch.dtype = torch.bfloat16,
-    attn_implementation: str = "sdpa",
+    attn_implementation: str = "auto",
     low_cpu_mem_usage: bool = True,
     use_fast: bool = True,
     skip_model: bool = False,
@@ -319,6 +377,7 @@ def load_hf_model_and_processor_or_tokenizer(
         device_map (str): Device map strategy for model loading.
         dtype (torch.dtype): Data type for model parameters.
         attn_implementation (str): Attention implementation type.
+            "auto" uses sdpa for Mllama and flash_attention_2 otherwise.
         low_cpu_mem_usage (bool): Optimize for low CPU memory usage.
         use_fast (bool): Use the fast version of the processor if available.
         skip_model (bool): Whether to not load the model.
@@ -338,10 +397,15 @@ def load_hf_model_and_processor_or_tokenizer(
         patch_flash_attn_varlen_import()
 
     if cache_dir is None:
-        cache_dir = os.path.expanduser(os.environ.get("HF_HUB_CACHE"))
+        cache_dir = os.environ.get("HF_HUB_CACHE")
 
     if cache_dir:
         cache_dir = os.path.expanduser(cache_dir)
+
+    attn_implementation = resolve_attn_implementation_for_model(
+        model_name_or_path,
+        attn_implementation,
+    )
 
     if skip_model and skip_processor:
         raise ValueError("Cannot not load both the model and the processor.")

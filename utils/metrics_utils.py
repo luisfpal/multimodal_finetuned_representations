@@ -2,7 +2,7 @@ import math
 import time
 import warnings
 from functools import wraps
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -28,22 +28,62 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def _ensure_device(
     *tensors: torch.Tensor,
+    device: Optional[Union[str, torch.device]] = None,
+    dtype: Optional[torch.dtype] = None,
+    non_blocking: bool = True,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
     """
     Move tensors to GPU if available, otherwise keep on CPU.
 
     Args:
         *tensors: Variable number of torch tensors
+        device: Optional target device. Defaults to CUDA when available.
+        dtype: Optional dtype conversion.
+        non_blocking: Forwarded to ``Tensor.to`` when a copy is needed.
 
     Returns:
         Single tensor if one input, tuple of tensors if multiple inputs
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    moved_tensors = tuple(tensor.to(device) for tensor in tensors)
+    target_device = (
+        torch.device(device)
+        if device is not None
+        else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    moved_tensors = []
+    for tensor in tensors:
+        if not isinstance(tensor, torch.Tensor):
+            tensor = torch.as_tensor(tensor)
+
+        target_dtype = dtype if dtype is not None else tensor.dtype
+        if tensor.device == target_device and tensor.dtype == target_dtype:
+            moved_tensors.append(tensor)
+        else:
+            moved_tensors.append(
+                tensor.to(
+                    device=target_device,
+                    dtype=target_dtype,
+                    non_blocking=non_blocking,
+                )
+            )
+    moved_tensors = tuple(moved_tensors)
 
     if len(moved_tensors) == 1:
         return moved_tensors[0]
     return moved_tensors
+
+
+def _as_metric_tensor(
+    data: Union[np.ndarray, torch.Tensor],
+    device: Optional[Union[str, torch.device]] = None,
+) -> torch.Tensor:
+    if isinstance(data, torch.Tensor):
+        tensor = data.detach()
+        tensor = _ensure_device(tensor, device=device, dtype=torch.float32)
+        return tensor.contiguous()
+
+    array = np.asarray(data, dtype=np.float32)
+    tensor = torch.tensor(array, dtype=torch.float32)
+    return _ensure_device(tensor, device=device)
 
 
 def preprocess_data(
@@ -51,24 +91,40 @@ def preprocess_data(
     data2: Union[np.ndarray, torch.Tensor],
     output_format: str = "tensor",
     remove_duplicates: bool = True,
-) -> Tuple[Union[np.ndarray, torch.Tensor], Union[np.ndarray, torch.Tensor]]:
-    """
-    Common preprocessing for similarity computation.
+    return_indices: bool = False,
+    device: Optional[Union[str, torch.device]] = None,
+):
+    """Common preprocessing for similarity computation.
 
     Args:
         data1: First array
         data2: Second array
         output_format: 'tensor' or 'numpy'
         remove_duplicates: Whether to remove duplicates and match indices
+        return_indices: When True, return the valid index array as a third element.
+            The indices are relative to the original (pre-filtering) sample axis and
+            can be used to align an additional array (e.g. CLIP embeddings) to the
+            same subset.  Backward-compatible default is False.
+        device: Optional target device for tensor output. Defaults to CUDA when available.
 
     Returns:
-        Tuple of preprocessed data1 and data2
+        (data1_out, data2_out) when return_indices=False (default).
+        (data1_out, data2_out, valid_indices) when return_indices=True, where
+        valid_indices is a 1-D numpy int array of the retained sample positions.
     """
     # Ensure both arrays have the same number of samples
     if data1.shape[0] != data2.shape[0]:
         raise ValueError(
             f"Data1 has {data1.shape[0]} samples, Data2 has {data2.shape[0]} samples"
         )
+
+    if output_format == "tensor" and not remove_duplicates:
+        unique_data1 = _as_metric_tensor(data1, device=device)
+        matched_data2 = _as_metric_tensor(data2, device=device)
+        valid_indices = np.arange(data1.shape[0])
+        if return_indices:
+            return unique_data1, matched_data2, valid_indices
+        return unique_data1, matched_data2
 
     # Convert to float32 and move to CPU if it's a tensor, or ensure float32 for numpy
     if isinstance(data1, torch.Tensor):
@@ -104,16 +160,93 @@ def preprocess_data(
     else:
         unique_data1 = np_data1
         matched_data2 = np_data2
+        valid_indices = np.arange(np_data1.shape[0])
 
     # Convert to requested output format
     if output_format == "tensor":
         unique_data1 = torch.tensor(unique_data1, dtype=torch.float32)
         matched_data2 = torch.tensor(matched_data2, dtype=torch.float32)
-        # Assuming _ensure_device is defined elsewhere in your module
-        unique_data1, matched_data2 = _ensure_device(unique_data1, matched_data2)
-        return unique_data1, matched_data2
-    else:
-        return unique_data1, matched_data2
+        unique_data1, matched_data2 = _ensure_device(
+            unique_data1,
+            matched_data2,
+            device=device,
+        )
+    # else: keep as numpy arrays
+
+    if return_indices:
+        return unique_data1, matched_data2, valid_indices
+    return unique_data1, matched_data2
+
+
+def _overlap_neighbor_indices(
+    data: torch.Tensor,
+    maxk: int,
+    metric: str = "euclidean",
+) -> torch.Tensor:
+    if metric == "cosine":
+        data = F.normalize(data, dim=1)
+        return torch.topk(data @ data.T, maxk + 1, dim=1).indices[:, 1:]
+
+    return torch.topk(
+        torch.cdist(data, data), maxk + 1, dim=1, largest=False
+    ).indices[:, 1:]
+
+
+def _neighborhood_overlap_from_indices(
+    x_neighbors: torch.Tensor,
+    y_neighbors: torch.Tensor,
+    maxk: int,
+) -> torch.Tensor:
+    if maxk == 0:
+        raise ZeroDivisionError("float division by zero")
+    n_samples = x_neighbors.shape[0]
+    overlap = (
+        x_neighbors.unsqueeze(2)
+        .eq(y_neighbors.unsqueeze(1))
+        .sum(dtype=torch.float64)
+    )
+    return overlap / (maxk * n_samples)
+
+
+def _information_distance_matrix(data: torch.Tensor, metric: str = "euclidean") -> torch.Tensor:
+    if metric == "cosine":
+        data = F.normalize(data, dim=1)
+    return torch.cdist(data, data)
+
+
+def _first_neighbor_indices(data: torch.Tensor, metric: str = "euclidean") -> torch.Tensor:
+    distances = _information_distance_matrix(data, metric=metric)
+    indices = torch.topk(distances, k=2, dim=1, largest=False).indices[:, 1]
+    del distances
+    return indices
+
+
+def _information_imbalance_from_cached(
+    source_neighbor_indices: torch.Tensor,
+    target_distances: torch.Tensor,
+) -> torch.Tensor:
+    n_samples = target_distances.shape[0]
+    row_indices = torch.arange(n_samples, device=target_distances.device)
+    dists_to_nn = target_distances[row_indices, source_neighbor_indices].unsqueeze(1)
+    ranks = (target_distances < dists_to_nn).sum(dim=1).float()
+    return 2 * ranks.mean() / n_samples
+
+
+def _center_gram_inplace(kernel: torch.Tensor) -> torch.Tensor:
+    row_mean = kernel.mean(dim=1, keepdim=True)
+    col_mean = kernel.mean(dim=0, keepdim=True)
+    grand_mean = kernel.mean()
+    kernel.sub_(row_mean)
+    kernel.sub_(col_mean)
+    kernel.add_(grand_mean)
+    return kernel
+
+
+def _has_duplicate_rows_like_preprocess(data: torch.Tensor) -> bool:
+    data = data.detach().to(dtype=torch.float32)
+    if torch.isnan(data).any().item():
+        return True
+    return torch.unique(data, dim=0).shape[0] != data.shape[0]
 
 
 def compute_neighborhood_overlap(
@@ -122,6 +255,7 @@ def compute_neighborhood_overlap(
     maxk: int = 30,
     use_dadapy: bool = False,
     metric: str = "euclidean",
+    device: Optional[Union[str, torch.device]] = None,
 ) -> float:
     """
     Compute neighborhood overlap between two datasets.
@@ -132,6 +266,7 @@ def compute_neighborhood_overlap(
         maxk: Maximum number of nearest neighbors to consider
         use_dadapy: Whether to use dadapy for distance computation
         metric: Distance metric to use ('euclidean' or 'cosine')
+        device: Optional target device for tensor computations.
 
     Returns:
         Overlap score between the two datasets
@@ -150,54 +285,34 @@ def compute_neighborhood_overlap(
 
     # For manual computation, preprocess as tensors with duplicate removal
     data1, data2 = preprocess_data(
-        data1, data2, output_format="tensor", remove_duplicates=True
+        data1,
+        data2,
+        output_format="tensor",
+        remove_duplicates=True,
+        device=device,
     )
 
     with torch.no_grad():
-        X_tensor, Y_tensor = _ensure_device(data1, data2)
-        X_tensor = X_tensor.to(torch.float32)
-        Y_tensor = Y_tensor.to(torch.float32)
-
-        if metric == "cosine":
-            X_tensor = torch.nn.functional.normalize(X_tensor, dim=1)
-            Y_tensor = torch.nn.functional.normalize(Y_tensor, dim=1)
-            x_neighbors = torch.topk(X_tensor @ X_tensor.T, maxk + 1, dim=1).indices[
-                :, 1:
-            ]
-            y_neighbors = torch.topk(Y_tensor @ Y_tensor.T, maxk + 1, dim=1).indices[
-                :, 1:
-            ]
-        else:
-            x_neighbors = torch.topk(
-                torch.cdist(X_tensor, X_tensor), maxk + 1, dim=1, largest=False
-            ).indices[:, 1:]
-            y_neighbors = torch.topk(
-                torch.cdist(Y_tensor, Y_tensor), maxk + 1, dim=1, largest=False
-            ).indices[:, 1:]
-
-        N = x_neighbors.shape[0]
-        if X_tensor.device.type == "cuda":
-            indicator_X = torch.zeros((N, N), dtype=torch.int16, device=X_tensor.device)
-            indicator_Y = torch.zeros((N, N), dtype=torch.int16, device=X_tensor.device)
-            indicator_X.scatter_(dim=1, index=x_neighbors, value=1)
-            indicator_Y.scatter_(dim=1, index=y_neighbors, value=1)
-            return (indicator_X * indicator_Y).sum().item() / (maxk * N)
-
-        x_neighbors = x_neighbors.cpu()
-        y_neighbors = y_neighbors.cpu()
-        overlap_sum = 0.0
-        for i in range(N):
-            xi = set(x_neighbors[i].tolist())
-            yi = set(y_neighbors[i].tolist())
-            overlap_sum += len(xi & yi)
-
-        return overlap_sum / (maxk * N)
+        X_tensor, Y_tensor = _ensure_device(
+            data1,
+            data2,
+            device=device,
+            dtype=torch.float32,
+        )
+        x_neighbors = _overlap_neighbor_indices(X_tensor, maxk=maxk, metric=metric)
+        y_neighbors = _overlap_neighbor_indices(Y_tensor, maxk=maxk, metric=metric)
+        return _neighborhood_overlap_from_indices(
+            x_neighbors,
+            y_neighbors,
+            maxk=maxk,
+        ).item()
 
 
 def compute_information_imbalance(
     data1: Union[np.ndarray, torch.Tensor],
     data2: Union[np.ndarray, torch.Tensor],
     metric: str = "euclidean",
+    device: Optional[Union[str, torch.device]] = None,
 ) -> float:
     """
     Compute Information Imbalance from data1 to data2.
@@ -207,6 +322,7 @@ def compute_information_imbalance(
         data1: First dataset/representation (Space A)
         data2: Second dataset/representation (Space B)
         metric: Distance metric 'euclidean' or 'cosine'
+        device: Optional target device for tensor computations.
 
     Returns:
         Information Imbalance score (lower is better)
@@ -214,46 +330,18 @@ def compute_information_imbalance(
     # Preprocess and move to GPU if available
     # We keep duplicates to preserve the exact structure of the representation
     data1, data2 = preprocess_data(
-        data1, data2, output_format="tensor", remove_duplicates=False
+        data1,
+        data2,
+        output_format="tensor",
+        remove_duplicates=False,
+        device=device,
     )
-    data1, data2 = _ensure_device(data1, data2)
-
-    N = data1.shape[0]
+    data1, data2 = _ensure_device(data1, data2, device=device, dtype=torch.float32)
 
     with torch.no_grad():
-        if metric == "cosine":
-            data1 = F.normalize(data1, dim=1)
-            data2 = F.normalize(data2, dim=1)
-            # Euclidean distance on normalized vectors is monotonic with cosine distance
-
-        # 1. Find Nearest Neighbors in Space A (data1)
-        # Distances in A
-        d1 = torch.cdist(data1, data1)
-
-        # Get index of first NN (k=2, index 1 because index 0 is self)
-        # largest=False -> smallest distances
-        _, indices_1 = torch.topk(d1, k=2, dim=1, largest=False)
-        nn_indices_1 = indices_1[:, 1]  # shape (N,)
-
-        del d1  # Save memory
-
-        # 2. Compute Ranks in Space B (data2)
-        d2 = torch.cdist(data2, data2)
-
-        # Extract distances to the specific neighbors identified in A
-        # d2[i, nn_indices_1[i]]
-        row_indices = torch.arange(N, device=d2.device)
-        dists_to_nn = d2[row_indices, nn_indices_1].unsqueeze(1)  # shape (N, 1)
-
-        # Count how many points in B are strictly closer than this distance
-        # This corresponds to the rank (0-based)
-        ranks = (d2 < dists_to_nn).sum(dim=1).float()
-
-        # 3. Compute Imbalance
-        # The factor 2/N normalizes the rank (which averages N/2 for random) to 1.
-        imb = 2 * ranks.mean() / N
-
-        return imb.item()
+        nn_indices_1 = _first_neighbor_indices(data1, metric=metric)
+        d2 = _information_distance_matrix(data2, metric=metric)
+        return _information_imbalance_from_cached(nn_indices_1, d2).item()
 
 
 # https://github.com/lorenzobasile/IDCorrelation/blob/main/utils/metrics.py
@@ -342,7 +430,9 @@ def compute_distance_correlation(
 
 
 def compute_linear_cka_similarity(
-    X: Union[np.ndarray, torch.Tensor], Y: Union[np.ndarray, torch.Tensor]
+    X: Union[np.ndarray, torch.Tensor],
+    Y: Union[np.ndarray, torch.Tensor],
+    device: Optional[Union[str, torch.device]] = None,
 ) -> float:
     """
     Compute Linear CKA similarity between two datasets.
@@ -355,10 +445,16 @@ def compute_linear_cka_similarity(
         Linear CKA similarity score between the two datasets
     """
     # Preprocess and move to GPU if available
-    X, Y = preprocess_data(X, Y, output_format="tensor", remove_duplicates=False)
+    X, Y = preprocess_data(
+        X,
+        Y,
+        output_format="tensor",
+        remove_duplicates=False,
+        device=device,
+    )
 
     # Ensure tensors are on GPU if available
-    X, Y = _ensure_device(X, Y)
+    X, Y = _ensure_device(X, Y, device=device, dtype=torch.float32)
 
     return cka(X, Y, hsic=linear_hsic).item()
 
@@ -424,10 +520,10 @@ def linear_hsic(X: torch.Tensor, Y: torch.Tensor, *args, **kwargs) -> torch.Tens
         The computed HSIC value.
     """
     # inter-sample similarity matrices for both spaces ~(N, N)
-    L_X = X @ X.T
-    L_Y = Y @ Y.T
+    L_X = _center_gram_inplace(X @ X.T)
+    L_Y = _center_gram_inplace(Y @ Y.T)
 
-    return torch.sum(center_kernel_matrix(L_X) * center_kernel_matrix(L_Y))
+    return torch.sum(L_X * L_Y)
 
 
 # https://github.com/lorenzobasile/IDCorrelation/blob/main/utils/metrics.py
@@ -919,21 +1015,32 @@ def compute_similarity(
         maxk = kwargs.get("maxk", 30)
         use_dadapy = kwargs.get("use_dadapy", False)
         metric = kwargs.get("metric", "euclidean")
-        return compute_neighborhood_overlap(data1, data2, maxk, use_dadapy, metric)
+        device = kwargs.get("device", None)
+        return compute_neighborhood_overlap(
+            data1,
+            data2,
+            maxk,
+            use_dadapy,
+            metric,
+            device=device,
+        )
 
     elif measure == "information_imbalance":
         metric = kwargs.get("metric", "euclidean")
-        return compute_information_imbalance(data1, data2, metric)
+        device = kwargs.get("device", None)
+        return compute_information_imbalance(data1, data2, metric, device=device)
 
     elif measure == "information_imbalance_reversed":
         metric = kwargs.get("metric", "euclidean")
-        return compute_information_imbalance(data2, data1, metric)
+        device = kwargs.get("device", None)
+        return compute_information_imbalance(data2, data1, metric, device=device)
 
     elif measure == "information_imbalance_mean":
         metric = kwargs.get("metric", "euclidean")
+        device = kwargs.get("device", None)
         return 0.5 * (
-            compute_information_imbalance(data1, data2, metric)
-            + compute_information_imbalance(data2, data1, metric)
+            compute_information_imbalance(data1, data2, metric, device=device)
+            + compute_information_imbalance(data2, data1, metric, device=device)
         )
 
     elif measure == "linear_regression_r2":
@@ -972,7 +1079,8 @@ def compute_similarity(
     #     return compute_svcca_similarity(data1, data2, accept_rate)
 
     elif measure == "linear_cka":
-        return compute_linear_cka_similarity(data1, data2)
+        device = kwargs.get("device", None)
+        return compute_linear_cka_similarity(data1, data2, device=device)
 
     elif measure == "rbf_cka":
         sigma = kwargs.get("sigma", None)
@@ -1014,7 +1122,7 @@ def compute_intrinsic_dimension(
         k: Number of nearest neighbors rank to consider for MLE/scaling_gride algorithm
     """
     if isinstance(X, torch.Tensor):
-        X = X.cpu().numpy()
+        X = X.to(torch.float32).cpu().numpy()
         X, _ = np.unique(X, axis=0, return_index=True)
         X = torch.tensor(X, dtype=torch.float32)
 
@@ -1096,7 +1204,7 @@ def twoNN(
 
 
 def id_scaling_gride(
-    X: torch.Tensor, k: int = 16, range_max: int = 100
+    X: torch.Tensor, k: int = 8, range_max: int = 100
 ) -> torch.Tensor:
     """
     Compute ID scaling grid.
@@ -1117,6 +1225,47 @@ def id_scaling_gride(
     id_index = int(math.log2(k))
     data.set_id(ids[id_index])
     return torch.tensor(data.intrinsic_dim, dtype=torch.float32)
+
+
+def id_scaling_gride_full(
+    X: torch.Tensor, range_max: int = 550
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return ID estimates at ALL neighbor-pair scales from the GRIDE algorithm.
+
+    Unlike ``id_scaling_gride``, which selects a single k, this returns the full
+    profile so that the caller can analyse how ID varies with neighbourhood scale.
+
+    Exact-duplicate rows are removed before computation (consistent with
+    ``compute_intrinsic_dimension``).
+
+    Args:
+        X: Dataset/representation of shape (N, D).
+        range_max: Maximum neighbour rank. The number of returned scales is
+            ``floor(log2(min(N, range_max)))``.  With N≥550 and range_max=550
+            this yields 9 scales whose neighbour pairs are
+            (1,2), (2,4), (4,8), (8,16), (16,32), (32,64), (64,128), (128,256), (256,512).
+
+    Returns:
+        ids:     shape (n_scales,) — intrinsic dimension per scale.
+        ids_err: shape (n_scales,) — GRIDE error estimates per scale.
+
+    Scale labels: for scale index i, label as ``k={2**i}-{2**(i+1)}``.
+    """
+    X = X.float()
+    X = _ensure_device(X)
+    X_np, _ = np.unique(X.cpu().numpy(), axis=0, return_index=True)
+    X_dedup = torch.tensor(X_np, dtype=torch.float32)
+    distances = torch.cdist(X_dedup, X_dedup).cpu().numpy()
+    # maxk must be >= range_max so dadapy can access the required neighbours.
+    # Default maxk=100 would cap effective range_max at 100.
+    N = X_np.shape[0]
+    effective_maxk = min(N - 1, range_max)
+    data = Data(distances=distances, maxk=effective_maxk)
+    ids, ids_err, _ = data.return_id_scaling_gride(range_max=range_max)
+    return (
+        torch.tensor(ids, dtype=torch.float32),
+        torch.tensor(ids_err, dtype=torch.float32),
+    )
 
 
 def normalize(R: torch.Tensor) -> torch.Tensor:
@@ -1387,6 +1536,577 @@ def compute_layers_residual_stream_similarities(
     return residual_stream_measures
 
 
+def _maybe_update_progress(
+    progress_bar: tqdm,
+    current_comparison: int,
+    last_update: int,
+    total_comparisons: int,
+) -> int:
+    update_every = max(1, int(0.1 * total_comparisons))
+    if (
+        current_comparison - last_update >= update_every
+        or current_comparison == total_comparisons
+    ):
+        progress_bar.update(current_comparison - last_update)
+        return current_comparison
+    return last_update
+
+
+def _precompute_linear_cka_states(
+    network: torch.Tensor,
+    device: Optional[Union[str, torch.device]],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Build reusable linear-CKA states for a stack of layers.
+
+    Each layer becomes one centered Gram matrix ``K = X X^T`` flattened to a row
+    vector. For two layers, linear CKA is then just
+    ``dot(Kx, Ky) / (||Kx|| * ||Ky||)``. Preallocating ``states`` avoids the
+    extra peak memory from building a Python list of large Gram tensors and then
+    stacking it.
+    """
+    target_device = (
+        torch.device(device)
+        if device is not None
+        else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    num_layers, num_samples, _ = network.shape
+    states = torch.empty(
+        num_layers,
+        num_samples * num_samples,
+        device=target_device,
+        dtype=torch.float32,
+    )
+    norms = torch.empty(num_layers, device=target_device, dtype=torch.float32)
+
+    for layer_idx, layer in enumerate(network):
+        layer_tensor = _as_metric_tensor(layer, device=device)
+        # Store each centered Gram matrix flattened so all pairwise CKA scores
+        # reduce to one state matrix multiply when memory allows it.
+        gram = _center_gram_inplace(layer_tensor @ layer_tensor.T)
+        states[layer_idx].copy_(gram.reshape(-1))
+        norms[layer_idx] = torch.sqrt(torch.sum(gram * gram))
+        del layer_tensor, gram
+    return states, norms
+
+
+def _compute_cross_layer_linear_cka(
+    residual_stream_network1: torch.Tensor,
+    residual_stream_network2: torch.Tensor,
+    lower_triangular_only: bool,
+    total_comparisons: int,
+    device: Optional[Union[str, torch.device]],
+) -> torch.Tensor:
+    """Compute the cross-layer linear CKA matrix with bounded GPU memory.
+
+    A single CKA state costs ``num_samples ** 2 * 4`` bytes. At N=9848 that is
+    about 0.36 GiB, so caching all states for an 80x100 comparison would need
+    about 65 GiB before scratch space. The strategy below keeps the exact same
+    centered-Gram CKA formula but chooses the largest safe cache layout:
+    full cache -> smaller-side cache -> paired row/column blocks.
+    """
+    num_layers_1 = residual_stream_network1.shape[0]
+    num_layers_2 = residual_stream_network2.shape[0]
+    num_samples = residual_stream_network1.shape[1]
+    result = torch.zeros(num_layers_1, num_layers_2, dtype=torch.float64)
+
+    with torch.no_grad():
+        target_device = (
+            torch.device(device)
+            if device is not None
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        float32_bytes = torch.empty((), dtype=torch.float32).element_size()
+        state_bytes = num_samples * num_samples * float32_bytes
+        all_cache_bytes = (num_layers_1 + num_layers_2) * state_bytes
+
+        # Keep the cache budget conservative: state construction also needs one
+        # transient Gram matrix, and PyTorch matmul needs workspace/allocator slack.
+        if target_device.type == "cuda" and torch.cuda.is_available():
+            try:
+                with torch.cuda.device(target_device):
+                    free_bytes, _ = torch.cuda.mem_get_info()
+                cache_budget_bytes = int(0.45 * free_bytes)
+                block_budget_bytes = max(int(0.25 * free_bytes), 3 * state_bytes)
+            except RuntimeError:
+                cache_budget_bytes = 8 * (1024**3)
+                block_budget_bytes = 2 * (1024**3)
+        else:
+            cache_budget_bytes = 8 * (1024**3)
+            block_budget_bytes = 2 * (1024**3)
+
+        # Full cache is fastest, but only safe if all states plus one scratch
+        # Gram matrix fit inside the conservative cache budget.
+        cache_all_states = all_cache_bytes + state_bytes <= cache_budget_bytes
+
+        with tqdm(
+            total=total_comparisons,
+            desc="Computing linear_cka",
+            unit="pair",
+        ) as pbar:
+            last_update = 0
+            current_comparison = 0
+
+            if cache_all_states:
+                states1, norms1 = _precompute_linear_cka_states(
+                    residual_stream_network1, device
+                )
+                states2, norms2 = _precompute_linear_cka_states(
+                    residual_stream_network2, device
+                )
+                # Batched exact CKA: numerator is state dot product; denominator
+                # is the product of centered-Gram Frobenius norms.
+                scores = (states1 @ states2.T) / (norms1[:, None] * norms2[None, :])
+
+                valid_scores = [
+                    scores[i, j]
+                    for i in range(num_layers_1)
+                    for j in range(num_layers_2)
+                    if not lower_triangular_only or i >= j
+                ]
+                if valid_scores:
+                    checked = torch.stack(valid_scores)
+                    tolerance = 1e-6
+                    if not torch.all(
+                        (checked >= -tolerance) & (checked <= 1 + tolerance)
+                    ):
+                        raise AssertionError("CKA value must be between 0 and 1.")
+
+                scores_cpu = scores.to(device="cpu", dtype=torch.float64)
+                for i in range(num_layers_1):
+                    cols = [
+                        j
+                        for j in range(num_layers_2)
+                        if not lower_triangular_only or i >= j
+                    ]
+                    if cols:
+                        result[i, cols] = scores_cpu[i, cols]
+                        current_comparison += len(cols)
+                        last_update = _maybe_update_progress(
+                            pbar,
+                            current_comparison,
+                            last_update,
+                            total_comparisons,
+                        )
+                del states1, norms1, states2, norms2, scores, scores_cpu
+            else:
+                row_cache_bytes = num_layers_1 * state_bytes
+                col_cache_bytes = num_layers_2 * state_bytes
+                # Prefer caching the smaller axis once. The +2 states leave room
+                # for a streamed block state and the transient Gram used to build it.
+                cache_rows = (
+                    num_layers_1 <= num_layers_2
+                    and row_cache_bytes + 2 * state_bytes <= cache_budget_bytes
+                )
+                cache_cols = (
+                    not cache_rows
+                    and col_cache_bytes + 2 * state_bytes <= cache_budget_bytes
+                )
+
+                if cache_rows or cache_cols:
+                    cached_bytes = row_cache_bytes if cache_rows else col_cache_bytes
+                    remaining_bytes = max(
+                        cache_budget_bytes - cached_bytes,
+                        2 * state_bytes,
+                    )
+                    # One state is reserved as scratch while constructing the
+                    # streamed block; the rest determines the block length.
+                    states_per_block = (remaining_bytes - state_bytes) // max(
+                        state_bytes, 1
+                    )
+                    stream_block_layers = max(1, min(16, int(states_per_block)))
+
+                    cached_axis = "row" if cache_rows else "column"
+                    streamed_axis = "column" if cache_rows else "row"
+                    print(
+                        "    - linear_cka full Gram cache needs "
+                        f"{all_cache_bytes / (1024**3):.2f} GiB; using "
+                        f"{cached_axis}-cache with {stream_block_layers}-layer "
+                        f"{streamed_axis} blocks."
+                    )
+
+                if cache_rows:
+                    # Cache the smaller row side once; stream column-layer states.
+                    states1, norms1 = _precompute_linear_cka_states(
+                        residual_stream_network1, device
+                    )
+                    for j0 in range(0, num_layers_2, stream_block_layers):
+                        j1 = min(j0 + stream_block_layers, num_layers_2)
+                        states2, norms2 = _precompute_linear_cka_states(
+                            residual_stream_network2[j0:j1], device
+                        )
+                        scores = (states1 @ states2.T) / (
+                            norms1[:, None] * norms2[None, :]
+                        )
+
+                        valid_block_scores = []
+                        valid_count = 0
+                        scores_cpu = scores.to(device="cpu", dtype=torch.float64)
+                        for i in range(num_layers_1):
+                            cols = []
+                            local_cols = []
+                            for local_j, j in enumerate(range(j0, j1)):
+                                if lower_triangular_only and j > i:
+                                    continue
+                                cols.append(j)
+                                local_cols.append(local_j)
+
+                            if cols:
+                                valid_block_scores.append(scores[i, local_cols])
+                                result[i, cols] = scores_cpu[i, local_cols]
+                                valid_count += len(cols)
+
+                        if valid_block_scores:
+                            checked = torch.cat(
+                                [score.reshape(-1) for score in valid_block_scores]
+                            )
+                            tolerance = 1e-6
+                            if not torch.all(
+                                (checked >= -tolerance) & (checked <= 1 + tolerance)
+                            ):
+                                raise AssertionError(
+                                    "CKA value must be between 0 and 1."
+                                )
+
+                            current_comparison += valid_count
+                            last_update = _maybe_update_progress(
+                                pbar,
+                                current_comparison,
+                                last_update,
+                                total_comparisons,
+                            )
+
+                        del states2, norms2, scores, scores_cpu
+
+                    del states1, norms1
+                elif cache_cols:
+                    # Symmetric case: cache columns once; stream row-layer states.
+                    states2, norms2 = _precompute_linear_cka_states(
+                        residual_stream_network2, device
+                    )
+                    for i0 in range(0, num_layers_1, stream_block_layers):
+                        i1 = min(i0 + stream_block_layers, num_layers_1)
+                        states1, norms1 = _precompute_linear_cka_states(
+                            residual_stream_network1[i0:i1], device
+                        )
+                        scores = (states1 @ states2.T) / (
+                            norms1[:, None] * norms2[None, :]
+                        )
+
+                        valid_block_scores = []
+                        valid_count = 0
+                        scores_cpu = scores.to(device="cpu", dtype=torch.float64)
+                        for local_i, i in enumerate(range(i0, i1)):
+                            cols = []
+                            for j in range(num_layers_2):
+                                if lower_triangular_only and j > i:
+                                    continue
+                                cols.append(j)
+
+                            if cols:
+                                valid_block_scores.append(scores[local_i, cols])
+                                result[i, cols] = scores_cpu[local_i, cols]
+                                valid_count += len(cols)
+
+                        if valid_block_scores:
+                            checked = torch.cat(
+                                [score.reshape(-1) for score in valid_block_scores]
+                            )
+                            tolerance = 1e-6
+                            if not torch.all(
+                                (checked >= -tolerance) & (checked <= 1 + tolerance)
+                            ):
+                                raise AssertionError(
+                                    "CKA value must be between 0 and 1."
+                                )
+
+                            current_comparison += valid_count
+                            last_update = _maybe_update_progress(
+                                pbar,
+                                current_comparison,
+                                last_update,
+                                total_comparisons,
+                            )
+
+                        del states1, norms1, scores, scores_cpu
+
+                    del states2, norms2
+                else:
+                    # Last-resort path for very tight memory: both sides are blocked.
+                    # Reserve one scratch Gram, then split the remaining budget
+                    # between row states and column states.
+                    states_per_side = (block_budget_bytes - state_bytes) // max(
+                        2 * state_bytes, 1
+                    )
+                    paired_block_layers = max(1, min(8, int(states_per_side)))
+
+                    print(
+                        "    - linear_cka full Gram cache needs "
+                        f"{all_cache_bytes / (1024**3):.2f} GiB; using "
+                        f"{paired_block_layers}-layer row/column blocks."
+                    )
+
+                    for i0 in range(0, num_layers_1, paired_block_layers):
+                        i1 = min(i0 + paired_block_layers, num_layers_1)
+                        states1, norms1 = _precompute_linear_cka_states(
+                            residual_stream_network1[i0:i1], device
+                        )
+
+                        for j0 in range(0, num_layers_2, paired_block_layers):
+                            j1 = min(j0 + paired_block_layers, num_layers_2)
+                            states2, norms2 = _precompute_linear_cka_states(
+                                residual_stream_network2[j0:j1], device
+                            )
+                            scores = (states1 @ states2.T) / (
+                                norms1[:, None] * norms2[None, :]
+                            )
+
+                            valid_block_scores = []
+                            valid_count = 0
+                            scores_cpu = scores.to(device="cpu", dtype=torch.float64)
+                            for local_i, i in enumerate(range(i0, i1)):
+                                cols = []
+                                local_cols = []
+                                for local_j, j in enumerate(range(j0, j1)):
+                                    if lower_triangular_only and j > i:
+                                        continue
+                                    cols.append(j)
+                                    local_cols.append(local_j)
+
+                                if cols:
+                                    valid_block_scores.append(
+                                        scores[local_i, local_cols]
+                                    )
+                                    result[i, cols] = scores_cpu[local_i, local_cols]
+                                    valid_count += len(cols)
+
+                            if valid_block_scores:
+                                checked = torch.cat(
+                                    [score.reshape(-1) for score in valid_block_scores]
+                                )
+                                tolerance = 1e-6
+                                if not torch.all(
+                                    (checked >= -tolerance)
+                                    & (checked <= 1 + tolerance)
+                                ):
+                                    raise AssertionError(
+                                        "CKA value must be between 0 and 1."
+                                    )
+
+                                current_comparison += valid_count
+                                last_update = _maybe_update_progress(
+                                    pbar,
+                                    current_comparison,
+                                    last_update,
+                                    total_comparisons,
+                                )
+
+                            del states2, norms2, scores, scores_cpu
+
+                        del states1, norms1
+
+    return result
+
+
+def _precompute_overlap_neighbors_if_duplicate_free(
+    network: torch.Tensor,
+    maxk: int,
+    metric: str,
+    device: Optional[Union[str, torch.device]],
+) -> Optional[List[torch.Tensor]]:
+    neighbors = []
+    with torch.no_grad():
+        for layer in network:
+            layer_tensor = _as_metric_tensor(layer, device=device)
+            # Duplicate rows must keep preprocess_data(remove_duplicates=True)
+            # semantics, so the cached fast path is only valid when none exist.
+            if _has_duplicate_rows_like_preprocess(layer_tensor):
+                return None
+            neighbors.append(
+                _overlap_neighbor_indices(layer_tensor, maxk=maxk, metric=metric)
+            )
+    return neighbors
+
+
+def _compute_cross_layer_neighborhood_overlap(
+    residual_stream_network1: torch.Tensor,
+    residual_stream_network2: torch.Tensor,
+    lower_triangular_only: bool,
+    total_comparisons: int,
+    maxk: int,
+    metric: str,
+    device: Optional[Union[str, torch.device]],
+) -> Optional[torch.Tensor]:
+    num_layers_1 = residual_stream_network1.shape[0]
+    num_layers_2 = residual_stream_network2.shape[0]
+    neighbors1 = _precompute_overlap_neighbors_if_duplicate_free(
+        residual_stream_network1,
+        maxk=maxk,
+        metric=metric,
+        device=device,
+    )
+    if neighbors1 is None:
+        return None
+    neighbors2 = _precompute_overlap_neighbors_if_duplicate_free(
+        residual_stream_network2,
+        maxk=maxk,
+        metric=metric,
+        device=device,
+    )
+    if neighbors2 is None:
+        return None
+
+    result = torch.zeros(num_layers_1, num_layers_2, dtype=torch.float64)
+    with torch.no_grad():
+        with tqdm(total=total_comparisons, desc="Computing neighborhood_overlap", unit="pair") as pbar:
+            last_update = 0
+            current_comparison = 0
+            for i in range(num_layers_1):
+                cols = []
+                vals = []
+                for j in range(num_layers_2):
+                    if lower_triangular_only and j > i:
+                        continue
+                    cols.append(j)
+                    vals.append(
+                        _neighborhood_overlap_from_indices(
+                            neighbors1[i],
+                            neighbors2[j],
+                            maxk=maxk,
+                        )
+                    )
+                if vals:
+                    result[i, cols] = torch.stack(vals).to(
+                        device="cpu",
+                        dtype=torch.float64,
+                    )
+                    current_comparison += len(vals)
+                    last_update = _maybe_update_progress(
+                        pbar,
+                        current_comparison,
+                        last_update,
+                        total_comparisons,
+                    )
+
+    return result
+
+
+def _precompute_first_neighbors(
+    network: torch.Tensor,
+    metric: str,
+    device: Optional[Union[str, torch.device]],
+) -> List[torch.Tensor]:
+    neighbors = []
+    with torch.no_grad():
+        for layer in network:
+            layer_tensor = _as_metric_tensor(layer, device=device)
+            neighbors.append(_first_neighbor_indices(layer_tensor, metric=metric))
+    return neighbors
+
+
+def _compute_cross_layer_information_imbalance(
+    residual_stream_network1: torch.Tensor,
+    residual_stream_network2: torch.Tensor,
+    lower_triangular_only: bool,
+    total_comparisons: int,
+    metric: str,
+    device: Optional[Union[str, torch.device]],
+) -> torch.Tensor:
+    num_layers_1 = residual_stream_network1.shape[0]
+    num_layers_2 = residual_stream_network2.shape[0]
+    result = torch.zeros(num_layers_1, num_layers_2, dtype=torch.float64)
+    source_neighbors = _precompute_first_neighbors(
+        residual_stream_network1,
+        metric=metric,
+        device=device,
+    )
+
+    with torch.no_grad():
+        with tqdm(total=total_comparisons, desc="Computing information_imbalance", unit="pair") as pbar:
+            last_update = 0
+            current_comparison = 0
+            for j in range(num_layers_2):
+                target_tensor = _as_metric_tensor(residual_stream_network2[j], device=device)
+                target_distances = _information_distance_matrix(target_tensor, metric=metric)
+                rows = []
+                vals = []
+                for i in range(num_layers_1):
+                    if lower_triangular_only and j > i:
+                        continue
+                    rows.append(i)
+                    vals.append(
+                        _information_imbalance_from_cached(
+                            source_neighbors[i],
+                            target_distances,
+                        )
+                    )
+                if vals:
+                    result[rows, j] = torch.stack(vals).to(
+                        device="cpu",
+                        dtype=torch.float64,
+                    )
+                    current_comparison += len(vals)
+                    last_update = _maybe_update_progress(
+                        pbar,
+                        current_comparison,
+                        last_update,
+                        total_comparisons,
+                    )
+
+    return result
+
+
+def _compute_cross_layer_information_imbalance_reversed(
+    residual_stream_network1: torch.Tensor,
+    residual_stream_network2: torch.Tensor,
+    lower_triangular_only: bool,
+    total_comparisons: int,
+    metric: str,
+    device: Optional[Union[str, torch.device]],
+) -> torch.Tensor:
+    num_layers_1 = residual_stream_network1.shape[0]
+    num_layers_2 = residual_stream_network2.shape[0]
+    result = torch.zeros(num_layers_1, num_layers_2, dtype=torch.float64)
+    source_neighbors = _precompute_first_neighbors(
+        residual_stream_network2,
+        metric=metric,
+        device=device,
+    )
+
+    with torch.no_grad():
+        with tqdm(total=total_comparisons, desc="Computing information_imbalance_reversed", unit="pair") as pbar:
+            last_update = 0
+            current_comparison = 0
+            for i in range(num_layers_1):
+                target_tensor = _as_metric_tensor(residual_stream_network1[i], device=device)
+                target_distances = _information_distance_matrix(target_tensor, metric=metric)
+                cols = []
+                vals = []
+                for j in range(num_layers_2):
+                    if lower_triangular_only and j > i:
+                        continue
+                    cols.append(j)
+                    vals.append(
+                        _information_imbalance_from_cached(
+                            source_neighbors[j],
+                            target_distances,
+                        )
+                    )
+                if vals:
+                    result[i, cols] = torch.stack(vals).to(
+                        device="cpu",
+                        dtype=torch.float64,
+                    )
+                    current_comparison += len(vals)
+                    last_update = _maybe_update_progress(
+                        pbar,
+                        current_comparison,
+                        last_update,
+                        total_comparisons,
+                    )
+
+    return result
+
+
 def compute_cross_layers_residual_stream_similarities(
     residual_stream_network1: torch.Tensor,
     residual_stream_network2: torch.Tensor,
@@ -1431,7 +2151,7 @@ def compute_cross_layers_residual_stream_similarities(
         for i in range(num_layers_1):
             for j in range(num_layers_2):
                 if i >= j:
-                     total_comparisons += 1
+                    total_comparisons += 1
     else:
         total_comparisons = num_layers_1 * num_layers_2
 
@@ -1442,6 +2162,79 @@ def compute_cross_layers_residual_stream_similarities(
         residual_stream_measures[measure] = torch.zeros(
             num_layers_1, num_layers_2, dtype=torch.float64
         )
+        if total_comparisons == 0:
+            continue
+        device = kwargs.get("device", None)
+
+        if measure == "linear_cka":
+            residual_stream_measures[measure] = _compute_cross_layer_linear_cka(
+                residual_stream_network1,
+                residual_stream_network2,
+                lower_triangular_only=lower_triangular_only,
+                total_comparisons=total_comparisons,
+                device=device,
+            )
+            continue
+
+        if measure == "neighborhood_overlap" and not kwargs.get("use_dadapy", False):
+            fast_overlap = _compute_cross_layer_neighborhood_overlap(
+                residual_stream_network1,
+                residual_stream_network2,
+                lower_triangular_only=lower_triangular_only,
+                total_comparisons=total_comparisons,
+                maxk=kwargs.get("maxk", 30),
+                metric=kwargs.get("metric", "euclidean"),
+                device=device,
+            )
+            if fast_overlap is not None:
+                residual_stream_measures[measure] = fast_overlap
+                continue
+            print(
+                "    - Duplicate rows detected; falling back to pairwise "
+                "neighborhood_overlap to preserve duplicate-removal behavior."
+            )
+
+        if measure == "information_imbalance":
+            residual_stream_measures[measure] = _compute_cross_layer_information_imbalance(
+                residual_stream_network1,
+                residual_stream_network2,
+                lower_triangular_only=lower_triangular_only,
+                total_comparisons=total_comparisons,
+                metric=kwargs.get("metric", "euclidean"),
+                device=device,
+            )
+            continue
+
+        if measure == "information_imbalance_reversed":
+            residual_stream_measures[measure] = _compute_cross_layer_information_imbalance_reversed(
+                residual_stream_network1,
+                residual_stream_network2,
+                lower_triangular_only=lower_triangular_only,
+                total_comparisons=total_comparisons,
+                metric=kwargs.get("metric", "euclidean"),
+                device=device,
+            )
+            continue
+
+        if measure == "information_imbalance_mean":
+            forward = _compute_cross_layer_information_imbalance(
+                residual_stream_network1,
+                residual_stream_network2,
+                lower_triangular_only=lower_triangular_only,
+                total_comparisons=total_comparisons,
+                metric=kwargs.get("metric", "euclidean"),
+                device=device,
+            )
+            backward = _compute_cross_layer_information_imbalance_reversed(
+                residual_stream_network1,
+                residual_stream_network2,
+                lower_triangular_only=lower_triangular_only,
+                total_comparisons=total_comparisons,
+                metric=kwargs.get("metric", "euclidean"),
+                device=device,
+            )
+            residual_stream_measures[measure] = 0.5 * (forward + backward)
+            continue
 
         # Precompute IDs if dealing with id_correlation to avoid redundant calculations
         precomputed_ids1 = None
@@ -1513,11 +2306,17 @@ def compute_layers_intrinsic_dimension(
     """
     num_layers = residual_stream.shape[0]
     intrinsic_dimension = torch.zeros(num_layers, dtype=torch.float64)
-    for layer in range(num_layers):
-        id_layer = compute_intrinsic_dimension(
-            residual_stream[layer], algorithm=algorithm, **kwargs
-        )
-        intrinsic_dimension[layer] = id_layer
+    update_every = max(1, int(0.1 * num_layers))
+    updates_pending = 0
+    with tqdm(total=num_layers, desc=f"Intrinsic dimension ({algorithm})", unit="layer") as pbar:
+        for layer in range(num_layers):
+            intrinsic_dimension[layer] = compute_intrinsic_dimension(
+                residual_stream[layer], algorithm=algorithm, **kwargs
+            )
+            updates_pending += 1
+            if (layer + 1) % update_every == 0 or (layer + 1) == num_layers:
+                pbar.update(updates_pending)
+                updates_pending = 0
     return intrinsic_dimension
 
 
@@ -1622,6 +2421,66 @@ def compute_consecutive_layers_similarities(
                 **kwargs,
             )
     return residual_stream_measures
+
+
+_CLIP_SUPPORTED_MEASURES = frozenset([
+    "neighborhood_overlap",
+    "information_imbalance",
+    "information_imbalance_reversed",
+])
+
+
+def compute_clip_residual_stream_similarities_per_layer(
+    representations: torch.Tensor,
+    clip_embeddings: torch.Tensor,
+    similarity_measures: List[str],
+    maxk: int = 30,
+) -> Dict[str, torch.Tensor]:
+    """Compare each decoder layer against a fixed 2-D CLIP embedding tensor.
+
+    Unlike ``compute_cross_layers_residual_stream_similarities`` (which compares
+    two 3-D tensors layer-by-layer), this function takes:
+      - ``representations``: shape ``(num_layers, N, hidden_size)``
+      - ``clip_embeddings``: shape ``(N, clip_dim)``   — already filtered to match N
+
+    and returns one scalar per layer for each requested measure.
+
+    Supported measures:
+      - ``"neighborhood_overlap"``:          compute_neighborhood_overlap(repr[layer], clip)
+      - ``"information_imbalance"``:         compute_information_imbalance(repr[layer], clip)
+      - ``"information_imbalance_reversed"``: compute_information_imbalance(clip, repr[layer])
+
+    Args:
+        representations: Residual-stream tensor, shape (num_layers, N, hidden_size).
+        clip_embeddings:  CLIP feature tensor, shape (N, clip_dim).
+        similarity_measures: Subset of _CLIP_SUPPORTED_MEASURES.
+        maxk: Neighbourhood size for neighborhood_overlap.
+
+    Returns:
+        Dict mapping measure name → 1-D float64 Tensor of shape (num_layers,).
+    """
+    unsupported = set(similarity_measures) - _CLIP_SUPPORTED_MEASURES
+    if unsupported:
+        raise ValueError(
+            f"Unsupported CLIP measures: {unsupported}. "
+            f"Supported: {_CLIP_SUPPORTED_MEASURES}"
+        )
+
+    num_layers = representations.shape[0]
+    results: Dict[str, List[float]] = {m: [] for m in similarity_measures}
+
+    for layer_idx in range(num_layers):
+        layer_repr = representations[layer_idx]   # (N, hidden_size)
+        for measure in similarity_measures:
+            if measure == "neighborhood_overlap":
+                val = compute_neighborhood_overlap(layer_repr, clip_embeddings, maxk=maxk)
+            elif measure == "information_imbalance":
+                val = compute_information_imbalance(layer_repr, clip_embeddings)
+            elif measure == "information_imbalance_reversed":
+                val = compute_information_imbalance(clip_embeddings, layer_repr)
+            results[measure].append(float(val))
+
+    return {m: torch.tensor(v, dtype=torch.float64) for m, v in results.items()}
 
 
 @torch.no_grad()
