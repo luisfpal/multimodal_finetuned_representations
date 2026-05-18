@@ -28,7 +28,6 @@ PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/compositionality_evaluation.py"
 # Default model (override with first argument)
 DEFAULT_MODEL_NAME="lbasile/llava_7b"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
-# DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
 # =============================================================================
 # DATA PATHS
 # =============================================================================

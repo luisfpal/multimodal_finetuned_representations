@@ -55,9 +55,6 @@ MODEL_TO_EVAL="lbasile/llava_7b"
 # MODEL_TO_EVAL="OpenGVLab/InternVL2-8B"
 # MODEL_TO_EVAL="OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain"
 
-# --- InternVL3.5 ---
-# MODEL_TO_EVAL="OpenGVLab/InternVL3_5-8B"
-
 # Automatically extract model short name for output directory
 OUTPUT_MODEL_DIR="${MODEL_TO_EVAL##*/}"
 

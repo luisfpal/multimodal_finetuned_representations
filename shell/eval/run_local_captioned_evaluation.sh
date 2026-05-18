@@ -4,7 +4,7 @@
 # =============================================================================
 # Run captioned + visual evaluation for a single model locally.
 # Supports both captioned tasks (images → text captions) and original tasks.
-# The model backend (llava_hf, internvl2, internvl3.5) is auto-inferred
+# The model backend (llava_hf, internvl2) is auto-inferred
 # from the model name — no manual configuration needed.
 #
 # Usage:
@@ -28,7 +28,6 @@ set -e
 # Default model (override with first argument)
 DEFAULT_MODEL_NAME="lbasile/llava_7b"
 # DEFAULT_MODEL_NAME="OpenGVLab/InternVL2-8B"
-# DEFAULT_MODEL_NAME="OpenGVLab/InternVL3_5-8B"
 
 # =============================================================================
 # SCRIPT SETUP & ARGUMENT PARSING

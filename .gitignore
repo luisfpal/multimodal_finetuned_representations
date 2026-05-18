@@ -1,59 +1,39 @@
-# ============================================================================
-# PYTHON & BUILD ARTIFACTS
-# ============================================================================
+# Hidden local state
+.*
+!.gitignore
+!.env.example
+
+# Python and build artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
 *.egg-info/
-dist/
 build/
+dist/
 
-# ============================================================================
-# VIRTUAL ENVIRONMENTS
-# ============================================================================
-.venv/
-
-# ============================================================================
-# IDE & EDITOR CONFIGURATION
-# ============================================================================
-.idea/
-.vscode/
-.cursor*
+# Local caches, logs, and editor files
+logs/
+plots/
+backup/
+*.bak
 *.swp
 *.swo
-
-# ============================================================================
-# OS & SYSTEM FILES
-# ============================================================================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
 .DS_Store
 Thumbs.db
 
-# ============================================================================
-# JUPYTER NOTEBOOKS & CACHES
-# ============================================================================
-.ipynb_checkpoints/
-*.ipynb_checkpoints
-
-# ============================================================================
-# LOGS & TEMPORARY FILES
-# ============================================================================
-logs/
-*.bak
-backup/
-
-# ============================================================================
-# EXPERIMENTS & DEVELOPMENT
-# ============================================================================
+# Experiment data and generated outputs
+data/
+results/
+evals/
+internal_docs/
 tinkering/
 tests/
-results/representations_classification/
-results/mmmu_evaluation/
 
-# ============================================================================
-# LARGE BINARY FILES (models, checkpoints, archives)
-# ============================================================================
+# Large binaries and archives
 *.pkl
 *.h5
 *.pt
@@ -65,48 +45,34 @@ results/mmmu_evaluation/
 *.rar
 *.pdf
 
-# ============================================================================
-# TEXT DATA FILES
-# ============================================================================
+# Tabular and JSON data dumps
 *.json
+*.jsonl
 *.tsv
 *.csv
-
-# Allow ARO annotation JSON files checked into third_party
 !third_party/vision-language-models-are-bows/*.json
 
-# ============================================================================
-# PLOTTING & VISUALIZATION
-# ============================================================================
-plots/
+# Local plotting and analysis scripts
+plotting/cambrian_encoder_ablation_plot.py
+plotting/cambrian_pretrained_vs_finetuned_imbalance.py
+plotting/llama_vision_similarity_plots.py
+plotting/per_model_linear_regression_r2_grid.py
+plotting/multimodality_similarity_plots.py
+plotting/per_model_similarity_grid.py
+plotting/plot_encoder_decoder_cka.py
+plotting/plot_imbalance_grid.py
+plotting/plot_imbalance_distribution.py
+plotting/plot_llava_instruct_captioning_imbalance_clip.py
+plotting/plot_pooling_tests.py
+plotting/plot_representations_classification.py
+plotting/plot_pile10k_intrinsic_dimension.py
+plotting/plot_quantile_distributions.py
 
-# ============================================================================
-# EVALUATION DIRECTORIES (selective)
-# ============================================================================
-evals/**/finetuned_pretrained/
-evals/**/Llava1.5-7B*/
-evals/**/MME_Benchmark_release_version/
-evals/**/original_llava_example/
-evals/**/*json
-# Keep ipynb and results files
-evals/**/*
-!evals/**/*.ipynb
-!evals/**/*_results.jsonl
+# Retired benchmarking entrypoints
+scripts/basic_benchmarking/
+shell/basic_benchmarking/
 
-# ============================================================================
-# PROJECT-SPECIFIC EXCLUSIONS
-# ============================================================================
-results/representations/
-internal_docs/
-
-# ============================================================================
-# GIT & METADATA (git internals should never be in version control)
-# ============================================================================
-.git/
-
-# ============================================================================
-# THIRD-PARTY: keep only runtime-essential Cambrian source
-# ============================================================================
+# Third-party Cambrian files not needed at runtime
 third_party/cambrian/eval/
 third_party/cambrian/scripts/
 third_party/cambrian/dataengine/
@@ -119,12 +85,7 @@ third_party/cambrian/clear.py
 third_party/cambrian/CITATION.cff
 third_party/cambrian/fsdp_config.json
 
-# ============================================================================
-# EXTERNAL TOOLS & DOCUMENTATION
-# ============================================================================
-.github/
-.claude/
-GEMINI.md
-CLAUDE.md
+# External AI/tooling docs
 AGENTS.md
-.claudeignore
+CLAUDE.md
+GEMINI.md

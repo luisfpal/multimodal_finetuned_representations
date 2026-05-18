@@ -128,11 +128,6 @@ MODELS=(
     # "lbasile/LLaVA-OneVision-1.5-8B-stage2-2600"
     # "lbasile/llava_7b_6_17"
     # "lbasile/llava_7b_6_17_complementary"
-    # "OpenGVLab/InternVL3_5-8B-Pretrained"
-    # "OpenGVLab/InternVL3_5-8B-Instruct"
-    # "OpenGVLab/InternVL3_5-8B-MPO"
-    # "OpenGVLab/InternVL3_5-8B"
-
 )
 
 # Configuration from environment (set by launch_job.sh)
