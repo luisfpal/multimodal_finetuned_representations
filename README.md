@@ -1,70 +1,94 @@
 # Multimodal Finetuned Representations
 
-Geometric interpretability study analyzing what changes — and where — inside the LLM backbone of vision-language models (VLMs) after visual instruction finetuning. The project extracts residual stream representations from multimodal models and computes similarity measures across layers to understand how finetuning reshapes internal representations.
+Code for studying how visual instruction tuning changes the internal geometry of
+vision-language models (VLMs). The repository extracts residual-stream
+representations from multimodal models and compares them across layers, models,
+modalities, and evaluation settings.
 
-Key techniques: residual stream tracing, layer patching (transplantation), intrinsic dimension analysis, and similarity measures (CKA, neighborhood overlap, information imbalance).
+This README is a collaborator-facing snapshot. It documents the current setup and
+selected experiment entrypoints. The full paper reproduction checklist for
+**Visual Instruction Tuning Aligns Modalities through Abstraction** will be
+expanded as the workflow is finalized.
 
 ## Supported Models
 
-| Family              | Models                                         | Size    |
-| ------------------- | ---------------------------------------------- | ------- |
+| Family              | Models                                       | Size    |
+| ------------------- | -------------------------------------------- | ------- |
 | LLaVA 1.5           | `lbasile/llava_7b`, pretrained variants      | 7B, 13B |
 | LLaVA OneVision 1.5 | `lmms-lab/LLaVA-OneVision-1.5-8B-Instruct`   | 8B      |
 | InternVL2           | `OpenGVLab/InternVL2-8B`, pretrained variant | 8B      |
-| InternVL3.5         | `OpenGVLab/InternVL3_5-8B`                   | 8B      |
 | Cambrian            | `nyu-visionx/cambrian-8b`                    | 8B      |
 
 ## Setup
 
 ### Requirements
 
-- **Python 3.12** — Flash Attention 2.8.3 only provides pre-built wheels for this version
-- **NVIDIA driver** compatible with CUDA 12.6+ wheels (tested on A100, H100)
-- **[uv](https://github.com/astral-sh/uv)** package manager
+- Python 3.12
+- NVIDIA GPU driver compatible with CUDA 12 wheels
+- CUDA toolkit available on `PATH` so `nvcc --version` works
+- [`uv`](https://github.com/astral-sh/uv) for dependency management
 
-### Quick Start
+The dependency stack is pinned in `pyproject.toml`. In particular:
 
-If your system already has a CUDA toolkit available (i.e., `nvcc --version` works):
+- `torch==2.9.0` from the CUDA 12.6 PyTorch wheel index
+- `torchvision==0.24.0` from the CUDA 12.6 PyTorch wheel index
+- `flash-attn==2.8.3` from a pinned prebuilt wheel for `torch2.9`, CUDA 12, and Python 3.12
+
+### Environment Configuration
+
+Create a local environment file from the example:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` for your machine. The important values are:
+
+- `PYTHONPATH`: absolute path to this repository
+- `HF_HOME`: root Hugging Face cache directory
+- `HF_HUB_CACHE`: Hugging Face model cache
+- `HF_DATASETS_CACHE`: Hugging Face dataset cache
+- `HF_TOKENS_CACHE`: Hugging Face token cache
+
+The `ORFEO_*` variables are only needed for cluster-specific LLM judge tasks.
+Leave them as placeholders if you are not using that infrastructure.
+
+### Install Dependencies
+
+If `nvcc --version` already works:
 
 ```bash
 uv sync
 source .venv/bin/activate
 ```
 
-That's it. The pre-built Flash Attention wheels install without compilation.
-
-Current pinned stack in `pyproject.toml`:
-
-- `torch==2.9.0` (`+cu126` wheel)
-- `torchvision==0.24.0` (`+cu126` wheel)
-- `flash-attn==2.8.3` via a pinned `v2.8.3` prebuilt wheel matching `torch2.9` and `cp312`
-
-### Local CUDA Installation (HPC / No Root Access)
-
-On HPC clusters where CUDA is not in your `PATH` by default, the `uv sync` step will fail because Flash Attention's pre-built wheels need `nvcc` to verify CUDA compatibility at install time. This does NOT mean you need to compile Flash Attention — you just need the CUDA toolkit accessible.
-
-The included script installs a user-local CUDA toolkit (no root required):
+Then verify the core stack:
 
 ```bash
-# 1. Install CUDA toolkit locally (~4GB, one-time)
+python -c "import torch, flash_attn; print(torch.__version__)"
+```
+
+### CUDA On HPC / No Root Access
+
+Some clusters provide GPU drivers but do not expose a CUDA toolkit by default.
+If `uv sync` fails while installing FlashAttention and `nvcc --version` does not
+work, install a user-local CUDA toolkit:
+
+```bash
 bash scripts/setup/install_local_cuda.sh
-
-# 2. Reload shell environment (the script patches ~/.bashrc)
 source ~/.bashrc
-
-# 3. Now uv sync will work
 uv sync
 source .venv/bin/activate
 ```
 
-The script supports options for custom paths and CUDA versions:
+For custom locations or CUDA versions:
 
 ```bash
 bash scripts/setup/install_local_cuda.sh --help
 bash scripts/setup/install_local_cuda.sh --install-dir "$HOME/scratch/cuda-12.2" --arch-list "8.0"
 ```
 
-If using a non-default CUDA version (`--cuda-version`), pass an explicit runfile URL:
+If using a non-default CUDA version, pass the NVIDIA runfile URL explicitly:
 
 ```bash
 bash scripts/setup/install_local_cuda.sh \
@@ -72,59 +96,73 @@ bash scripts/setup/install_local_cuda.sh \
   --runfile-url "<NVIDIA CUDA runfile URL>"
 ```
 
-### Troubleshooting
+### Common Setup Checks
 
-If `uv sync` fails on Flash Attention, verify that:
+If installation fails, check these first:
 
-1. You are using Python 3.12
-2. `pyproject.toml` still has the pinned flash-attn wheel source override
-3. You re-ran `uv lock` after dependency edits
+1. `python --version` reports Python 3.12.
+2. `nvcc --version` works in the same shell where you run `uv sync`.
+3. `.env` points `PYTHONPATH` and Hugging Face caches to valid paths.
+4. `pyproject.toml` still contains the pinned `flash-attn` wheel source.
 
 ## Repository Structure
 
+```text
+scripts/                    Python experiment and analysis code
+  eval/                     Benchmark, compositionality, COCOQA, and logit-lens evaluation
+  representations_interpretability/
+                            Representation extraction and geometry metrics
+  setup/                    Environment setup helpers
+shell/                      Local and SLURM entrypoints for experiments
+src/                        Core tracing pipeline
+utils/                      Model, dataset, and metric utilities
+plotting/                   Figure and analysis scripts
+third_party/                External model code
 ```
-scripts/                    Python scripts for all experiments
-  representations_interpretability/   Core analysis (similarity, intrinsic dim, etc.)
-  eval/                               Benchmark evaluation (lmms-eval, compositionality)
-  setup/                              Environment setup scripts
-shell/                      SLURM launchers and worker scripts (mirrors scripts/)
-src/                        Core pipeline (residual stream tracer)
-utils/                      Shared utilities (model loading, datasets, metrics)
-plotting/                   Visualization scripts and notebooks
-third_party/                External model code (Cambrian)
-```
+
+## Selected Current Entrypoints
+
+The scripts below cover some of the current experiments for the paper. This list
+is intentionally partial and will be updated as the full reproduction workflow is
+finalized.
+
+| Purpose | Entry point |
+| ------- | ----------- |
+| LMMS-style benchmark evaluation | `shell/eval/run_local_evaluation.sh` |
+| COCOQA evaluation | `shell/eval/run_local_cocoqa_evaluation.sh` |
+| Compositionality evaluation | `shell/eval/launch_compositionality.sh` |
+| Logit-lens evaluation | `shell/eval/launch_logitlens.sh` |
+| Llama Vision multimodality similarity | `shell/representations_interpretability/llama_vision_similarity.sh` |
+| Text-image representation similarity | `shell/representations_interpretability/multimodality_similarity.sh` |
+| Representation classification metrics | `shell/representations_interpretability/representations_classification.sh` |
+
+Before running a script, open it and review the configuration block at the top.
+Several scripts define model lists, dataset lists, SLURM resources, output
+directories, and cache locations directly in bash.
+
+Some current scripts still contain author-local `PROJECT_ROOT` values such as
+`/u/dssc/lbasile/scratch/plm`, while others assume the repository lives at
+`$HOME/multimodal_finetuned_representations`. Adjust those paths before running
+experiments on another machine.
 
 ## Running Experiments
 
-All experiments run on SLURM via a two-layer pattern:
-
-1. **Launcher** (`shell/*/launch_*.sh`) — generates SBATCH script, sets resources, submits job
-2. **Worker** (`shell/*/[task].sh`) — sets experiment parameters, calls the Python script
-
-```bash
-# Submit a job
-bash shell/representations_interpretability/launch_job.sh
-
-# Monitor
-tail -f logs/slurm-<JOB_ID>.out
-```
-
-| Experiment                   | Launcher                       | Python Script                                                            |
-| ---------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
-| Cross-modal similarity       | `launch_job.sh`              | `scripts/representations_interpretability/multimodality_similarity.py` |
-| Intrinsic dimension          | `launch_job.sh`              | `scripts/representations_interpretability/intrinsic_dimension.py`      |
-| Cross-model comparison       | `launch_job.sh`              | `scripts/representations_interpretability/models_similarity.py`        |
-| Benchmark evaluation         | `launch_lmms.sh`             | `scripts/eval/lmms_evaluation.py`                                      |
-| Compositionality (ARO/BiVLC) | `launch_compositionality.sh` | `scripts/eval/compositionality_evaluation.py`                          |
-For local testing (no SLURM), use the `run_local_*.sh` scripts:
+Local scripts can be run directly after setup:
 
 ```bash
 bash shell/eval/run_local_evaluation.sh "lbasile/llava_7b"
 ```
 
-## Configuration
+SLURM launchers should be configured first, then submitted:
 
-The `.env` file at the project root sets `PYTHONPATH`, HuggingFace cache directories, and cluster-specific paths. It is sourced automatically by the launcher scripts.
+```bash
+bash shell/eval/launch_compositionality.sh
+```
 
-> **Warning:** If this repository is made public, review `.env` to avoid exposing credentials or cluster-specific paths.
+Logs are written under `logs/` by the launchers that submit SLURM jobs.
 
+## Configuration Notes
+
+- Do not commit real credentials in `.env`.
+- Keep large model, dataset, representation, and evaluation caches outside the repository.
+- Use `uv sync` to install from the lockfile. Do not install project dependencies with raw `pip`.
