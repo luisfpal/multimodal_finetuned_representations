@@ -14,16 +14,16 @@ This module:
   3. Wraps prepare_inputs_for_generation to convert any stray Cache → legacy format
 """
 
-import sys
-import logging
 import functools
+import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
 
 def _needs_generation_mixin_patch():
     """Check whether GenerationMixin is missing from PreTrainedModel's MRO."""
-    from transformers import PreTrainedModel, GenerationMixin
+    from transformers import GenerationMixin, PreTrainedModel
 
     return GenerationMixin not in PreTrainedModel.__mro__
 
@@ -101,6 +101,53 @@ def _find_causal_lm_class(chat_model_cls):
     return None
 
 
+def _patch_intern_vit_meta_tensor(chat_model_cls):
+    """Patch InternVisionEncoder.__init__ to avoid .item() on meta tensors.
+
+    In PyTorch >= 2.8 with transformers' low_cpu_mem_usage, from_pretrained
+    initialises on the meta device.  torch.linspace then produces meta tensors,
+    and the original code calls .item() on each element, which raises
+    ``RuntimeError: Tensor.item() cannot be called on meta tensors``.
+
+    The fix replaces the tensor-based linspace with a pure-Python equivalent.
+    """
+    vit_mod_name = chat_model_cls.__module__.replace(
+        "modeling_internvl_chat", "modeling_intern_vit"
+    )
+    vit_mod = sys.modules.get(vit_mod_name)
+    if vit_mod is None:
+        return
+
+    encoder_cls = getattr(vit_mod, "InternVisionEncoder", None)
+    if encoder_cls is None:
+        return
+
+    original_init = encoder_cls.__init__
+    if getattr(original_init, "_meta_tensor_patched", False):
+        return
+
+    @functools.wraps(original_init)
+    def _patched_init(self, config):
+        super(encoder_cls, self).__init__()
+        self.config = config
+        n = config.num_hidden_layers
+        rate = float(config.drop_path_rate)
+        dpr = [rate * i / max(n - 1, 1) for i in range(n)]
+        self.layers = __import__("torch").nn.ModuleList(
+            [
+                vit_mod.InternVisionEncoderLayer(config, dpr[idx])
+                for idx in range(n)
+            ]
+        )
+        self.gradient_checkpointing = True
+
+    _patched_init._meta_tensor_patched = True
+    encoder_cls.__init__ = _patched_init
+    logger.info(
+        "Patched InternVisionEncoder.__init__ to avoid .item() on meta tensors"
+    )
+
+
 def patch_internvl_classes_pre_instantiation(chat_model_cls):
     """Patch InternLM2ForCausalLM BEFORE from_pretrained() is called.
 
@@ -110,6 +157,8 @@ def patch_internvl_classes_pre_instantiation(chat_model_cls):
     Args:
         chat_model_cls: The dynamically loaded InternVLChatModel class.
     """
+    _patch_intern_vit_meta_tensor(chat_model_cls)
+
     if not _needs_generation_mixin_patch():
         return
 
@@ -144,3 +193,8 @@ def patch_internvl_model_post_instantiation(model):
         return
 
     _inject_generation_mixin(type(language_model))
+
+    if getattr(language_model, "generation_config", None) is None:
+        from transformers import GenerationConfig
+        language_model.generation_config = GenerationConfig()
+        logger.info("Assigned default GenerationConfig to language_model")
