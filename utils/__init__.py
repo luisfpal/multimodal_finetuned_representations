@@ -6,23 +6,23 @@ from .captioning_utils import benchmark_model_captioning_processed_dataloader
 from .constants import (
     ANSWER_TEXT,
     ASSISTANT_ROLE,
+    CAMBRIAN_SYSTEM_INSTRUCTION,
     COCOQA_VI_DIGITS_MAP,
     GUIDE_TEXT,
+    INTERNVL2_SYSTEM_INSTRUCTION,
+    INTERNVL3_5_SYSTEM_INSTRUCTION,
     LLAVA_CHAT_TEMPLATE,
     MMLU_ANSWER_CHOICES,
     SQA_ANSWER_CHOICES,
-    LLaVA1_5_SYSTEM_INSTRUCTION,
-    INTERNVL2_SYSTEM_INSTRUCTION,
-    LLaVA_OV1_5_SYSTEM_INSTRUCTION,
-    CAMBRIAN_SYSTEM_INSTRUCTION,
-    INTERNVL3_5_SYSTEM_INSTRUCTION,
     SYSTEM_ROLE,
+    LLaVA1_5_SYSTEM_INSTRUCTION,
+    LLaVA_OV1_5_SYSTEM_INSTRUCTION,
 )
 from .dataset import (
     get_dataloader,
     get_dataloader_for_captioning,
 )
-from .layers_weights_patching import patch_layers_weights
+from .llm_judge import ensure_llm_judge_env
 from .metrics_utils import (
     compute_cross_layers_residual_stream_similarities,
     compute_heads_projection_residual_stream_similarities,
@@ -32,7 +32,6 @@ from .metrics_utils import (
     compute_layers_residual_stream_entropy,
     compute_layers_residual_stream_similarities,
 )
-from .llm_judge import ensure_llm_judge_env
 from .model_utils import (
     ModelType,
     ProcessorType,
@@ -79,7 +78,6 @@ __all__ = [
     "setup_multimodal_model",
     "parse_predicted_answer",
     "benchmark_model_vqa_processed_dataloader",
-    "patch_layers_weights",
     "sample_image_and_text_positions",
     "benchmark_model_captioning_processed_dataloader",
     "plot_similarity_measure_matrix",
