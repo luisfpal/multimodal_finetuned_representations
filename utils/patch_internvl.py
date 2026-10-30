@@ -1,4 +1,4 @@
-"""Monkey-patches InternVL model classes with custom forward and generate methods."""
+"""Monkey-patches InternVL model classes with custom forward and generate methods that can skip selected layers for image tokens."""
 
 import torch
 from typing import List, Optional, Tuple, Union

@@ -1,4 +1,4 @@
-"""Plot overlap metrics across layers for two representations of a model."""
+"""Plot per-layer overlap metrics of one model for the res2 and norm1 residual-stream types."""
 
 import json
 
