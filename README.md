@@ -28,10 +28,6 @@ Abstraction** ([arXiv:2606.03871](https://arxiv.org/abs/2606.03871)).
 | Cambrian            | `nyu-visionx/cambrian-8b`                    | 8B      |
 | Llama-Vision (Mllama) | `Meta-Llama-3-11B/90B-Vision-Instruct`     | 11B, 90B |
 
-Unimodal reference encoders used as anchors for retrieval/overlap experiments:
-SigLIP2 (`google/siglip2-so400m-patch14-384`) for images, Qwen3-Embedding for
-text.
-
 <details>
 <summary><strong>Setup</strong></summary>
 
