@@ -1,14 +1,17 @@
 # Visual Instruction Tuning Aligns Modalities through Abstraction
 
 [![arXiv](https://img.shields.io/badge/arXiv-2606.03871-b31b1b.svg)](https://arxiv.org/abs/2606.03871)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Project page](https://img.shields.io/badge/Project-page-blue.svg)](https://luisfpal.github.io/multimodal_finetuned_representations/)
+[![HF lbasile](https://img.shields.io/badge/%F0%9F%A4%97%20HF-lbasile-yellow.svg)](https://huggingface.co/lbasile)
+[![HF l11p](https://img.shields.io/badge/%F0%9F%A4%97%20HF-l11p-yellow.svg)](https://huggingface.co/l11p)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**Luis Palacios\*, Lorenzo Basile\*, Diego Doimo†, Alberto Cazzaniga†**
-Area Science Park, Trieste, Italy
-\* Equal contribution. † Equal supervision.
+**Luis Palacios\*, Lorenzo Basile\*, Diego Doimo†, Alberto Cazzaniga†**  
+Area Science Park, Trieste, Italy · \* Equal contribution. † Equal supervision.
 
-Official code for the paper
-[*Visual Instruction Tuning Aligns Modalities through Abstraction*](https://arxiv.org/abs/2606.03871).
+[**Paper**](https://arxiv.org/abs/2606.03871) · [**Project page**](https://luisfpal.github.io/multimodal_finetuned_representations/) · [**Models & data**](#models-and-data) · [**Citation**](#citation)
+
+<p align="center"><img src="docs/static/images/teaser.png" width="85%" alt="Visual and textual abstractions align in the intermediate layers of VLMs"></p>
 
 ## TL;DR
 
@@ -23,19 +26,15 @@ the performance of full fine-tuning on vision-centric benchmarks while reducing 
 ## Contents
 
 - [Quick start](#quick-start)
-- [Installation](#installation)
-- [Supported models](#supported-models)
-- [Data](#data)
-- [Where outputs are written](#where-outputs-are-written)
 - [Reproducing the paper](#reproducing-the-paper)
+- [Models and data](#models-and-data)
 - [Repository structure](#repository-structure)
-- [Project page](#project-page)
 - [Citation](#citation)
 - [License](#license)
 
 ## Quick start
 
-Requires an NVIDIA GPU with CUDA 12 (see [Installation](#installation) if `uv sync` fails).
+Requires an NVIDIA GPU with CUDA 12 (open **Full installation** below if `uv sync` fails).
 
 ```bash
 git clone https://github.com/luisfpal/multimodal_finetuned_representations.git
@@ -57,7 +56,8 @@ python scripts/eval/lmms_evaluation.py \
 Results are written under `evals/llava_7b/lmms_eval/pope/`. A `ModuleNotFoundError` for `utils` or `scripts` means `PYTHONPATH` in `.env` does not point to this folder. To run the paper's experiments,
 see [Reproducing the paper](#reproducing-the-paper); each launcher has its configuration at the top.
 
-## Installation
+<details>
+<summary><b>Full installation (requirements, environment file, CUDA and flash-attention)</b></summary>
 
 > **Note.** The setup below is the one we used on our cluster (SLURM, NVIDIA A100 and H100
 > nodes, CUDA 12). Paths, SLURM settings and CUDA locations are specific to that environment;
@@ -67,7 +67,7 @@ see [Reproducing the paper](#reproducing-the-paper); each launcher has its confi
 
 - Python 3.12
 - An NVIDIA GPU driver compatible with CUDA 12 wheels
-- A CUDA toolkit on `PATH` (`nvcc --version` must work; see [CUDA and flash-attention](#cuda-and-flash-attention))
+- A CUDA toolkit on `PATH` (`nvcc --version` must work; see **CUDA and flash-attention troubleshooting** below)
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
 
 The dependency stack is pinned in `pyproject.toml` / `uv.lock`, notably `torch==2.9.0` and
@@ -103,7 +103,10 @@ python -c "import torch, flash_attn; print(torch.__version__)"
 
 Always install from the lockfile with `uv sync`; do not install project dependencies with raw `pip`.
 
-### CUDA and flash-attention
+</details>
+
+<details>
+<summary><b>CUDA and flash-attention troubleshooting</b></summary>
 
 `flash-attn` is a compiled CUDA extension: `uv sync` needs a working `nvcc` on `PATH`, and the
 extension is built for a specific GPU compute capability. Most install failures on a new
@@ -160,57 +163,7 @@ ran on both A100 and H100 nodes; the value must match the node where the environ
 4. `.env` points `PYTHONPATH` and the Hugging Face caches to valid paths.
 5. `pyproject.toml` still contains the pinned `flash-attn` wheel source.
 
-## Supported models
-
-Pre-trained (before visual instruction tuning) and instruction-tuned checkpoints studied in the paper:
-
-| Family | Pre-trained / base | Instruction-tuned |
-| ------ | ------------------ | ----------------- |
-| LLaVA-1.5 (7B, 13B) | `l11p/llava-v1.5-{7b,13b}-pretrained-lbasile` (built from `liuhaotian/llava-v1.5-mlp2x-336px-pretrain-vicuna-{7b,13b}-v1.5` + `lmsys/vicuna-{7b,13b}-v1.5`) | `llava-hf/llava-1.5-{7b,13b}-hf`; `lbasile/llava_7b`, `lbasile/llava_13b` |
-| LLaVA-OneVision-1.5 (4B, 8B) | `lmms-lab/LLaVA-OneVision-1.5-{4B,8B}-Base` | `lmms-lab/LLaVA-OneVision-1.5-{4B,8B}-Instruct` |
-| InternVL2 (8B) | `OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain` | `OpenGVLab/InternVL2-8B` |
-| Cambrian-1 (8B) | `nyu-visionx/cambrian-8b-pretrain` (assembled as `lbasile/cambrian-8b-pretrained`) | `nyu-visionx/cambrian-8b` |
-| Llama-3.2-Vision (90B) | – | `meta-llama/Llama-3.2-90B-Vision-Instruct` (referred to by the local ID `Meta-Llama-3-90B-instruct` in our launchers) |
-
-**Checkpoints and datasets on the Hugging Face Hub.** During this work we used the Hugging Face
-accounts [`lbasile`](https://huggingface.co/lbasile) and [`l11p`](https://huggingface.co/l11p)
-to store the checkpoints and datasets we built for the paper, for example the LLaVA-1.5
-localized fine-tuning variants (`lbasile/llava_7b_<start>_<end>`, e.g. `lbasile/llava_7b_6_16`,
-`lbasile/llava_7b_0_16`, `lbasile/llava_7b_16_32`), the pre-trained LLaVA references
-(`l11p/llava-v1.5-*-pretrained-lbasile`), and captioned evaluation sets
-(`l11p/COCOQA-restval-ICQA`, `l11p/VQAv2-COCO-restval-ICQ`, `l11p/*-captioned`).
-The scripts that build them are in `scripts/models_utils/` and `scripts/create_datasets/`.
-
-## Data
-
-Benchmarks are loaded from the Hugging Face Hub (through `datasets` / lmms-eval /
-lm-eval-harness) into the caches set in `.env`. See Appendix B of the paper for the full list.
-A few datasets are downloaded to disk by helper scripts:
-
-- ARO images: `shell/data/download_aro_images.sh` (default root `$HOME/scratch/datasets/vision-language-models-are-bows`)
-- SugarCrepe: `shell/data/download_sugarcrepe.sh` (`SUGARCREPE_DATA_ROOT`, default `$HOME/scratch/datasets/sugar-crepe`)
-
-## Where outputs are written
-
-All paths are set at the top of each launcher (and in `.env`); change them there to fit your machine.
-
-| What | Default location | How to change |
-| ---- | ---------------- | ------------- |
-| Repository root used by launchers | `PROJECT_ROOT` / `PROJECT_DIR`, mostly `$HOME/multimodal_finetuned_representations` | Edit the variable at the top of the launcher |
-| Cached representations | `REPRESENTATIONS_DIR`; the default differs per launcher (`$HOME/scratch` in most, `$HOME/scratch/representations` or `$HOME/scratch/pooling_tests` in others) and some Python scripts default to `~/scratch/representations` | Export `REPRESENTATIONS_DIR` once so all experiments share one cache root |
-| Experiment results | `$PROJECT_ROOT/results/` | `RESULTS_DIR` / `--results-dir` in the launcher |
-| Benchmark evaluations | `$PROJECT_ROOT/evals/<model>/...` | `OUTPUT_DIR` in the eval launcher |
-| SLURM logs | `$PROJECT_ROOT/logs/` | `LOG_DIR` / `#SBATCH --output` |
-| Paper figures | `plotting/tueplots/` (via `plotting/_tueplots_style.py`) | `OUTPUT_DIR` in `_tueplots_style.py` |
-| Model / dataset caches | `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE` | `.env` |
-| lmms-eval cache | `LMMS_EVAL_HOME=$HOME/scratch/lmms_eval_cache` | Eval launchers |
-
-**Our cluster setup, to adapt.** The launchers are kept exactly as we ran them, so they contain
-paths, SLURM accounts and partitions from our cluster. Before running a launcher on your machine,
-edit its configuration block. In particular, some `shell/eval/` scripts (`launch_logitlens.sh`, `run_local_logitlens.sh`,
-`run_local_evaluation.sh`, `run_local_compositionality_evaluation.sh`, `launch_lor.sh`) set
-`PROJECT_ROOT` to an absolute path on our cluster; set it to your clone before running them.
-SLURM launchers also set our `--account`, `--partition` and GPU type; replace them with yours.
+</details>
 
 ## Reproducing the paper
 
@@ -247,6 +200,69 @@ Pre-trained reference checkpoints were built once with
 `scripts/build_cambrian_pretrained.py` / `scripts/download_cambrian_projector.py` (Cambrian);
 `scripts/compare_model_weights.py` diffs two checkpoints as a sanity check.
 
+<details>
+<summary><b>Where outputs are written (paths and environment variables)</b></summary>
+
+All paths are set at the top of each launcher (and in `.env`); change them there to fit your machine.
+
+| What | Default location | How to change |
+| ---- | ---------------- | ------------- |
+| Repository root used by launchers | `PROJECT_ROOT` / `PROJECT_DIR`, mostly `$HOME/multimodal_finetuned_representations` | Edit the variable at the top of the launcher |
+| Cached representations | `REPRESENTATIONS_DIR`; the default differs per launcher (`$HOME/scratch` in most, `$HOME/scratch/representations` or `$HOME/scratch/pooling_tests` in others) and some Python scripts default to `~/scratch/representations` | Export `REPRESENTATIONS_DIR` once so all experiments share one cache root |
+| Experiment results | `$PROJECT_ROOT/results/` | `RESULTS_DIR` / `--results-dir` in the launcher |
+| Benchmark evaluations | `$PROJECT_ROOT/evals/<model>/...` | `OUTPUT_DIR` in the eval launcher |
+| SLURM logs | `$PROJECT_ROOT/logs/` | `LOG_DIR` / `#SBATCH --output` |
+| Paper figures | `plotting/tueplots/` (via `plotting/_tueplots_style.py`) | `OUTPUT_DIR` in `_tueplots_style.py` |
+| Model / dataset caches | `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE` | `.env` |
+| lmms-eval cache | `LMMS_EVAL_HOME=$HOME/scratch/lmms_eval_cache` | Eval launchers |
+
+</details>
+
+<details>
+<summary><b>Cluster-specific notes (SLURM, absolute paths)</b></summary>
+
+**Our cluster setup, to adapt.** The launchers are kept exactly as we ran them, so they contain
+paths, SLURM accounts and partitions from our cluster. Before running a launcher on your machine,
+edit its configuration block. In particular, some `shell/eval/` scripts (`launch_logitlens.sh`, `run_local_logitlens.sh`,
+`run_local_evaluation.sh`, `run_local_compositionality_evaluation.sh`, `launch_lor.sh`) set
+`PROJECT_ROOT` to an absolute path on our cluster; set it to your clone before running them.
+SLURM launchers also set our `--account`, `--partition` and GPU type; replace them with yours.
+
+</details>
+
+## Models and data
+
+Pre-trained (before visual instruction tuning) and instruction-tuned checkpoints studied in the paper:
+
+| Family | Pre-trained / base | Instruction-tuned |
+| ------ | ------------------ | ----------------- |
+| LLaVA-1.5 (7B, 13B) | `l11p/llava-v1.5-{7b,13b}-pretrained-lbasile` (built from `liuhaotian/llava-v1.5-mlp2x-336px-pretrain-vicuna-{7b,13b}-v1.5` + `lmsys/vicuna-{7b,13b}-v1.5`) | `llava-hf/llava-1.5-{7b,13b}-hf`; `lbasile/llava_7b`, `lbasile/llava_13b` |
+| LLaVA-OneVision-1.5 (4B, 8B) | `lmms-lab/LLaVA-OneVision-1.5-{4B,8B}-Base` | `lmms-lab/LLaVA-OneVision-1.5-{4B,8B}-Instruct` |
+| InternVL2 (8B) | `OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain` | `OpenGVLab/InternVL2-8B` |
+| Cambrian-1 (8B) | `nyu-visionx/cambrian-8b-pretrain` (assembled as `lbasile/cambrian-8b-pretrained`) | `nyu-visionx/cambrian-8b` |
+| Llama-3.2-Vision (90B) | – | `meta-llama/Llama-3.2-90B-Vision-Instruct` (referred to by the local ID `Meta-Llama-3-90B-instruct` in our launchers) |
+
+**Our Hugging Face repositories.** The accounts [`lbasile`](https://huggingface.co/lbasile) and [`l11p`](https://huggingface.co/l11p) host the model checkpoints and datasets we created for the paper's results: During this work we used the Hugging Face
+accounts [`lbasile`](https://huggingface.co/lbasile) and [`l11p`](https://huggingface.co/l11p)
+to store the checkpoints and datasets we built for the paper, for example the LLaVA-1.5
+localized fine-tuning variants (`lbasile/llava_7b_<start>_<end>`, e.g. `lbasile/llava_7b_6_16`,
+`lbasile/llava_7b_0_16`, `lbasile/llava_7b_16_32`), the pre-trained LLaVA references
+(`l11p/llava-v1.5-*-pretrained-lbasile`), and captioned evaluation sets
+(`l11p/COCOQA-restval-ICQA`, `l11p/VQAv2-COCO-restval-ICQ`, `l11p/*-captioned`).
+The scripts that build them are in `scripts/models_utils/` and `scripts/create_datasets/`.
+
+<details>
+<summary><b>Benchmark data</b></summary>
+
+Benchmarks are loaded from the Hugging Face Hub (through `datasets` / lmms-eval /
+lm-eval-harness) into the caches set in `.env`. See Appendix B of the paper for the full list.
+A few datasets are downloaded to disk by helper scripts:
+
+- ARO images: `shell/data/download_aro_images.sh` (default root `$HOME/scratch/datasets/vision-language-models-are-bows`)
+- SugarCrepe: `shell/data/download_sugarcrepe.sh` (`SUGARCREPE_DATA_ROOT`, default `$HOME/scratch/datasets/sugar-crepe`)
+
+</details>
+
 ## Repository structure
 
 ```text
@@ -272,9 +288,7 @@ third_party/    Vendored Cambrian and ARO ("vision-language-models-are-bows") co
 }
 ```
 
-## Project page
-
-The project page lives in `docs/` (static HTML, no build step). Once the repository is public, enable it under **Settings > Pages > Build and deployment > Deploy from a branch**, branch `main`, folder `/docs`. It will be served at <https://luisfpal.github.io/multimodal_finetuned_representations/>.
+The project page lives in `docs/` (static HTML, no build step). GitHub Pages deploys it from branch `main`, folder `/docs` (**Settings > Pages > Deploy from a branch**), at <https://luisfpal.github.io/multimodal_finetuned_representations/>.
 
 ## License
 
