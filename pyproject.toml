@@ -21,7 +21,7 @@ dependencies = [
     "packaging==24.2", # Version parsing
     "setuptools==75.8.2", # Build backend
     # ============================================================================
-    # Training runtime (installs CUDA kernels compatible with torch 2.4 / CUDA 12.x)
+    # Training runtime (installs CUDA kernels for the pinned torch 2.9 / CUDA 12.6 stack)
     # ============================================================================
     "deepspeed==0.15.2",
     # ============================================================================

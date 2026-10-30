@@ -268,14 +268,14 @@ def parse_args():
         type=int,
         nargs="+",
         default=[10],
-        help="k values for k-NN overlap vs Qwen embeddings (e.g. --k 5 10 20).",
+        help="Unused; kept for CLI compatibility.",
     )
     parser.add_argument(
         "--embedder",
         type=str,
         default="qwen0.6b",
         choices=["qwen0.6b", "qwen8b"],
-        help="Which Qwen embedder was used to produce the reference embeddings.",
+        help="Unused; kept for CLI compatibility.",
     )
     parser.add_argument(
         "--gaussian_cka_sigma",

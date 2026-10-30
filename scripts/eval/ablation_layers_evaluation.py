@@ -1,4 +1,8 @@
-"""Run an lmms-eval benchmark with a number of decoder layers skipped (layer-ablation evaluation).
+"""NOTE: legacy script, superseded by layer_ablation_multimodal_evaluation.py and
+layer_ablation_text_evaluation.py (used for the paper). Its --layers-to-skip path
+imports a module that is not part of this release.
+
+Run an lmms-eval benchmark with a number of decoder layers skipped (layer-ablation evaluation).
 
 Inputs: --task, --layers-to-skip, --output-dir (default results/ablations) and other CLI args;
 OPENAI_API_KEY / OPENAI_API_URL / MODEL_VERSION for LLM-judged tasks.

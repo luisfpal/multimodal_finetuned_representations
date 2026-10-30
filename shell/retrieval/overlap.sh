@@ -14,7 +14,7 @@
 # CPU-only. Submit directly: sbatch shell/retrieval/overlap.sh
 #
 # Available models under $REPRESENTATIONS_DIR/embedding_similarity:
-#   onevision_8b_hf onevision_4b_hf llava_7b_hf llava_13b_hf internvl_8b_hf
+#   onevision_8b_hf onevision_4b_hf llava_7b llava_13b internvl_8b_hf
 # Available datasets:
 #   imagenet_animals_10 coco_image_question coco_image_only coco_text_only
 

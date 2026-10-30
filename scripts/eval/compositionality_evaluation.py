@@ -1,5 +1,5 @@
 """
-Compositionality evaluation for generative VLMs on ARO, BiVLC, and SugarCrepe benchmarks.
+Compositionality evaluation for generative VLMs on ARO and SugarCrepe benchmarks (BiVLC is accepted by --benchmark but its run is currently disabled in main()).
 
 Evaluates VLMs using constrained MCQ logits: compares logit scores for answer letter
 tokens (A, B, ...) at the last input position — no generation, no parsing.
