@@ -1,3 +1,9 @@
+"""Hook-based residual-stream tracers for Hugging Face decoder-based multimodal models.
+
+Provides ResidualStreamTracer and subclasses for the output_layer, post_mlp, heads_projection and
+post_input_layernorm residual-stream types, with token pooling and safetensors storage.
+"""
+
 import abc
 import copy
 import gc
