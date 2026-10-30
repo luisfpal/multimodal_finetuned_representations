@@ -28,7 +28,7 @@
       </div>
       <div class="is-size-5">Area Science Park, Trieste, Italy</div>
       <div class="is-size-6"><sup>*</sup>Equal contribution &nbsp; <sup>&dagger;</sup>Equal supervision</div>
-      <div style="margin-top:1rem">
+      <div class="links">
         <span class="link-block"><a class="button is-dark is-rounded" href="https://arxiv.org/abs/2606.03871">arXiv</a></span>
         <span class="link-block"><a class="button is-dark is-rounded" href="https://arxiv.org/pdf/2606.03871">Paper (PDF)</a></span>
         <span class="link-block"><a class="button is-dark is-rounded" href="https://github.com/luisfpal/multimodal_finetuned_representations">Code</a></span>
@@ -39,13 +39,13 @@
   </div>
 </section>
 
-<section class="section" style="padding-top:0">
+<section class="section pt-0">
   <div class="container is-max-desktop">
     <figure>
       <img src="./static/images/teaser.png" alt="Three phases of processing in the LLM backbone: unimodal processing, abstraction, generation" width="1600" height="867">
       <figcaption class="figure-caption"><b>Visual and textual abstractions align in the intermediate layers of VLMs.</b> We compare two ways of asking the same question about the same visual content: a multimodal prompt, where the image is encoded and passed to the language model through the connector, and a text-only prompt, where natural-language captions replace the image. For both inputs, we track the hidden representation of the final contextualized input token across the LLM backbone, separating the computation into early modality-specific processing, intermediate shared abstraction, and late answer generation. Visual instruction tuning aligns image and text-derived representations primarily in intermediate layers, and fine-tuning this region alone recovers nearly full vision-language performance.</figcaption>
     </figure>
-    <div class="tldr" style="margin-top:1.5rem">
+    <div class="tldr mt-5">
       <b>TL;DR.</b> Visual instruction tuning does not modify the representation space within the LLM backbone uniformly, but focuses on an intermediate group of semantically-rich layers. We establish this on seven VLM architectures through causal interventions, semantic probing, and geometric similarity analysis, and validate it with localized fine-tuning: updating only the intermediate layers approximately preserves full fine-tuning performance, especially on vision-centric tasks.
     </div>
   </div>
@@ -68,7 +68,7 @@
   </div>
 </section>
 
-<section class="section" style="background:#fafafa">
+<section class="section has-background-white-bis">
   <div class="container is-max-desktop">
     <h2 class="title is-3 has-text-centered">Setup</h2>
     <div class="content">
@@ -85,7 +85,7 @@
 
     <div class="finding">
       <h3 class="title is-4">1. Intermediate layers drive vision&ndash;language performance</h3>
-      <p class="claim">Layer-skipping and attention knockout show that cross-modal integration is mainly localized in intermediate layers, while early layers focus solely on unimodal token processing.</p>
+      <p class="claim">Layer-skipping and attention knockout show that cross-modal integration is mainly localized in intermediate layers. In LLaVA, image processing and cross-modal communication are simultaneous, while in OneVision a range of early layers (6 to 12) performs unimodal processing: performance is unaffected by the cross-modal attention knockout there, but is greatly damaged if the visual embeddings are removed.</p>
       <figure>
         <img src="./static/images/ablations.png" alt="Layer skipping and attention knockout profiles" loading="lazy" width="1400" height="533">
         <figcaption class="figure-caption">Average performance over six vision&ndash;language tasks (GQA, MMBench-cn, MMBench-en, MME, SeedBench, and VQAv2) for LLaVA-7B, OneVision-4B, and InternVL2-8B. Performance is normalized such that a value of 1 corresponds to the unmodified model, while 0 corresponds to removing image embeddings from all layers. Purple curves skip image-token layers and green curves knock out image-to-text attention. Solid lines show progressive interventions from early to late layers, while dashed lines show five-layer sliding windows.</figcaption>
@@ -103,7 +103,7 @@
 
     <div class="finding">
       <h3 class="title is-4">3. Instruction tuning aligns visual and textual abstractions</h3>
-      <p class="claim">Visual instruction tuning substantially increases the alignment between semantically equivalent visual and textual representations. This effect is concentrated in the intermediate abstraction layers, while later layers preserve a residual asymmetry in which textual representations remain more informative than visual ones.</p>
+      <p class="claim">Visual instruction tuning substantially increases the alignment between semantically equivalent visual and textual representations. This effect is concentrated in the intermediate abstraction layers, while later layers preserve a residual asymmetry in which textual representations remain more informative than visual ones (more manifestly for OneVision).</p>
       <figure>
         <div class="two-col">
           <div><img src="./static/images/imbalance_ov4b.png" alt="Information imbalance planes for OneVision-4B before and after instruction tuning" loading="lazy" width="900" height="655"></div>
@@ -115,9 +115,10 @@
 
     <div class="finding">
       <h3 class="title is-4">4. Fine-tuning only the abstraction layers matches full fine-tuning</h3>
-      <p class="claim">Fine-tuning only the abstraction region (layers 6&ndash;16 in LLaVA-7B, 8&ndash;25 in OneVision-4B) reaches 98.8% and 100.4% of full fine-tuning, while reducing training time by 14% and 24%. The complementary windows, which have an equal or larger number of layers and additionally train the embedding and unembedding parameters, lag behind by more than 4% and 2%, respectively.</p>
+      <p class="claim">Fine-tuning only the abstraction region (layers 6&ndash;16 in LLaVA-7B, 8&ndash;25 in OneVision-4B) reaches 98.8% and 100.4% of full fine-tuning, while reducing training time by 14% and 24%. The complementary windows, which have an equal or larger number of layers and additionally train the embedding and unembedding parameters, lag behind by more than 4% and 2%, respectively. As noted in the paper's limitations, the objective was mechanistic characterization rather than performance maximization, so this configuration may not represent the global optimum.</p>
       <div class="table-container">
         <table class="table is-striped is-narrow is-fullwidth results">
+          <caption class="figure-caption"><b>Evaluation of localized fine-tuning strategies on LLaVA-7B and OneVision-4B.</b> Results are normalized to the corresponding fully fine-tuned model. MC VQA averages 12 multiple-choice tasks; OE VQA averages 4 open-ended tasks; Compositional averages ARO and SugarCrepe; Captioning averages COCO and Flickr30k. Overall averages all tasks. Train time refers to visual instruction tuning time on 4 NVIDIA H100 GPUs.</caption>
           <thead>
             <tr><th scope="col">Model</th><th scope="col">Trained layers</th><th scope="col">MC VQA &uarr;</th><th scope="col">OE VQA &uarr;</th><th scope="col">Compositional &uarr;</th><th scope="col">Captioning &uarr;</th><th scope="col">Overall &uarr;</th><th scope="col">Train time &darr;</th></tr>
           </thead>
@@ -129,7 +130,6 @@
           </tbody>
         </table>
       </div>
-      <p class="figure-caption"><b>Evaluation of localized fine-tuning strategies on LLaVA-7B and OneVision-4B.</b> Results are normalized to the corresponding fully fine-tuned model. MC VQA averages 12 multiple-choice tasks; OE VQA averages 4 open-ended tasks; Compositional averages ARO and SugarCrepe; Captioning averages COCO and Flickr30k. Overall averages all tasks. Train time refers to visual instruction tuning time on 4 NVIDIA H100 GPUs.</p>
     </div>
 
     <div class="finding">
@@ -137,13 +137,13 @@
       <p class="claim">The gain of tuning the abstraction layers over their complement grows with a benchmark's reliance on the image (Spearman correlation of approximately &rho; = 0.6, p &lt; 0.01, for both models).</p>
       <figure>
         <img src="./static/images/image_reliance.png" alt="Localized fine-tuning gain versus image reliance" loading="lazy" width="1400" height="534">
-        <figcaption class="figure-caption">Each point is a benchmark. The x-axis measures image reliance: the normalized gap between image-conditioned and text-only performance, averaged over four reference VLMs. The y-axis measures the gain from fine-tuning the abstraction layers instead of their complement, for LLaVA-7B (left) and OneVision-4B (right). Benchmarks that rely more on visual input benefit more from localized tuning.</figcaption>
+        <figcaption class="figure-caption">Each point is a benchmark. The x-axis measures image reliance: the normalized gap between image-conditioned and text-only performance, averaged over four reference VLMs. The y-axis measures the gain from fine-tuning the abstraction layers instead of their complement, for LLaVA-7B (left) and OneVision-4B (right). Benchmarks that rely more on visual input benefit more from localized tuning. Image captioning tasks are excluded, as they are trivially impossible to solve without the image.</figcaption>
       </figure>
     </div>
 
     <div class="finding">
       <h3 class="title is-4">6. Information imbalance shows early-to-mid alignment in a cross-attention VLM too</h3>
-      <figure style="max-width:520px;margin:0 auto">
+      <figure class="narrow">
         <img src="./static/images/llama_imbalance.png" alt="Information imbalance plane for Llama-3.2-90B-Vision-Instruct" loading="lazy" width="700" height="762">
         <figcaption class="figure-caption"><b>Information-imbalance plane for the instruction tuned Llama-3.2-90B-Vision-Instruct.</b> This instruction-tuned model, whose LLM backbone was not modified but integrates visual features using cross-attention, also depicts a large bidirectional informativeness in the early-to-mid layers.</figcaption>
       </figure>
@@ -151,13 +151,13 @@
   </div>
 </section>
 
-<section class="section" id="resources" style="background:#fafafa">
+<section class="section has-background-white-bis" id="resources">
   <div class="container is-max-desktop content">
     <h2 class="title is-3 has-text-centered">Resources</h2>
     <ul>
       <li><b>Paper:</b> <a href="https://arxiv.org/abs/2606.03871">arXiv:2606.03871</a> (<a href="https://arxiv.org/pdf/2606.03871">PDF</a>)</li>
       <li><b>Code:</b> <a href="https://github.com/luisfpal/multimodal_finetuned_representations">github.com/luisfpal/multimodal_finetuned_representations</a>, with setup, a quick start and a figure-to-script map.</li>
-      <li><b>Checkpoints and datasets:</b> the model checkpoints used by the code (e.g. pre-trained LLaVA-1.5 references and layer-restricted fine-tuning runs) are hosted on the Hugging Face Hub under <a href="https://huggingface.co/lbasile">lbasile</a> and <a href="https://huggingface.co/l11p">l11p</a>.</li>
+      <li><b>Checkpoints and datasets (Hugging Face Hub):</b> pre-trained LLaVA-1.5 references (<a href="https://huggingface.co/l11p">l11p</a>/llava-v1.5-*-pretrained-lbasile), LLaVA-1.5 fine-tuning runs and layer-window variants (<a href="https://huggingface.co/lbasile">lbasile</a>), and captioned evaluation sets (<a href="https://huggingface.co/datasets/l11p/COCOQA-restval-ICQA">l11p/COCOQA-restval-ICQA</a>, l11p/*-captioned). See the <a href="https://github.com/luisfpal/multimodal_finetuned_representations#supported-models">README</a> for the full list.</li>
     </ul>
   </div>
 </section>
