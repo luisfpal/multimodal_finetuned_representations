@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Visual Instruction Tuning Aligns Modalities through Abstraction">
+  <title>Visual Instruction Tuning Aligns Modalities through Abstraction</title>
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/page.css">
+</head>
+<body>
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop has-text-centered">
+      <h1 class="title is-1 publication-title">Visual Instruction Tuning Aligns Modalities through Abstraction</h1>
+      <div class="is-size-5 publication-authors">
+        <span>Luis Palacios<sup>*</sup>,</span>
+        <span>Lorenzo Basile<sup>*</sup>,</span>
+        <span>Diego Doimo<sup>&dagger;</sup>,</span>
+        <span>Alberto Cazzaniga<sup>&dagger;</sup></span>
+      </div>
+      <div class="is-size-5 publication-authors">Area Science Park, Trieste, Italy</div>
+      <div class="is-size-6"><sup>*</sup>Equal contribution &nbsp; <sup>&dagger;</sup>Equal supervision</div>
+      <div class="publication-links" style="margin-top:1rem">
+        <span class="link-block"><a class="button is-dark is-rounded" href="https://arxiv.org/abs/2606.03871">arXiv</a></span>
+        <span class="link-block"><a class="button is-dark is-rounded" href="https://arxiv.org/pdf/2606.03871">Paper (PDF)</a></span>
+        <span class="link-block"><a class="button is-dark is-rounded" href="https://github.com/luisfpal/multimodal_finetuned_representations">Code</a></span>
+        <span class="link-block"><a class="button is-dark is-rounded" href="https://huggingface.co/lbasile">Hugging Face (lbasile)</a></span>
+        <span class="link-block"><a class="button is-dark is-rounded" href="https://huggingface.co/l11p">Hugging Face (l11p)</a></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" style="padding-top:0">
+  <div class="container is-max-desktop has-text-centered">
+    <img src="./static/images/fig1_cartoon.png" alt="Visual and textual abstractions align in the intermediate layers of VLMs" style="width:100%">
+    <p class="figure-caption"><b>Visual and textual abstractions align in the intermediate layers of VLMs.</b>
+      We compare a multimodal prompt, where the image is passed to the language model through the connector, with a text-only prompt, where natural-language captions replace the image, and track the hidden representation of the final input token across the LLM backbone. Visual instruction tuning aligns image- and text-derived representations primarily in intermediate layers, and fine-tuning this region alone recovers nearly full vision-language performance.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Abstract</h2>
+    <div class="content has-text-justified">
+      <p>Visual instruction tuning effectively adapts a pre-trained Large Language Model (LLM) to process image information alongside text. Yet, it remains unclear how visual features are embedded into the layer-wise hierarchy of abstractions of the LLM backbone. Across a diverse set of vision-language architectures, we show that instruction tuning primarily serves as a bridge, embedding visual features directly into the intermediate semantic layers of the LLM, bypassing the early layers devoted to unimodal processing. With probing analyses and causal interventions, we show that these intermediate layers are the semantic core of vision-language processing and play a critical role in the performance on a broad set of multimodal benchmarks. In addition, by comparing the geometry of semantically equivalent visual and textual representations, we find that fine-tuning extends and strengthens the existing abstraction phase, aligning visual features with pre-existing textual ones. Finally, we confirm the functional role of this localized alignment by restricting fine-tuning to intermediate layers alone: this strategy preserves the performance of full fine-tuning on vision-centric benchmarks while reducing training time. Our results suggest that multimodal integration is a localized phenomenon driven by the repurposing of the internal abstraction engine of the LLM.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container is-max-desktop has-text-centered">
+    <h2 class="title is-3">Intermediate layers drive vision&ndash;language performance</h2>
+    <img src="./static/images/fig2_ablations.png" alt="Layer ablation results" style="width:100%">
+    <p class="figure-caption">Average performance over six vision&ndash;language tasks (GQA, MMBench-cn, MMBench-en, MME, SeedBench, and VQAv2) for LLaVA-7B, OneVision-4B, and InternVL2-8B, normalized to the full model. Purple curves skip image-token layers and green curves knock out image-to-text attention.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container is-max-desktop has-text-centered">
+    <h2 class="title is-3">Localized fine-tuning helps most when the image matters</h2>
+    <img src="./static/images/fig5_localized_ft.png" alt="Localized fine-tuning vs image reliance" style="width:100%">
+    <p class="figure-caption">Each point is a benchmark. The x-axis measures image reliance: the normalized gap between image-conditioned and text-only performance, averaged over four reference VLMs.</p>
+  </div>
+</section>
+
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title">BibTeX</h2>
+    <pre><code>@article{palacios2026visual,
+  title   = {Visual Instruction Tuning Aligns Modalities through Abstraction},
+  author  = {Palacios, Luis and Basile, Lorenzo and Doimo, Diego and Cazzaniga, Alberto},
+  journal = {arXiv preprint arXiv:2606.03871},
+  year    = {2026}
+}</code></pre>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container content has-text-centered is-size-7">
+    <p>Page layout inspired by the <a href="https://github.com/nerfies/nerfies.github.io">Nerfies project page</a>. Styled with <a href="https://bulma.io">Bulma</a> (MIT License).</p>
+  </div>
+</footer>
+
+</body>
+</html>
