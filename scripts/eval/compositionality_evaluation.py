@@ -10,7 +10,7 @@ Benchmarks:
   - BiVLC: Bidirectional compositionality (I2T direction; T2I requires multi-image)
   - SugarCrepe: 7-category compositional benchmark (Add/Replace/Swap perturbations)
 
-Supports: LLaVA 1.5/v1.6, LLaVA-OneVision, InternVL2, InternVL3.5, Cambrian
+Supports: LLaVA 1.5/v1.6, LLaVA-OneVision, InternVL2, Cambrian
 
 Setup:
   ARO source: third_party/vision-language-models-are-bows/ (checked into repo)
@@ -87,7 +87,6 @@ from utils.patch_onevision import patch as patch_onevision
 from utils.patch_cambrian import patch as patch_cambrian
 
 MODEL_BACKEND_REGISTRY = [
-    ("internvl3", "internvl3.5"),
     ("internvl", "internvl2"),
     ("onevision", "llava_onevision1_5"),
     ("cambrian", "cambrian"),
@@ -120,7 +119,7 @@ def apply_no_image_patch(model, backend: str) -> None:
         patch_onevision(model, layers_to_skip=layers)
     elif backend == "llava_hf":
         patch_llava(model, layers_to_skip=layers)
-    elif backend in ("internvl2", "internvl3.5"):
+    elif backend == "internvl2":
         patch_internvl(model, layers_to_skip=layers)
     elif backend == "cambrian":
         patch_cambrian(model, layers_to_skip=layers)
@@ -264,8 +263,6 @@ def detect_model_type(model_name_or_path: str) -> str:
     name_lower = model_name_or_path.lower()
     if "cambrian" in name_lower:
         return "cambrian"
-    if "internvl3" in name_lower:
-        return "internvl3"
     if "internvl" in name_lower:
         return "internvl2"
     # LLaVA family (including OneVision, Qwen2-VL variants)

@@ -32,9 +32,6 @@ Unimodal reference encoders used as anchors for retrieval/overlap experiments:
 SigLIP2 (`google/siglip2-so400m-patch14-384`) for images, Qwen3-Embedding for
 text.
 
-InternVL3.5 has loader support in `utils/model_utils.py` for benchmark
-compatibility, but is not one of the models studied in the paper.
-
 <details>
 <summary><strong>Setup</strong></summary>
 
