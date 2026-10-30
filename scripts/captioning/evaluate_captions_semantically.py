@@ -52,24 +52,6 @@ MODELS_CONFIG = {
         "needs_chunking": True,
         "trust_remote_code": False
     },
-    "siglip": {
-        "id": "google/siglip-so400m-patch14-384",
-        "max_tokens": 64,
-        "needs_chunking": True,
-        "trust_remote_code": False
-    },
-    "siglip2": {
-        "id": "google/siglip2-so400m-patch14-384",
-        "max_tokens": 64,
-        "needs_chunking": True,
-        "trust_remote_code": False
-    },
-    "siglip2-giant": {
-        "id": "google/siglip2-giant-opt-patch16-384",
-        "max_tokens": 64,
-        "needs_chunking": True,
-        "trust_remote_code": False
-    },
     "jina": {
         "id": "jinaai/jina-clip-v2",
         "max_tokens": 8192,
@@ -167,7 +149,7 @@ def load_raw_dataset(
 # ---------------------------------------------------------------------------
 def get_output_path(dataset_name: str, model_key: str) -> Path:
     """Canonical save path: caption_evaluation / <dataset> / <model> / semantic_similarity.json"""
-    # model_key handles the file naming now, e.g. "siglip2" or "jina"
+    # model_key handles the file naming now, e.g. "clip" or "jina"
     return (
         PROJECT_ROOT
         / "results"
@@ -410,7 +392,7 @@ if __name__ == "__main__":
         type=str,
         default="clip",
         choices=MODELS_CONFIG.keys(),
-        help="Select model for evaluation (clip, siglip, siglip2, siglip2-giant, jina)"
+        help="Select model for evaluation (clip, jina)"
     )
     parser.add_argument(
         "--verbose",

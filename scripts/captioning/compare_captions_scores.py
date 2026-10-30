@@ -34,7 +34,7 @@ PROJECT_ROOT = HOME_DIR / "multimodal_finetuned_representations"
 RESULTS_BASE_DIR = PROJECT_ROOT / "results" / "caption_evaluation"
 
 # Models to evaluate (must match keys in evaluate_captions_semantically.py)
-MODELS = ["clip", "siglip", "siglip2", "siglip2-giant", "jina"]
+MODELS = ["clip", "jina"]
 
 _RESULTS_FILENAME = "semantic_similarity.json"
 
