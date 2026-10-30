@@ -1,8 +1,18 @@
-body{font-family:"Helvetica Neue",Arial,sans-serif}
-.publication-title{font-family:"Google Sans","Helvetica Neue",Arial,sans-serif}
+body{font-family:"Helvetica Neue",Arial,sans-serif;color:#363636}
+.publication-title{line-height:1.2}
 .publication-authors a{color:#3273dc}
 .link-block a{margin:.25rem}
-.figure-caption{font-size:.95rem;color:#4a4a4a;margin-top:.75rem;text-align:left}
-pre{white-space:pre-wrap;text-align:left}
-.footer{padding:2rem 1.5rem}
-@media screen and (max-width:768px){.publication-title.title.is-1{font-size:2rem}.section{padding:2rem 1rem}}
+.tldr{background:#f5f7fa;border-left:4px solid #3273dc;padding:1rem 1.25rem;border-radius:4px;text-align:left}
+.finding{margin-bottom:3.5rem}
+.finding h3{margin-bottom:.5rem!important}
+.finding .claim{font-size:1.1rem;margin-bottom:1rem}
+.figure-caption{font-size:.92rem;color:#4a4a4a;margin-top:.6rem;text-align:left}
+figure img{width:100%;height:auto;border-radius:4px}
+.two-col{display:flex;gap:1rem;flex-wrap:wrap}
+.two-col>div{flex:1 1 300px}
+.table-container{margin:0 auto}
+table.results td,table.results th{text-align:center;vertical-align:middle}
+pre{white-space:pre-wrap;text-align:left;position:relative}
+#copy-bibtex{position:absolute;top:.5rem;right:.5rem}
+.section{padding:2.5rem 1.5rem}
+@media screen and (max-width:768px){.publication-title.title.is-1{font-size:2rem}.section{padding:1.75rem 1rem}}
