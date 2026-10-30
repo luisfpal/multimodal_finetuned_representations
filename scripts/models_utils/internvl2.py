@@ -493,5 +493,5 @@ class InternVL2Custom(lmms):
 
     def generate_until_multi_round(self, requests) -> List[str]:
         raise NotImplementedError(
-            "TODO: Implement multi-round generation for InternVL2"
+            "generate_until_multi_round is not implemented for InternVL2"
         )

@@ -83,7 +83,7 @@ cp .env.example .env
 Edit `.env` for your machine:
 
 - `PYTHONPATH`: absolute path to this repository
-- `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE`: Hugging Face caches (`HF_TOKENS_CACHE` and `HF_HUB_DIR` in `.env.example` are not read by the code and can stay as they are)
+- `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE`: Hugging Face caches
 
 LLM-judged benchmarks (MMBench, MM-Vet, LLaVA-in-the-Wild in lmms-eval) need an
 OpenAI-compatible endpoint. Set `OPENAI_API_KEY`, `OPENAI_API_URL` and `MODEL_VERSION`
@@ -126,7 +126,7 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 There is no portable way to discover "the" system CUDA path, so this is a one-time change on your machine.
 
 **Case 2: no root access and no system toolkit.** `scripts/setup/install_local_cuda.sh`
-downloads the NVIDIA CUDA runfile, installs a toolkit under `~/.local/cuda-<version>` (no
+downloads the NVIDIA CUDA runfile, installs a toolkit under `~/.local/cuda-<major.minor>` (e.g. `cuda-12.2`) (no
 `sudo`), and adds it to `~/.bashrc` between managed markers.
 
 ```bash
@@ -288,8 +288,8 @@ shell/          SLURM and local launchers, mirroring scripts/
 src/            Residual-stream tracer and captioner
 utils/          Model loading, datasets, metrics, layer-skipping patches (vlm_layer_skipping/)
                 Two layer-skipping families, both used for the paper:
-                - utils/vlm_layer_skipping/: layer skipping and cross-modal attention knockout
-                  (layer-ablation figures, linguistic probing, representation extraction)
+                - utils/vlm_layer_skipping/: layer skipping and cross-modal attention knockout,
+                  incl. patch_llama_vision.py for Llama-3.2-Vision cross-attention (layer-ablation figures, linguistic probing, representation extraction)
                 - utils/patch_{llava,onevision,internvl,cambrian}.py: removes image tokens in all
                   layers for the text-only runs of scripts/eval/lmms_evaluation.py and
                   compositionality_evaluation.py (image-reliance baselines)
