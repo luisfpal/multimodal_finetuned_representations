@@ -177,7 +177,7 @@ Local (non-SLURM) scripts run directly, e.g. `bash shell/eval/run_local_evaluati
 | ----- | ---------- | -------- | ----------- |
 | Fig. 2, 6, 8-11 | Multimodal layer skipping / cross-modal attention knockout | `shell/eval/launch_layer_ablation_multimodal.sh` | `plotting/diego/ablations_mm_tueplots.py` |
 | Fig. 33 | Information-imbalance plane, Llama-3.2-90B-Vision-Instruct | `shell/representations_interpretability/llama_vision_similarity.sh` | `plotting/plot_llama_imbalance_paper.py` |
-| Fig. 34 | Visual reliance vs. localized fine-tuning gains (Llama-3.2-90B) | `shell/eval/launch_layer_ablation_multimodal.sh` (`Meta-Llama-3-90B-instruct`, `cross_modal`) | `plotting/diego/plot_localized_cross_modal_90b.py` |
+| Fig. 34 | Visual reliance vs. localized fine-tuning gains (Llama-3.2-90B) | `shell/eval/launch_layer_ablation_multimodal.sh` (`Meta-Llama-3-90B-instruct`, `cross_modal`) | `plotting/diego/plot_localized_cross_modal_90b.py` (writes to `./results/plots/`) |
 | Fig. 7, 12, 13 | Text-only layer skipping | `shell/eval/launch_layer_ablation_text.sh` | `plotting/diego/ablations_text_tueplots.py` |
 | Fig. 3 | Label overlap and logit lens | `shell/representations_interpretability/representations_classification.sh`, `shell/eval/launch_logitlens.sh` | `plotting/logitlens_overlap_two_panel_tueplots.py` |
 | Fig. 14, 15 | Label overlap across depth / datasets | `shell/representations_interpretability/representations_classification.sh` | `plotting/luis/label_overlap_tueplots.py` |
@@ -186,7 +186,7 @@ Local (non-SLURM) scripts run directly, e.g. `bash shell/eval/run_local_evaluati
 | Fig. 24-29 | Linear CKA and neighborhood overlap | `shell/representations_interpretability/multimodality_similarity.sh` | `plotting/luis/heatmap_similarities_tueplots.py` |
 | Fig. 19 | COCO image-caption retrieval | `shell/retrieval/launch_retrieval.sh` | `plotting/diego/plot_retrieval_metrics_tueplots.py` |
 | Fig. 20 | SentEval linguistic probing | `shell/probing/launch_probing.sh` | `plotting/diego/plot_probing_tasks_tueplots.py` |
-| Fig. 5, 30, 31 | Benchmark evaluation of localized fine-tuning | `shell/eval/launch_lmms.sh`, `shell/eval/run_local_evaluation.sh` | `plotting/all_benchmarks_plots_tueplots.py` |
+| Fig. 5, 30, 31 | Benchmark evaluation of localized fine-tuning (Fig. 5: gain vs. image reliance) | `shell/eval/launch_lmms.sh`, `shell/eval/run_local_evaluation.sh` | `plotting/all_benchmarks_plots_tueplots.py` |
 
 Other entry points used for the paper's representations and benchmarks:
 
@@ -212,7 +212,7 @@ All paths are set at the top of each launcher (and in `.env`); change them there
 | Experiment results | `$PROJECT_ROOT/results/` | `RESULTS_DIR` / `--results-dir` in the launcher |
 | Benchmark evaluations | `$PROJECT_ROOT/evals/<model>/...` | `OUTPUT_DIR` in the eval launcher |
 | SLURM logs | `$PROJECT_ROOT/logs/` | `LOG_DIR` / `#SBATCH --output` |
-| Paper figures | `plotting/tueplots/` (via `plotting/_tueplots_style.py`) | `OUTPUT_DIR` in `_tueplots_style.py` |
+| Paper figures | `plotting/tueplots/` (via `plotting/_tueplots_style.py`; created at runtime) | `OUTPUT_DIR` in `_tueplots_style.py` |
 | Model / dataset caches | `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE` | `.env` |
 | lmms-eval cache | `LMMS_EVAL_HOME=$HOME/scratch/lmms_eval_cache` | Eval launchers |
 
@@ -242,9 +242,7 @@ Pre-trained (before visual instruction tuning) and instruction-tuned checkpoints
 | Cambrian-1 (8B) | `nyu-visionx/cambrian-8b-pretrain` (assembled as `lbasile/cambrian-8b-pretrained`) | `nyu-visionx/cambrian-8b` |
 | Llama-3.2-Vision (90B) | – | `meta-llama/Llama-3.2-90B-Vision-Instruct` (referred to by the local ID `Meta-Llama-3-90B-instruct` in our launchers) |
 
-**Our Hugging Face repositories.** The accounts [`lbasile`](https://huggingface.co/lbasile) and [`l11p`](https://huggingface.co/l11p) host the model checkpoints and datasets we created for the paper's results: During this work we used the Hugging Face
-accounts [`lbasile`](https://huggingface.co/lbasile) and [`l11p`](https://huggingface.co/l11p)
-to store the checkpoints and datasets we built for the paper, for example the LLaVA-1.5
+**Our Hugging Face repositories.** The accounts [`lbasile`](https://huggingface.co/lbasile) and [`l11p`](https://huggingface.co/l11p) host the model checkpoints and datasets we created for the paper's results, for example the LLaVA-1.5
 localized fine-tuning variants (`lbasile/llava_7b_<start>_<end>`, e.g. `lbasile/llava_7b_6_16`,
 `lbasile/llava_7b_0_16`, `lbasile/llava_7b_16_32`), the pre-trained LLaVA references
 (`l11p/llava-v1.5-*-pretrained-lbasile`), and captioned evaluation sets

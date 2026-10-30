@@ -963,6 +963,7 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
     The residual stream can be pooled in different ways:
     - mean: average the residual stream over the sequence length
     - last: take the last token of the sequence
+    (see VALID_TOKENS_POOLING_METHODS for the full list of supported methods)
     - none: return the residual stream as is
 
     The residual stream is returned as a tensor of shape (num_layers, num_samples, hidden_size)
