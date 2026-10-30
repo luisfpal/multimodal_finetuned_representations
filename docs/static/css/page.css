@@ -5,3 +5,4 @@ body{font-family:"Helvetica Neue",Arial,sans-serif}
 .figure-caption{font-size:.95rem;color:#4a4a4a;margin-top:.75rem;text-align:left}
 pre{white-space:pre-wrap;text-align:left}
 .footer{padding:2rem 1.5rem}
+@media screen and (max-width:768px){.publication-title.title.is-1{font-size:2rem}.section{padding:2rem 1rem}}

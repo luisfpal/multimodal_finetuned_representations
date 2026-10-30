@@ -7,7 +7,8 @@ tokens (A, B, ...) at the last input position — no generation, no parsing.
 Benchmarks:
   - ARO (Attribution, Relation, Order): 50k+ test cases for compositional failures
     Subtasks: VG-Relation, VG-Attribution, COCO-Order, Flickr30k-Order
-  - BiVLC: Bidirectional compositionality (I2T direction; T2I requires multi-image)
+  - BiVLC: Bidirectional compositionality (I2T direction; T2I requires multi-image).
+    Note: the BiVLC call in main() is currently commented out, so --benchmark bivlc runs nothing.
   - SugarCrepe: 7-category compositional benchmark (Add/Replace/Swap perturbations)
 
 Supports: LLaVA 1.5/v1.6, LLaVA-OneVision, InternVL2, Cambrian
@@ -24,7 +25,7 @@ Usage:
     python scripts/eval/compositionality_evaluation.py \\
         --model-name-or-path lbasile/llava_7b \\
         --output-dir evals/llava_7b/compositionality \\
-        --benchmark bivlc \\
+        --benchmark aro \\
         --limit 100
 """
 

@@ -23,13 +23,13 @@ the performance of full fine-tuning on vision-centric benchmarks while reducing 
 ## Contents
 
 - [Quick start](#quick-start)
-
 - [Installation](#installation)
 - [Supported models](#supported-models)
 - [Data](#data)
 - [Where outputs are written](#where-outputs-are-written)
 - [Reproducing the paper](#reproducing-the-paper)
 - [Repository structure](#repository-structure)
+- [Project page](#project-page)
 - [Citation](#citation)
 - [License](#license)
 
@@ -54,7 +54,7 @@ python scripts/eval/lmms_evaluation.py \
     --limit 50
 ```
 
-Results are written under `evals/llava_7b/lmms_eval/pope/`. To run the paper's experiments,
+Results are written under `evals/llava_7b/lmms_eval/pope/`. A `ModuleNotFoundError` for `utils` or `scripts` means `PYTHONPATH` in `.env` does not point to this folder. To run the paper's experiments,
 see [Reproducing the paper](#reproducing-the-paper); each launcher has its configuration at the top.
 
 ## Installation
@@ -83,7 +83,7 @@ cp .env.example .env
 Edit `.env` for your machine:
 
 - `PYTHONPATH`: absolute path to this repository
-- `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE`, `HF_TOKENS_CACHE`: Hugging Face caches
+- `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE`: Hugging Face caches (`HF_TOKENS_CACHE` and `HF_HUB_DIR` in `.env.example` are not read by the code and can stay as they are)
 
 LLM-judged benchmarks (MMBench, MM-Vet, LLaVA-in-the-Wild in lmms-eval) need an
 OpenAI-compatible endpoint. Set `OPENAI_API_KEY`, `OPENAI_API_URL` and `MODEL_VERSION`
@@ -271,6 +271,10 @@ third_party/    Vendored Cambrian and ARO ("vision-language-models-are-bows") co
   year    = {2026}
 }
 ```
+
+## Project page
+
+The project page lives in `docs/` (static HTML, no build step). Once the repository is public, enable it under **Settings > Pages > Build and deployment > Deploy from a branch**, branch `main`, folder `/docs`. It will be served at <https://luisfpal.github.io/multimodal_finetuned_representations/>.
 
 ## License
 
