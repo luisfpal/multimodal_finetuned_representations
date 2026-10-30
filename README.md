@@ -126,8 +126,8 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 There is no portable way to discover "the" system CUDA path, so this is a one-time change on your machine.
 
 **Case 2: no root access and no system toolkit.** `scripts/setup/install_local_cuda.sh`
-downloads the NVIDIA CUDA runfile, installs a toolkit under `~/.local/cuda-<major.minor>` (e.g. `cuda-12.2`) (no
-`sudo`), and adds it to `~/.bashrc` between managed markers.
+downloads the NVIDIA CUDA runfile, installs a toolkit under
+`~/.local/cuda-<major.minor>` (for example `cuda-12.2`) without `sudo`, and adds it to `~/.bashrc` between managed markers.
 
 ```bash
 bash scripts/setup/install_local_cuda.sh
@@ -289,7 +289,8 @@ src/            Residual-stream tracer and captioner
 utils/          Model loading, datasets, metrics, layer-skipping patches (vlm_layer_skipping/)
                 Two layer-skipping families, both used for the paper:
                 - utils/vlm_layer_skipping/: layer skipping and cross-modal attention knockout,
-                  incl. patch_llama_vision.py for Llama-3.2-Vision cross-attention (layer-ablation figures, linguistic probing, representation extraction)
+                  used for the layer-ablation figures, linguistic probing and representation
+                  extraction; patch_llama_vision.py covers Llama-3.2-Vision cross-attention
                 - utils/patch_{llava,onevision,internvl,cambrian}.py: removes image tokens in all
                   layers for the text-only runs of scripts/eval/lmms_evaluation.py and
                   compositionality_evaluation.py (image-reliance baselines)
