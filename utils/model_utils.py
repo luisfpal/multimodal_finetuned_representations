@@ -534,9 +534,10 @@ def replace_multimodal_lm(
     Replace the Multimodal language model with the Vicuna model.
 
     Args:
-        model (ModelType): The original Multimodal model.
+        multimodal_model (ModelType): The original Multimodal model.
         replacement_lm_name_or_path (str): The name or path of the language model to replace with (e.g., Vicuna).
         cache_dir (str): Directory for caching the model.
+        dtype: Torch dtype used to load the replacement language model.
 
     Returns:
         ModelType: The updated Multimodal model.

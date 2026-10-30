@@ -16,6 +16,7 @@ dist/
 # Local caches, logs, and editor files
 logs/
 plots/
+plotting/tueplots/
 backup/
 *.bak
 *.swp

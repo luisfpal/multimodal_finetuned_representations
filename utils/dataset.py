@@ -175,7 +175,8 @@ def get_hf_dataset_split(
     Loads a specific split from a dataset, potentially from a local path or Hugging Face Hub.
 
     Args:
-        dataset_path: Path to the dataset directory or Hugging Face dataset identifier.
+        dataset_path_or_name: Path to the dataset directory or Hugging Face dataset identifier.
+        cache_dir: Hugging Face datasets cache directory.
         split: The name of the dataset split to load (e.g., 'train', 'validation', 'test').
 
     Returns:
@@ -1283,7 +1284,6 @@ def get_dataloader(
         guide_text: Optional text to append to questions during prompt formatting.
         answer_letters_with_processed_batch: Whether to include answer letters in the processed batch,
             it just applies when a processor is provided.
-        chat_template_exists: Whether to use the chat template for formatting prompts.
         remove_yes_no: Whether to remove Yes/No questions from the dataset.
         filter_mmbench_4_choices: Whether to filter MMBench samples to only those with 4 choices.
     """
