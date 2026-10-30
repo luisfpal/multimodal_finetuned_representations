@@ -27,7 +27,7 @@ backup/
 Thumbs.db
 
 # Experiment data and generated outputs
-data/
+/data/
 results/
 evals/
 internal_docs/

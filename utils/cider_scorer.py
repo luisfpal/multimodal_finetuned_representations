@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Vendored from the COCO caption evaluation toolkit (https://github.com/tylin/coco-caption,
+# BSD 2-Clause License, Copyright (c) 2015, Xinlei Chen, Hao Fang, Tsung-Yi Lin, and Ramakrishna Vedantam).
 # Tsung-Yi Lin <tl483@cornell.edu>
 # Ramakrishna Vedantam <vrama91@vt.edu>
 

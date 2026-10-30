@@ -1,7 +1,7 @@
 """Class-level LLaVA layer-skipping patch used by scripts/eval/ablation_layers_evaluation.py.
 
-Restored verbatim from this repository's history (commit 24a5ef3, utils/patch_skipping.py);
-commit d147161 later evolved it into utils/patch_llava.py with a per-model patch(model, layers_to_skip).
+Earlier, class-level version of utils/patch_llava.py: patch(layers_to_skip) replaces
+LlamaModel.forward and LlavaModel.forward globally.
 """
 
 import torch

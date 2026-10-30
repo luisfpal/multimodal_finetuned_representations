@@ -178,16 +178,17 @@ Local (non-SLURM) scripts run directly, e.g. `bash shell/eval/run_local_evaluati
 | Paper | Experiment | Launcher | Plot script |
 | ----- | ---------- | -------- | ----------- |
 | Fig. 2, 6, 8-11 | Multimodal layer skipping / cross-modal attention knockout | `shell/eval/launch_layer_ablation_multimodal.sh` | `plotting/diego/ablations_mm_tueplots.py` |
-| Fig. 33 | Information-imbalance plane, Llama-3.2-90B-Vision-Instruct | `shell/representations_interpretability/llama_vision_similarity.sh` (via `launch_job.sh`) | `plotting/plot_llama_imbalance_paper.py` (writes `information_imbalance_<tag>.pdf`) |
+| Fig. 33 | Information-imbalance plane, Llama-3.2-90B-Vision-Instruct | `shell/representations_interpretability/llama_vision_similarity.sh` (via `launch_job.sh`) | `plotting/plot_llama_imbalance_paper.py` (writes `information_imbalance_<tag>.pdf`, renamed `llama_information_imbalance.pdf` in the paper) |
 | Fig. 34 | Visual reliance vs. localized fine-tuning gains (Llama-3.2-90B) | `shell/eval/launch_layer_ablation_multimodal.sh` (`Meta-Llama-3-90B-instruct`, `cross_modal`) | `plotting/diego/plot_localized_cross_modal_90b.py` (writes to `./results/plots/`) |
 | Fig. 7, 12, 13 | Text-only layer skipping | `shell/eval/launch_layer_ablation_text.sh` | `plotting/diego/ablations_text_tueplots.py` |
 | Fig. 3 | Label overlap and logit lens | `shell/representations_interpretability/representations_classification.sh`, `shell/eval/launch_logitlens.sh` | `plotting/logitlens_overlap_two_panel_tueplots.py` |
 | Fig. 14, 15 | Label overlap across depth / datasets | `shell/representations_interpretability/representations_classification.sh` | `plotting/luis/label_overlap_tueplots.py` |
-| Fig. 17, 18 | Logit lens on VQA | `shell/eval/launch_logitlens.sh` | `plotting/logitlens_plots_tueplots.py` |
+| Fig. 16-18 | Logit lens and linear probe on VQA | `shell/eval/launch_logitlens.sh` | `plotting/logitlens_plots_tueplots.py` |
 | Fig. 4, 21-23 | Information imbalance | `shell/embeddings_extraction/launch_information_imbalance.sh` | `plotting/luis/imbalance_paper_tueplots.py` |
 | Fig. 24-29 | Linear CKA and neighborhood overlap | `shell/representations_interpretability/multimodality_similarity.sh` (via `launch_job.sh`) | `plotting/luis/heatmap_similarities_tueplots.py` |
 | Fig. 19 | COCO image-caption retrieval | `shell/retrieval/launch_retrieval.sh` | `plotting/diego/plot_retrieval_metrics_tueplots.py` |
 | Fig. 20 | SentEval linguistic probing | `shell/probing/launch_probing.sh` | `plotting/diego/plot_probing_tasks_tueplots.py` |
+| Appendix table "Multimodal task performance" | Benchmark scores of all models | `shell/eval/launch_lmms.sh` | `plotting/table2.py` (prints the LaTeX table) |
 | Fig. 5, 30, 31 | Benchmark evaluation of localized fine-tuning (Fig. 5: gain vs. image reliance) | `shell/eval/launch_lmms.sh` (benchmark set by `TASK_NAME` in `shell/eval/lmms_evaluation.sh`), `shell/eval/run_local_evaluation.sh`; MMMU: `shell/eval/run_mmmu_evaluation.sh` | `plotting/all_benchmarks_plots_tueplots.py` |
 
 Notes on the table:
@@ -198,14 +199,14 @@ Notes on the table:
   (currently `llama_vision_representations_classification.sh`, 6 GPUs), so check it before submitting.
 - Fig. 1 is a schematic and has no script. The Llama-3.2-90B cross-modal ablation in Fig. 32 has no plot script in this release.
 - `plotting/all_benchmarks_plots_tueplots.py` uses `adjustText` for label placement if installed
-  (`uv pip install adjustText`); without it, labels are placed without adjustment.
+  (optional; add it with `uv add adjustText`); without it, labels are placed without adjustment.
 
 Other entry points used for the paper's representations and benchmarks:
 
 - Captioning pipeline that builds the captioned evaluation sets (`l11p/*-captioned`):
   `shell/captioning/launch_captioning.sh` → `scripts/captioning/caption_dataset.py` → `src/captioner.py`
   (OpenAI-compatible endpoint, see the environment file section); captioned benchmarks are evaluated with
-  `shell/captioning/launch_lmms_captioned.sh` / `run_local_captioned_evaluation.sh`
+  `shell/eval/launch_lmms_captioned.sh` / `shell/eval/run_local_captioned_evaluation.sh`
 
 - Multi-model representation extraction: `shell/embeddings_extraction/launch_extract_embeddings.sh`
 - Llama-3.2-Vision (`Meta-Llama-3-90B-instruct`) representation classification: `shell/representations_interpretability/llama_vision_representations_classification.sh`
@@ -292,6 +293,8 @@ utils/          Model loading, datasets, metrics, layer-skipping patches (vlm_la
                 - utils/patch_{llava,onevision,internvl,cambrian}.py: removes image tokens in all
                   layers for the text-only runs of scripts/eval/lmms_evaluation.py and
                   compositionality_evaluation.py (image-reliance baselines)
+                - utils/patch_skipping.py: earlier LLaVA-only patch used by
+                  scripts/eval/ablation_layers_evaluation.py (not used for the paper figures)
 tasks/          Custom lmms-eval task configs (captioned variants)
 plotting/       Paper figure scripts
 third_party/    Vendored Cambrian and ARO ("vision-language-models-are-bows") code
