@@ -89,3 +89,9 @@ third_party/cambrian/fsdp_config.json
 AGENTS.md
 CLAUDE.md
 GEMINI.md
+
+# Superseded legacy scripts (kept locally, not part of the paper release)
+plotting/diego/legacy/
+scripts/embeddings_extraction/embeddings_llava_legacy.py
+scripts/retrieval/repr_similarity_legacy.py
+utils/embeddings_extraction/legacy_cka_overlap_helpers.py
