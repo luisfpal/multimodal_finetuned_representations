@@ -209,7 +209,6 @@ Other entry points used for the paper's representations and benchmarks:
 
 - Multi-model representation extraction: `shell/embeddings_extraction/launch_extract_embeddings.sh`
 - Llama-3.2-Vision similarity and representation classification: `shell/representations_interpretability/llama_vision_similarity.sh`, `llama_vision_representations_classification.sh`
-- Representation overlap: `shell/retrieval/overlap.sh`
 - COCO-QA evaluation (image / human-caption / synthetic-caption inputs): `shell/eval/run_local_cocoqa_evaluation.sh`
 - Compositionality (ARO, SugarCrepe): `shell/eval/launch_compositionality.sh`
 
