@@ -1,3 +1,5 @@
+"""Port LLaVA checkpoint weights to the standard Hugging Face format and push them to the Hub."""
+
 import argparse
 import gc
 import io

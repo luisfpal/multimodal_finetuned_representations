@@ -1,3 +1,9 @@
+"""Build the VQAv2-COCO-restval-ICQ dataset by joining VQAv2 validation with COCO Karpathy restval on image id.
+
+Inputs: lmms-lab/VQAv2 (validation), yerevann/coco-karpathy (restval); --push-to-hub, --hub-username.
+Outputs: the merged dataset, optionally pushed to the Hugging Face Hub.
+"""
+
 import os
 import argparse
 from collections import defaultdict

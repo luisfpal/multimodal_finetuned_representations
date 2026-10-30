@@ -1,3 +1,9 @@
+"""SentEval-style linguistic probing: extract per-layer activations and fit linear probes.
+
+Inputs: --model_name_or_path and other CLI args; SentEval task data.
+Outputs: one JSON file of per-layer accuracies per pooling strategy.
+"""
+
 import argparse
 import gc
 import json

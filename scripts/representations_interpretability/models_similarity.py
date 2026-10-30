@@ -1,3 +1,8 @@
+"""Compute cross-layer residual-stream similarity measures between model representations.
+
+Reads environment variables from .env (load_dotenv). Results are saved as safetensors under the results directory.
+"""
+
 import argparse
 import gc
 import os

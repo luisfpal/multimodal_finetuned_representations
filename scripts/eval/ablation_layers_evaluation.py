@@ -1,3 +1,10 @@
+"""Run an lmms-eval benchmark with a number of decoder layers skipped (layer-ablation evaluation).
+
+Inputs: --task, --layers-to-skip, --output-dir (default results/ablations) and other CLI args;
+OPENAI_API_KEY / OPENAI_API_URL / MODEL_VERSION for LLM-judged tasks.
+Outputs: <output-dir>/<layers_to_skip>-ablated_layers.json and model responses.
+"""
+
 import argparse
 import json
 import os

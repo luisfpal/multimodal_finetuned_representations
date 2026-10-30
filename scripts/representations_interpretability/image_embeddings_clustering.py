@@ -1,3 +1,5 @@
+"""Cluster CLIP image embeddings with dadapy (ADP) and report per-cluster populations."""
+
 import argparse
 import csv
 import math

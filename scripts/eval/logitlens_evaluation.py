@@ -1,3 +1,9 @@
+"""Logit-lens evaluation: per-layer answer accuracy obtained by decoding the residual stream on VLM benchmarks.
+
+Inputs: --results-dir, --model-name-or-path, --batch-size, --seed.
+Outputs: safetensors files with per-layer accuracies under --results-dir.
+"""
+
 import argparse
 import gc
 import os

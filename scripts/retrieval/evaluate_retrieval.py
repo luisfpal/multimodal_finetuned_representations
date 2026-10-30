@@ -1,3 +1,12 @@
+"""Cross-modal retrieval metrics between paired representations stored in two folders.
+
+Row i of folder 1 is the positive for row i of folder 2. For each shared (layer, part_type in
+{res2, norm1}) metrics are computed in both directions with Euclidean and cosine ranking:
+NDCG@k, mean rank, mean percentile rank and MRR.
+
+Outputs: JSON files at --out_path (and --out_path_pseudolabels).
+"""
+
 import argparse
 import json
 import os
