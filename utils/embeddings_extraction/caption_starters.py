@@ -1,3 +1,5 @@
+"""Provides a list of caption starter phrases used to prompt a vision-language model."""
+
 starters = ["A picture of a",
 "The scene shows",
 "Portrayed in the figure, there is",

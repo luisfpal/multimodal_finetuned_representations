@@ -1,3 +1,5 @@
+"""Patches InternVL model classes with layer-skipping forward and generate methods."""
+
 from functools import partialmethod
 from typing import List, Optional, Tuple, Union
 

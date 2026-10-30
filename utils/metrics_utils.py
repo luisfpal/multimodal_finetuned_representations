@@ -1,3 +1,5 @@
+"""Utility module providing similarity, intrinsic-dimension, entropy, neighborhood-overlap, information-imbalance, and per-layer classification metrics for residual-stream and head representations."""
+
 import math
 import time
 import warnings

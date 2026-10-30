@@ -1,3 +1,5 @@
+"""Module of plotting helpers for similarity matrices, centered on plot_similarity_measure_matrix, which draws a heatmap on a provided matplotlib axis."""
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd

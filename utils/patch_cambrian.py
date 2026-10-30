@@ -1,3 +1,5 @@
+"""Patch Cambrian/Llama model classes with custom forward, generate, and multimodal input-preparation methods."""
+
 from typing import Optional, Union, List, Tuple
 from transformers.generation.utils import GenerateOutput
 from transformers import LlamaForCausalLM

@@ -1,3 +1,5 @@
+"""Monkey-patches InternVL model classes with custom forward and generate methods."""
+
 import torch
 from typing import List, Optional, Tuple, Union
 from transformers import GenerationConfig

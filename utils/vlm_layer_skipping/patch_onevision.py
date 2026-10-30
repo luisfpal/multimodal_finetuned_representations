@@ -1,3 +1,5 @@
+"""Monkey-patches LLaVA-OneVision 1.5 model forward passes to apply layer skipping."""
+
 from dataclasses import dataclass
 from functools import partialmethod
 from typing import List, Optional, Tuple, Union

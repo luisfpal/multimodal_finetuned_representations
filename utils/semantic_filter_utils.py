@@ -1,3 +1,5 @@
+"""Module for scoring image-caption semantic similarity with a CLIP-like model and computing keep indices for filtering."""
+
 from __future__ import annotations
 
 import json

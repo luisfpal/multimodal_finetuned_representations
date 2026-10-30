@@ -1,3 +1,5 @@
+"""Package init that re-exports utilities for benchmarking, captioning, datasets, LLM judge setup, metrics, and model loading."""
+
 from .benchmarking_utils import (
     benchmark_model_vqa_processed_dataloader,
     parse_predicted_answer,

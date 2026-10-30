@@ -1,3 +1,5 @@
+"""lm-evaluation-harness HFLM subclass for evaluating LLaVA-OneVision-1.5 models."""
+
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor
 

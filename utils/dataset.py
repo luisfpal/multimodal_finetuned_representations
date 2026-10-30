@@ -1,3 +1,5 @@
+"""Dataset and dataloader utilities for VQA, captioning, multiple-choice, and classification benchmarks."""
+
 import ast
 import base64
 import csv

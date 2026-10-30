@@ -1,3 +1,5 @@
+"""Utilities for locating image, user-text, and end-of-user-role token spans in tokenized VLM inputs, with per-model anchor sequences for LLaVA 1.5, LLaVA OneVision, Cambrian-8B, and InternVL2-8B."""
+
 from __future__ import annotations
 
 from typing import Any, Optional

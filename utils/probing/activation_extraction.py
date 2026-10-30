@@ -1,3 +1,5 @@
+"""Provides the extract_activations class, which registers forward hooks on target layers of a model and collects hidden-state activations over a dataloader, with optional last-token selection and per-token-class pooling."""
+
 import time
 from collections import defaultdict
 

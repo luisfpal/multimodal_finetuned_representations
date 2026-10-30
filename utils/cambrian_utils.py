@@ -1,3 +1,5 @@
+"""Helpers for detecting Cambrian models, resolving conversation modes and devices, and building tokenized and image-preprocessed batch inputs for generation."""
+
 from __future__ import annotations
 
 from typing import Any, Optional

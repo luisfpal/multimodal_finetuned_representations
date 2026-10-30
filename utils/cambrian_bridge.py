@@ -1,3 +1,5 @@
+"""Bridge utilities for loading Cambrian vision-language checkpoints with selected vision encoders."""
+
 from __future__ import annotations
 
 import importlib.util

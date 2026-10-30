@@ -1,3 +1,5 @@
+"""Sample image and text token positions from an input_ids tensor for a batch."""
+
 import torch
 
 def sample_image_and_text_positions(

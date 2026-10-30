@@ -1,3 +1,5 @@
+"""ImageFolder-style dataset loader that builds image path and class-index lists from class directories."""
+
 import os
 import os.path
 

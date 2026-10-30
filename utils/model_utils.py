@@ -1,3 +1,5 @@
+"""Model loading and multimodal projector utilities for VLM experiments."""
+
 import gc
 import json
 import os

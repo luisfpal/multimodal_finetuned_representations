@@ -1,3 +1,5 @@
+"""Provides patched forward functions and a model output dataclass for a LLaVA-OneVision 1.5 model, including a patch function that skips selected layers."""
+
 from typing import List, Optional, Tuple, Union
 from dataclasses import dataclass
 from transformers.modeling_outputs import BaseModelOutputWithPast, ModelOutput

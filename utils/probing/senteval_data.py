@@ -1,3 +1,5 @@
+"""Provides utilities for loading SentEval probing task data and a collator for causal language modeling batches."""
+
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 

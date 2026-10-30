@@ -1,3 +1,5 @@
+"""lm-evaluation-harness HFLM wrapper for InternVLChatModel that routes evaluation through the language-model backbone, bypassing the vision encoder."""
+
 import torch
 from transformers import AutoModel, AutoTokenizer
 

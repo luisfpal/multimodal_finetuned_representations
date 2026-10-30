@@ -1,3 +1,5 @@
+"""Utilities for generating image captions and computing caption quality metrics (CIDEr, CLIP, pycoco)."""
+
 import torch
 import json
 from .cider import Cider

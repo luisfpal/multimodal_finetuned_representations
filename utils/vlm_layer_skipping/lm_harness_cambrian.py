@@ -1,3 +1,5 @@
+"""lm-evaluation-harness HFLM subclass for running Cambrian vision-language models."""
+
 import torch
 
 # Monkeypatch: older custom model files import flash_attn_varlen_func directly from

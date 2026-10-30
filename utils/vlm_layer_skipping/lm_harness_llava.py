@@ -1,3 +1,5 @@
+"""lm-evaluation-harness HFLM wrapper for LlavaForConditionalGeneration."""
+
 import torch
 from transformers import AutoProcessor
 
