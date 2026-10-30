@@ -1,3 +1,5 @@
+"""Utilities for benchmarking VQA models, including digit-to-word text normalization, answer parsing against ground truth, and saving answers to JSON."""
+
 import torch
 import gc
 from typing import Dict, Optional, List

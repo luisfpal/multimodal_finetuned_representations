@@ -5,7 +5,7 @@ LMMS Evaluation with layer-skipping ablations.
 Evaluates multimodal models by masking image attention in selected layers,
 allowing ablation studies on the role of individual layers.
 
-Based on lm_harness.py but adapted for lmms_eval library.
+Multimodal counterpart of layer_ablation_text_evaluation.py, built on the lmms_eval library.
 """
 
 import argparse

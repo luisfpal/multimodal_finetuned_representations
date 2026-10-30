@@ -1,3 +1,8 @@
+"""Inspect the intrinsic dimension of a multi-layer embedding tensor stored in a safetensors file.
+
+Removes near-duplicate rows and estimates intrinsic dimension with dadapy; results are printed.
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 from dadapy import Data

@@ -1,3 +1,5 @@
+"""Monkey-patches LLaVA model forward passes to apply layer skipping during inference."""
+
 from functools import partialmethod
 from typing import Unpack
 

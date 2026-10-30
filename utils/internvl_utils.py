@@ -1,3 +1,5 @@
+"""Utilities for preparing InternVL2 image inputs and chat prompts and for generating responses."""
+
 from typing import Tuple, List, Union, Optional
 from PIL import Image
 import copy

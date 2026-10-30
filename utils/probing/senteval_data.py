@@ -1,3 +1,5 @@
+"""Provides utilities for loading SentEval probing task data and a collator for causal language modeling batches."""
+
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
@@ -26,8 +28,8 @@ def load_senteval_data(
     Load data from the SentEval repository.
 
     Args:
-        num_train: Maximum number of training samples (None = all)
-        num_eval: Maximum number of evaluation samples (None = all)
+        task_name: SentEval probing task name.
+        data_dir: Directory containing the SentEval probing data.
 
     Returns:
         Tuple of (train_texts, train_labels, test_texts, test_labels)

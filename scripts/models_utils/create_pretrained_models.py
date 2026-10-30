@@ -1,3 +1,9 @@
+"""Build the "pretrained" LLaVA-1.5 reference checkpoint (before visual instruction tuning) and push it to the Hub.
+
+Starts from llava-hf/llava-1.5-{N}b-hf, swaps in the pretrain-stage projector and the base
+lmsys/vicuna-{N}b-v1.5 language model, then uploads model and processor to the target repo.
+"""
+
 import gc
 import io
 import os

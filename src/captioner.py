@@ -1,3 +1,8 @@
+"""VlmCaptioner: caption images with a VLM served behind an OpenAI-compatible endpoint.
+
+Credentials come from .env (ORFEO_* variables, exchanged for a JWT); see .env.example.
+"""
+
 import os
 import base64
 import re

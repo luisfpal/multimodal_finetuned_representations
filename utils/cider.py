@@ -1,3 +1,5 @@
+# Vendored from the COCO caption evaluation toolkit (https://github.com/tylin/coco-caption,
+# BSD 2-Clause License, Copyright (c) 2015, Xinlei Chen, Hao Fang, Tsung-Yi Lin, and Ramakrishna Vedantam).
 # Filename: cider.py
 #
 # Description: Describes the class to compute the CIDEr (Consensus-Based Image Description Evaluation) Metric

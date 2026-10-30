@@ -1,3 +1,5 @@
+"""Provides utilities to extract and save hidden-state activations from HuggingFace vision-language models via forward hooks on named target layers."""
+
 import os
 import time
 from collections import defaultdict

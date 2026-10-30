@@ -16,6 +16,7 @@ dist/
 # Local caches, logs, and editor files
 logs/
 plots/
+plotting/tueplots/
 backup/
 *.bak
 *.swp
@@ -26,12 +27,11 @@ backup/
 Thumbs.db
 
 # Experiment data and generated outputs
-data/
+/data/
 results/
 evals/
 internal_docs/
 tinkering/
-tests/
 
 # Large binaries and archives
 *.pkl
@@ -51,26 +51,6 @@ tests/
 *.tsv
 *.csv
 !third_party/vision-language-models-are-bows/*.json
-
-# Local plotting and analysis scripts
-plotting/cambrian_encoder_ablation_plot.py
-plotting/cambrian_pretrained_vs_finetuned_imbalance.py
-plotting/llama_vision_similarity_plots.py
-plotting/per_model_linear_regression_r2_grid.py
-plotting/multimodality_similarity_plots.py
-plotting/per_model_similarity_grid.py
-plotting/plot_encoder_decoder_cka.py
-plotting/plot_imbalance_grid.py
-plotting/plot_imbalance_distribution.py
-plotting/plot_llava_instruct_captioning_imbalance_clip.py
-plotting/plot_pooling_tests.py
-plotting/plot_representations_classification.py
-plotting/plot_pile10k_intrinsic_dimension.py
-plotting/plot_quantile_distributions.py
-
-# Retired benchmarking entrypoints
-scripts/basic_benchmarking/
-shell/basic_benchmarking/
 
 # Third-party Cambrian files not needed at runtime
 third_party/cambrian/eval/

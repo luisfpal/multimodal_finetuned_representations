@@ -1,6 +1,7 @@
 #!/bin/bash
 # Submits one layer_ablation_multimodal_evaluation.sh SLURM job per benchmark task.
 # Usage: bash shell/eval/launch_layer_ablation_multimodal.sh
+# Paper (arXiv:2606.03871): layer-skipping / cross-modal attention knockout, Figs. 2, 6, 8-11.
 
 set -euo pipefail
 

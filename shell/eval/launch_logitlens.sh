@@ -4,6 +4,7 @@
 # Each model gets its own SLURM job running run_local_logitlens.sh.
 #
 # Usage: bash shell/eval/launch_logitlens.sh
+# Paper (arXiv:2606.03871): logit lens, Figs. 17-18.
 # =============================================================================
 
 PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"

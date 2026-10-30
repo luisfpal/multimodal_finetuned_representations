@@ -1,3 +1,5 @@
+"""Replace instance labels with CLIP-ADP cluster IDs and cap the dominant cluster."""
+
 import csv
 import random
 from pathlib import Path

@@ -1,6 +1,6 @@
 """Publication-quality information-imbalance scatter for Llama-3-90B Instruct.
 
-Single scatter panel, aesthetics faithful to imbalance_tueplots.py:
+Single scatter panel, aesthetics faithful to the information-imbalance plots:
 seaborn whitegrid, sns.scatterplot, Line2D/Patch legend, tight_layout.
 Saves to PDF.
 """
@@ -142,7 +142,7 @@ def expand_text_axis_for_mllama(matrix: np.ndarray) -> np.ndarray:
 
 
 # ==============================================================================
-# SECTION 3 — SCATTER FORMATTING  (faithful to imbalance_tueplots.py)
+# SECTION 3 — SCATTER FORMATTING  (faithful to the information-imbalance plots)
 # ==============================================================================
 
 def _get_marker_size(val: float, thresholds: dict, base_size: float, factor: float) -> float:
@@ -209,7 +209,7 @@ def _setup_axis(ax: plt.Axes, n_visual: int, n_text: int, thresholds: dict) -> N
 
 
 # ==============================================================================
-# SECTION 4 — LEGEND  (faithful to imbalance_tueplots.py)
+# SECTION 4 — LEGEND  (faithful to the information-imbalance plots)
 # ==============================================================================
 
 def _make_legend_handles(thresholds: dict) -> list:

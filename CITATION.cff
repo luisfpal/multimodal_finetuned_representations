@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the paper below."
+title: "Visual Instruction Tuning Aligns Modalities through Abstraction"
+type: software
+license: MIT
+repository-code: "https://github.com/luisfpal/multimodal_finetuned_representations"
+authors:
+  - family-names: Palacios
+    given-names: Luis
+    affiliation: "Area Science Park"
+  - family-names: Basile
+    given-names: Lorenzo
+    affiliation: "Area Science Park"
+  - family-names: Doimo
+    given-names: Diego
+    affiliation: "Area Science Park"
+  - family-names: Cazzaniga
+    given-names: Alberto
+    affiliation: "Area Science Park"
+preferred-citation:
+  type: article
+  title: "Visual Instruction Tuning Aligns Modalities through Abstraction"
+  authors:
+    - family-names: Palacios
+      given-names: Luis
+    - family-names: Basile
+      given-names: Lorenzo
+    - family-names: Doimo
+      given-names: Diego
+    - family-names: Cazzaniga
+      given-names: Alberto
+  journal: "arXiv preprint arXiv:2606.03871"
+  year: 2026
+  url: "https://arxiv.org/abs/2606.03871"
+  identifiers:
+    - type: other
+      value: "arXiv:2606.03871"

@@ -1,3 +1,5 @@
+"""Provides probing utilities for fitting classifiers on activations: sample weighting, deduplication of identical points, sklearn logistic regression with and without cross-validation, and a two-layer PyTorch MLP with a fit_mlp training function."""
+
 from itertools import product
 
 import numpy as np

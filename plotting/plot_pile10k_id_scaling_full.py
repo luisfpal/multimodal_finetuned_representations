@@ -63,7 +63,7 @@ OUTPUT_FILENAME = "txt_scaling_gride_full.safetensors"
 RANGE_MAX_DEFAULT = 550
 DPI = 200
 
-# ── Model pairs (same order as plot_pile10k_intrinsic_dimension.py) ───────────
+# ── Model pairs (fixed plotting order) ───────────
 MODEL_PAIRS: tuple[ModelPair, ...] = (
     ModelPair(
         finetuned_id="llava_7b",

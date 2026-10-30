@@ -5,6 +5,7 @@
 # last_text pools in one pass. Results land in:
 #   $REPRESENTATIONS_DIR/probing_tasks/{model_name}/{target_layer}/{text_avg|last_text}/
 # Usage: bash shell/probing/launch_probing.sh
+# Paper (arXiv:2606.03871): linguistic probing, Fig. 20.
 
 set -euo pipefail
 

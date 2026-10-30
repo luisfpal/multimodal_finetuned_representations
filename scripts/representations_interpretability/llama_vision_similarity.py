@@ -1,3 +1,8 @@
+"""Cross-layer residual-stream similarity analysis for Llama-3.2-Vision (Mllama) models.
+
+Outputs: cached representations and similarity results (safetensors) under the results directory.
+"""
+
 import argparse
 import gc
 import os

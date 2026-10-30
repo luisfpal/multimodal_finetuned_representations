@@ -1,3 +1,5 @@
+"""Plot Spearman correlation between image reliance and localized cross-modal advantage for Llama-3-90B across benchmark tasks."""
+
 import json
 from pathlib import Path
 from typing import Dict, Tuple

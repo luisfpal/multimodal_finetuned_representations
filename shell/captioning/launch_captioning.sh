@@ -7,7 +7,7 @@
 # a VLM. It handles environment setup, configuration, and job submission.
 #
 # Usage:
-#   ./launch_captioning.sh [options]
+#   bash shell/captioning/launch_captioning.sh [options]
 #
 # Options:
 #   --dataset <name>   : Dataset to process (default: gqa).
@@ -19,13 +19,13 @@
 #
 # Examples:
 #   # Standard run for GQA (default)
-#   ./launch_captioning.sh
+#   bash shell/captioning/launch_captioning.sh
 #
 #   # Run for VQAv2 COCO dataset
-#   ./launch_captioning.sh --dataset vqav2_coco
+#   bash shell/captioning/launch_captioning.sh --dataset vqav2_coco
 #
 #   # Retry failed captions for COCOQA with a specific seed
-#   ./launch_captioning.sh --dataset cocoqa --retry --seed 123
+#   bash shell/captioning/launch_captioning.sh --dataset cocoqa --retry --seed 123
 # =============================================================================
 
 # =============================================================================

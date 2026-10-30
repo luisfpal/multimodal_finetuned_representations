@@ -1,6 +1,7 @@
 #!/bin/bash
 # Submits one layer_ablation_text_evaluation.sh SLURM job per text-only benchmark task.
 # Usage: bash shell/eval/launch_layer_ablation_text.sh
+# Paper (arXiv:2606.03871): text-only layer skipping, Figs. 7, 12, 13.
 
 set -euo pipefail
 

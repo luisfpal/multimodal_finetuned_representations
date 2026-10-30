@@ -1,3 +1,12 @@
+"""Generate VLM captions for the images of several Hugging Face datasets and save them as JSON.
+
+Captions are produced with src.captioner.VlmCaptioner in a thread pool; existing
+captions are reused and failed items can be retried.
+
+Inputs: --num-workers, --seed, --output-dir, --cache-dir, --retry-failed.
+Outputs: caption JSON files and a failed-items log under --output-dir.
+"""
+
 import os
 import json
 import random

@@ -1,3 +1,9 @@
+"""Compute per-layer intrinsic dimension of cached residual-stream representations.
+
+Inputs: --results-dir, --dataset-path-or-name, --model-name-or-path, --id-* estimator options.
+Outputs: safetensors result files under the results directory.
+"""
+
 import argparse
 import gc
 import os

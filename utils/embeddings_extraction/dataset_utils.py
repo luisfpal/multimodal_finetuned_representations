@@ -1,9 +1,7 @@
 """Dataset / data-loading helpers used by embeddings_vlms.py.
 
 Centralizes the per-family Dataset classes, record builders, the legacy
-text-only chat template, and the batch collators. Moved out of
-embeddings_vlms.py so the entrypoint script focuses on argument parsing,
-model loading, and the activation-extraction loop.
+text-only chat template, and the batch collators.
 """
 
 import json

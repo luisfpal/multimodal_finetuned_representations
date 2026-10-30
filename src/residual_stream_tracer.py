@@ -1,3 +1,9 @@
+"""Hook-based residual-stream tracers for Hugging Face decoder-based multimodal models.
+
+Provides ResidualStreamTracer and subclasses for the output_layer, post_mlp, heads_projection and
+post_input_layernorm residual-stream types, with token pooling and safetensors storage.
+"""
+
 import abc
 import copy
 import gc
@@ -957,6 +963,7 @@ class ResidualStreamPostMLPTracer(HookBasedResidualStreamTracer):
     The residual stream can be pooled in different ways:
     - mean: average the residual stream over the sequence length
     - last: take the last token of the sequence
+    (see VALID_TOKENS_POOLING_METHODS for the full list of supported methods)
     - none: return the residual stream as is
 
     The residual stream is returned as a tensor of shape (num_layers, num_samples, hidden_size)

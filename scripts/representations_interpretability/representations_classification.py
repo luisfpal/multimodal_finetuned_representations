@@ -1,3 +1,9 @@
+"""Per-layer label-overlap / kNN classification of VLM hidden-state representations on MCQ benchmarks.
+
+Inputs: --dataset-name (default derek-thomas/ScienceQA), --model-name and other CLI args.
+Outputs: representation caches (safetensors) and run-metric JSONL records under the results directory.
+"""
+
 import argparse
 import gc
 import json

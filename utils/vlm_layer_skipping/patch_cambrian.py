@@ -1,3 +1,5 @@
+"""Monkey-patches Cambrian VLM classes with layer-skipping-aware generate, forward, and multimodal input preparation."""
+
 from typing import List, Optional, Tuple, Union
 
 from transformers import LlamaForCausalLM

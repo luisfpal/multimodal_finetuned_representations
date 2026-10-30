@@ -1,3 +1,5 @@
+"""Monkey-patches a LLaMA vision model's forward pass to skip selected decoder layers."""
+
 from functools import partialmethod
 from typing import Optional, Union
 

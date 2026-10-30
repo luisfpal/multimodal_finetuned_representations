@@ -1,6 +1,6 @@
 """Label-overlap profiles for the LLaMA Vision 3.2 experiment.
 
-Mirrors the structure of plot_representations_classification_paper.py but
+Mirrors the structure of the label-overlap paper plots but
 targets a single model (Meta-Llama-3-90B-instruct) so we can inspect LLaMA
 Vision results independently without touching the reference figures.
 

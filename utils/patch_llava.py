@@ -1,3 +1,5 @@
+"""Monkey-patches LLaVA, Llama, and Mistral forward methods to skip selected transformer layers."""
+
 import torch
 from typing import Unpack, Optional
 from transformers.cache_utils import Cache, DynamicCache

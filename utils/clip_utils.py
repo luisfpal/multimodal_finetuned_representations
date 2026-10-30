@@ -1,3 +1,5 @@
+"""Provides CLIP image embedding extraction for samples in an image dataloader."""
+
 from __future__ import annotations
 
 import torch

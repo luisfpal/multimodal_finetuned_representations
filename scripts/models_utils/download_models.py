@@ -1,3 +1,8 @@
+"""Download model checkpoints from the Hugging Face Hub into a local cache with snapshot_download.
+
+Inputs: --model-id, --collection, --all-collections, --cache-dir.
+"""
+
 import argparse
 import os
 import sys

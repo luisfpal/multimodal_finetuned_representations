@@ -1,3 +1,10 @@
+"""Compare text-only and multimodal residual-stream representations layer by layer (CKA, neighborhood overlap, information imbalance), optionally against CLIP embeddings.
+
+Inputs: --dataset-path-or-name, --model-name-or-path, --batch-size, --seed, --downsample-size,
+--save-representations, pooling and semantic-filter options.
+Outputs: similarity results under --results-dir; optionally cached representations.
+"""
+
 import argparse
 import gc
 import os

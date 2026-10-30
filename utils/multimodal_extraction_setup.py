@@ -1,3 +1,5 @@
+"""Provides a function to load a HuggingFace multimodal model with optional replacement of its language model and projector."""
+
 import torch
 from typing import Optional, Tuple, Union
 from .model_utils import (

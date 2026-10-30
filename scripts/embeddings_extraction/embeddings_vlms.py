@@ -1,3 +1,9 @@
+"""Extract per-layer hidden-state activations from vision-language models with forward hooks.
+
+Inputs: CLI args such as --model_name_or_path, --batch_size, --out_dir, --filename and dataset options.
+Outputs: torch.save files with per-layer activations under --out_dir.
+"""
+
 import argparse
 import os
 from typing import List
@@ -262,14 +268,14 @@ def parse_args():
         type=int,
         nargs="+",
         default=[10],
-        help="k values for k-NN overlap vs Qwen embeddings (e.g. --k 5 10 20).",
+        help="Unused; kept for CLI compatibility.",
     )
     parser.add_argument(
         "--embedder",
         type=str,
         default="qwen0.6b",
         choices=["qwen0.6b", "qwen8b"],
-        help="Which Qwen embedder was used to produce the reference embeddings.",
+        help="Unused; kept for CLI compatibility.",
     )
     parser.add_argument(
         "--gaussian_cka_sigma",
@@ -517,7 +523,13 @@ def main():
     else:
         class_indices = None
         if args.class_subset is not None:
-            import animal_lists
+            try:
+                import animal_lists
+            except ImportError:
+                raise SystemExit(
+                    "--class_subset needs an 'animal_lists' module of named ImageNet class "
+                    "lists, which is not included in this release."
+                )
 
             if not hasattr(animal_lists, args.class_subset):
                 available = sorted(

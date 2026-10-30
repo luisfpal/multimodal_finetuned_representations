@@ -1,3 +1,5 @@
+"""Layer detection utilities for locating LM decoder layers and embedding dimensions in VLM models."""
+
 from collections import defaultdict
 
 import torch
