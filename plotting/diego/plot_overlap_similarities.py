@@ -1,3 +1,5 @@
+"""Plot overlap similarity heatmaps for embedding similarity results across models and layers."""
+
 import json
 import os
 

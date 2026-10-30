@@ -1,3 +1,5 @@
+"""Plot logit lens accuracy profiles across layers for multiple VLMs and datasets."""
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt

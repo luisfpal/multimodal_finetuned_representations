@@ -1,3 +1,5 @@
+"""Generate normalized aggregated plots per model from precomputed JSON data."""
+
 import json
 import os
 

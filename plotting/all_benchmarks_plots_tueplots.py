@@ -1,3 +1,5 @@
+"""Plot benchmark scores across models as correlation, radar, and layer-depth figures plus a LaTeX table."""
+
 import json
 import os
 from math import pi

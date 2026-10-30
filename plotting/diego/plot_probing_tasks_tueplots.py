@@ -1,3 +1,5 @@
+"""Plots per-layer probing accuracy curves for several VLMs across five probing tasks in a grid of panels."""
+
 from pathlib import Path
 import json
 import re

@@ -1,3 +1,5 @@
+"""Matplotlib rcParams for paper figures, built from the tueplots neurips2024 bundle."""
+
 from pathlib import Path
 
 USE_TUEPLOTS = True

@@ -1,3 +1,5 @@
+"""Builds a LaTeX results table of benchmark scores across vision-language models."""
+
 import os
 import json
 import numpy as np

@@ -1,3 +1,4 @@
+"""Plot overlap metrics across layers for two representations of a model."""
 
 import json
 

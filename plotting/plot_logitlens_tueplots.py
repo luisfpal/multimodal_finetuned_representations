@@ -1,3 +1,5 @@
+"""Plot aggregated logit-lens accuracy profiles across datasets for several VLMs."""
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt

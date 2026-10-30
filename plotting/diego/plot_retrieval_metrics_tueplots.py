@@ -1,3 +1,5 @@
+"""Plot retrieval metric bar grids for multiple VLMs using tueplots styling."""
+
 from pathlib import Path
 import json
 
