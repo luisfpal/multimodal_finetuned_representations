@@ -22,6 +22,8 @@ the performance of full fine-tuning on vision-centric benchmarks while reducing 
 
 ## Contents
 
+- [Quick start](#quick-start)
+
 - [Installation](#installation)
 - [Supported models](#supported-models)
 - [Data](#data)
@@ -30,6 +32,30 @@ the performance of full fine-tuning on vision-centric benchmarks while reducing 
 - [Repository structure](#repository-structure)
 - [Citation](#citation)
 - [License](#license)
+
+## Quick start
+
+Requires an NVIDIA GPU with CUDA 12 (see [Installation](#installation) if `uv sync` fails).
+
+```bash
+git clone https://github.com/luisfpal/multimodal_finetuned_representations.git
+cd multimodal_finetuned_representations
+uv sync && source .venv/bin/activate
+cp .env.example .env          # set PYTHONPATH to this folder and your Hugging Face cache paths
+set -a && source .env && set +a
+
+# Smoke test: evaluate LLaVA-1.5-7B on 50 POPE samples with lmms-eval
+python scripts/eval/lmms_evaluation.py \
+    --model-name-or-path lbasile/llava_7b \
+    --model-cache-dir "$HF_HUB_CACHE" \
+    --output-dir evals/llava_7b/lmms_eval/pope \
+    --task-name pope \
+    --batch-size 1 \
+    --limit 50
+```
+
+Results are written under `evals/llava_7b/lmms_eval/pope/`. To run the paper's experiments,
+see [Reproducing the paper](#reproducing-the-paper); each launcher has its configuration at the top.
 
 ## Installation
 
@@ -179,7 +205,9 @@ All paths are set at the top of each launcher (and in `.env`); change them there
 | Model / dataset caches | `HF_HOME`, `HF_HUB_CACHE`, `HF_DATASETS_CACHE` | `.env` |
 | lmms-eval cache | `LMMS_EVAL_HOME=$HOME/scratch/lmms_eval_cache` | Eval launchers |
 
-Some `shell/eval/` scripts (`launch_logitlens.sh`, `run_local_logitlens.sh`,
+**Our cluster setup, to adapt.** The launchers are kept exactly as we ran them, so they contain
+paths, SLURM accounts and partitions from our cluster. Before running a launcher on your machine,
+edit its configuration block. In particular, some `shell/eval/` scripts (`launch_logitlens.sh`, `run_local_logitlens.sh`,
 `run_local_evaluation.sh`, `run_local_compositionality_evaluation.sh`, `launch_lor.sh`) set
 `PROJECT_ROOT` to an absolute path on our cluster; set it to your clone before running them.
 SLURM launchers also set our `--account`, `--partition` and GPU type; replace them with yours.
