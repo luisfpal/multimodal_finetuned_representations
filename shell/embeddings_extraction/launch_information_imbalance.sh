@@ -1,6 +1,7 @@
 #!/bin/bash
 # Submits one information_imbalance.sh SLURM job per (model, dataset, ft_mode) combination.
 # Usage: bash shell/embeddings_extraction/launch_information_imbalance.sh
+# Paper (arXiv:2606.03871): information imbalance, Figs. 4, 21-23.
 
 set -euo pipefail
 

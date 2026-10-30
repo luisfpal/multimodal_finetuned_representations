@@ -1,6 +1,7 @@
 #!/bin/bash
 # Submits one retrieval.sh SLURM job per model.
 # Usage: bash shell/retrieval/launch_retrieval.sh
+# Paper (arXiv:2606.03871): COCO image-caption retrieval, Fig. 19.
 
 set -euo pipefail
 
