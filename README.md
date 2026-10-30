@@ -61,10 +61,11 @@ Edit `.env` for your machine:
 
 LLM-judged benchmarks (MMBench, MM-Vet, LLaVA-in-the-Wild in lmms-eval) need an
 OpenAI-compatible endpoint. Set `OPENAI_API_KEY`, `OPENAI_API_URL` and `MODEL_VERSION`
-directly; the `ORFEO_*` entries in `.env.example` are our cluster's optional way of obtaining
-them and can be left unset. All other experiments run without an LLM judge.
+directly (`ensure_llm_judge_env()` in `utils/llm_judge.py` does nothing once `OPENAI_API_KEY` is
+set); the `ORFEO_*` entries in `.env.example` are our cluster's optional way of obtaining
+them and can be left unset, or adapt `_acquire_orfeo_jwt()` to your own auth provider. All other experiments run without an LLM judge.
 
-Never commit a real `.env`.
+Never commit a real `.env`. Keep large model, dataset, representation and evaluation caches outside the repository.
 
 ### Install
 
@@ -170,7 +171,7 @@ All paths are set at the top of each launcher (and in `.env`); change them there
 | What | Default location | How to change |
 | ---- | ---------------- | ------------- |
 | Repository root used by launchers | `PROJECT_ROOT` / `PROJECT_DIR`, mostly `$HOME/multimodal_finetuned_representations` | Edit the variable at the top of the launcher |
-| Cached representations | `REPRESENTATIONS_DIR` (shell default `$HOME/scratch`; some Python scripts default to `~/scratch/representations`) | Export `REPRESENTATIONS_DIR` |
+| Cached representations | `REPRESENTATIONS_DIR`; the default differs per launcher (`$HOME/scratch` in most, `$HOME/scratch/representations` or `$HOME/scratch/pooling_tests` in others) and some Python scripts default to `~/scratch/representations` | Export `REPRESENTATIONS_DIR` once so all experiments share one cache root |
 | Experiment results | `$PROJECT_ROOT/results/` | `RESULTS_DIR` / `--results-dir` in the launcher |
 | Benchmark evaluations | `$PROJECT_ROOT/evals/<model>/...` | `OUTPUT_DIR` in the eval launcher |
 | SLURM logs | `$PROJECT_ROOT/logs/` | `LOG_DIR` / `#SBATCH --output` |
@@ -189,6 +190,7 @@ The pipeline is: (1) extract residual-stream representations of each model on th
 with the prompt formats we designed, (2) analyse them (similarity, probing, retrieval, causal
 ablations, benchmark evaluation), and (3) plot. Open a launcher and review its configuration
 block (models, datasets, SLURM resources, output directories) before submitting it with `bash <launcher>`.
+Local (non-SLURM) scripts run directly, e.g. `bash shell/eval/run_local_evaluation.sh "lbasile/llava_7b"`.
 
 | Paper | Experiment | Launcher | Plot script |
 | ----- | ---------- | -------- | ----------- |
@@ -196,12 +198,20 @@ block (models, datasets, SLURM resources, output directories) before submitting 
 | Fig. 7, 12, 13 | Text-only layer skipping | `shell/eval/launch_layer_ablation_text.sh` | `plotting/diego/ablations_text_tueplots.py` |
 | Fig. 3 | Label overlap and logit lens | `shell/representations_interpretability/representations_classification.sh`, `shell/eval/launch_logitlens.sh` | `plotting/logitlens_overlap_two_panel_tueplots.py` |
 | Fig. 14, 15 | Label overlap across depth / datasets | `shell/representations_interpretability/representations_classification.sh` | `plotting/luis/label_overlap_tueplots.py` |
-| Fig. 16-18 | Linear probing and logit lens on VQA | `shell/eval/launch_logitlens.sh` | `plotting/logitlens_plots_tueplots.py` |
+| Fig. 17, 18 | Logit lens on VQA | `shell/eval/launch_logitlens.sh` | `plotting/logitlens_plots_tueplots.py` |
 | Fig. 4, 21-23 | Information imbalance | `shell/embeddings_extraction/launch_information_imbalance.sh` | `plotting/luis/imbalance_paper_tueplots.py` |
 | Fig. 24-29 | Linear CKA and neighborhood overlap | `shell/representations_interpretability/multimodality_similarity.sh` | `plotting/luis/heatmap_similarities_tueplots.py` |
 | Fig. 19 | COCO image-caption retrieval | `shell/retrieval/launch_retrieval.sh` | `plotting/diego/plot_retrieval_metrics_tueplots.py` |
 | Fig. 20 | SentEval linguistic probing | `shell/probing/launch_probing.sh` | `plotting/diego/plot_probing_tasks_tueplots.py` |
 | Fig. 5, 30, 31 | Benchmark evaluation of localized fine-tuning | `shell/eval/launch_lmms.sh`, `shell/eval/run_local_evaluation.sh` | `plotting/all_benchmarks_plots_tueplots.py` |
+
+Other entry points used for the paper's representations and benchmarks:
+
+- Multi-model representation extraction: `shell/embeddings_extraction/launch_extract_embeddings.sh`
+- Llama-3.2-Vision similarity and representation classification: `shell/representations_interpretability/llama_vision_similarity.sh`, `llama_vision_representations_classification.sh`
+- Representation overlap: `shell/retrieval/overlap.sh`
+- COCO-QA evaluation (image / human-caption / synthetic-caption inputs): `shell/eval/run_local_cocoqa_evaluation.sh`
+- Compositionality (ARO, SugarCrepe): `shell/eval/launch_compositionality.sh`
 
 Pre-trained reference checkpoints were built once with
 `scripts/models_utils/create_pretrained_models.py` (LLaVA-1.5) and
