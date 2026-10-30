@@ -61,7 +61,7 @@ Edit `.env` for your machine:
 
 LLM-judged benchmarks (MMBench, MM-Vet, LLaVA-in-the-Wild in lmms-eval) need an
 OpenAI-compatible endpoint. Set `OPENAI_API_KEY`, `OPENAI_API_URL` and `MODEL_VERSION`
-directly (`ensure_llm_judge_env()` in `utils/llm_judge.py` does nothing once `OPENAI_API_KEY` is
+directly (`ensure_llm_judge_env()` in `utils/llm_judge.py` returns early once `OPENAI_API_KEY` is
 set); the `ORFEO_*` entries in `.env.example` are our cluster's optional way of obtaining
 them and can be left unset, or adapt `_acquire_orfeo_jwt()` to your own auth provider. All other experiments run without an LLM judge.
 
@@ -144,7 +144,7 @@ Pre-trained (before visual instruction tuning) and instruction-tuned checkpoints
 | LLaVA-OneVision-1.5 (4B, 8B) | `lmms-lab/LLaVA-OneVision-1.5-{4B,8B}-Base` | `lmms-lab/LLaVA-OneVision-1.5-{4B,8B}-Instruct` |
 | InternVL2 (8B) | `OpenGVLab/InternVL2-Pretrain-Models/InternVL2-8B-Pretrain` | `OpenGVLab/InternVL2-8B` |
 | Cambrian-1 (8B) | `nyu-visionx/cambrian-8b-pretrain` (assembled as `lbasile/cambrian-8b-pretrained`) | `nyu-visionx/cambrian-8b` |
-| Llama-3.2-Vision (90B) | – | `meta-llama/Llama-3.2-90B-Vision-Instruct` |
+| Llama-3.2-Vision (90B) | – | `meta-llama/Llama-3.2-90B-Vision-Instruct` (referred to by the local ID `Meta-Llama-3-90B-instruct` in our launchers) |
 
 **Checkpoints and datasets on the Hugging Face Hub.** During this work we used the Hugging Face
 accounts [`lbasile`](https://huggingface.co/lbasile) and [`l11p`](https://huggingface.co/l11p)
@@ -195,6 +195,8 @@ Local (non-SLURM) scripts run directly, e.g. `bash shell/eval/run_local_evaluati
 | Paper | Experiment | Launcher | Plot script |
 | ----- | ---------- | -------- | ----------- |
 | Fig. 2, 6, 8-11 | Multimodal layer skipping / cross-modal attention knockout | `shell/eval/launch_layer_ablation_multimodal.sh` | `plotting/diego/ablations_mm_tueplots.py` |
+| Fig. 33 | Information-imbalance plane, Llama-3.2-90B-Vision-Instruct | `shell/representations_interpretability/llama_vision_similarity.sh` | `plotting/plot_llama_imbalance_paper.py` |
+| Fig. 34 | Visual reliance vs. localized cross-modal knockout (Llama-3.2-90B) | `shell/eval/launch_layer_ablation_multimodal.sh` (`Meta-Llama-3-90B-instruct`, `cross_modal`) | `plotting/diego/plot_localized_cross_modal_90b.py` |
 | Fig. 7, 12, 13 | Text-only layer skipping | `shell/eval/launch_layer_ablation_text.sh` | `plotting/diego/ablations_text_tueplots.py` |
 | Fig. 3 | Label overlap and logit lens | `shell/representations_interpretability/representations_classification.sh`, `shell/eval/launch_logitlens.sh` | `plotting/logitlens_overlap_two_panel_tueplots.py` |
 | Fig. 14, 15 | Label overlap across depth / datasets | `shell/representations_interpretability/representations_classification.sh` | `plotting/luis/label_overlap_tueplots.py` |
@@ -208,7 +210,7 @@ Local (non-SLURM) scripts run directly, e.g. `bash shell/eval/run_local_evaluati
 Other entry points used for the paper's representations and benchmarks:
 
 - Multi-model representation extraction: `shell/embeddings_extraction/launch_extract_embeddings.sh`
-- Llama-3.2-Vision similarity and representation classification: `shell/representations_interpretability/llama_vision_similarity.sh`, `llama_vision_representations_classification.sh`
+- Llama-3.2-Vision (`Meta-Llama-3-90B-instruct`) representation classification: `shell/representations_interpretability/llama_vision_representations_classification.sh`
 - COCO-QA evaluation (image / human-caption / synthetic-caption inputs): `shell/eval/run_local_cocoqa_evaluation.sh`
 - Compositionality (ARO, SugarCrepe): `shell/eval/launch_compositionality.sh`
 
