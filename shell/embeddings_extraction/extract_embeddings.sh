@@ -40,7 +40,7 @@
 #
 # ImageNet (one starter caption per image, round-robin over caption_starters.py):
 #   --dataset imagenet --image_dir <imagenet-root>
-#   --class_subset animals_10        # named list in utils/embeddings_extraction/animal_lists.py, OR
+#   --class_subset animals_10        # named list in an animal_lists module (not included in this release), OR
 #   --num_classes N --seed K         # random N-class sample
 #   [--num_images_per_class M]       # cap per class (deterministic, sorted)
 #     -> {out_dir}/{model}/imagenet_<subset|captions>/

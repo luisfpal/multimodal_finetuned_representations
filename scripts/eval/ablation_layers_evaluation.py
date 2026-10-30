@@ -1,6 +1,5 @@
-"""NOTE: legacy script, superseded by layer_ablation_multimodal_evaluation.py and
-layer_ablation_text_evaluation.py (used for the paper). Its --layers-to-skip path
-imports a module that is not part of this release.
+"""NOTE: earlier LLaVA-only layer-ablation script; the paper's ablation figures use
+layer_ablation_multimodal_evaluation.py and layer_ablation_text_evaluation.py.
 
 Run an lmms-eval benchmark with a number of decoder layers skipped (layer-ablation evaluation).
 
@@ -164,7 +163,7 @@ def main():
                 print(f"Applied patch: skipping first {args.layers_to_skip} layers")
             except ImportError:
                 print(
-                    "Error: Could not import 'src.patch_skipping'. Ensure you are running from the project root or src is in PYTHONPATH."
+                    "Error: Could not import 'utils.patch_skipping'. Ensure you are running from the project root or src is in PYTHONPATH."
                 )
                 sys.exit(1)
 

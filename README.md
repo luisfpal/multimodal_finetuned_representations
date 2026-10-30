@@ -269,6 +269,12 @@ scripts/        Python entry points (eval/, representations_interpretability/, e
 shell/          SLURM and local launchers, mirroring scripts/
 src/            Residual-stream tracer and captioner
 utils/          Model loading, datasets, metrics, layer-skipping patches (vlm_layer_skipping/)
+                Two layer-skipping families, both used for the paper:
+                - utils/vlm_layer_skipping/: layer skipping and cross-modal attention knockout
+                  (layer-ablation figures, linguistic probing, representation extraction)
+                - utils/patch_{llava,onevision,internvl,cambrian}.py: removes image tokens in all
+                  layers for the text-only runs of scripts/eval/lmms_evaluation.py and
+                  compositionality_evaluation.py (image-reliance baselines)
 tasks/          Custom lmms-eval task configs (captioned variants)
 plotting/       Paper figure scripts
 third_party/    Vendored Cambrian and ARO ("vision-language-models-are-bows") code

@@ -523,7 +523,13 @@ def main():
     else:
         class_indices = None
         if args.class_subset is not None:
-            import animal_lists
+            try:
+                import animal_lists
+            except ImportError:
+                raise SystemExit(
+                    "--class_subset needs an 'animal_lists' module of named ImageNet class "
+                    "lists, which is not included in this release."
+                )
 
             if not hasattr(animal_lists, args.class_subset):
                 available = sorted(
