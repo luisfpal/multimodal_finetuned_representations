@@ -1,5 +1,3 @@
-"""Bridge utilities for loading Cambrian vision-language checkpoints with selected vision encoders."""
-
 from __future__ import annotations
 
 import importlib.util
@@ -346,7 +344,7 @@ def _ensure_cambrian_importable() -> None:
     if not (root / "cambrian").exists():
         raise CambrianBridgeError(
             f"Cambrian source not found at {root}. "
-            "The vendored copy in third_party/cambrian is missing; restore it from the repository."
+            "Clone it into third_party/cambrian."
         )
     root_str = str(root)
     if root_str not in sys.path:

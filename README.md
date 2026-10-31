@@ -197,6 +197,9 @@ Notes on the table:
   `SCRIPT_NAME=<file>` in `shell/representations_interpretability/launch_job.sh`, then run
   `bash shell/representations_interpretability/launch_job.sh`. The committed `SCRIPT_NAME` is live
   (currently `llama_vision_representations_classification.sh`, 6 GPUs), so check it before submitting.
+- Metrics as computed in the code: `plotting/table2.py` (Tables 5-6) reports POPE as `pope_f1_score` and MME as
+  (`mme_perception_score` + `mme_cognition_score`) / 2800; `plotting/all_benchmarks_plots_tueplots.py` (Figs. 5, 30, 31)
+  uses `pope_accuracy` and the same MME total; the layer-ablation plots and Fig. 34 use `mme_perception_score` only.
 - Fig. 1 is a schematic and has no script. The Llama-3.2-90B cross-modal ablation in Fig. 32 has no plot script in this release.
 - `plotting/all_benchmarks_plots_tueplots.py` uses `adjustText` for label placement if installed
   (optional; add it with `uv add adjustText`); without it, labels are placed without adjustment.

@@ -1,5 +1,3 @@
-"""Model loading and multimodal projector utilities for VLM experiments."""
-
 import gc
 import json
 import os
@@ -70,6 +68,11 @@ SUPPORTED_VL_MODELS = {
     "onevision": {
         "processor": AutoProcessor,
         "model": AutoModelForCausalLM,
+    },
+    # InternVL 3.5 - standard AutoModel loading
+    "internvl3": {
+        "processor": AutoTokenizer,
+        "model": AutoModel,
     },
     # InternVL2 uses dynamic class loading - handled specially in load function
     "internvl": {
@@ -194,6 +197,7 @@ def infer_lmms_eval_backend(model_name: str) -> str:
     """Infer the lmms-eval model backend from the model name.
 
     Mapping:
+        - Models containing 'InternVL3' → 'internvl3.5'
         - Models containing 'InternVL2' → 'internvl2'
         - Models containing 'llava' (case-insensitive) → 'llava_hf'
 
@@ -207,13 +211,15 @@ def infer_lmms_eval_backend(model_name: str) -> str:
         ValueError: If the model name doesn't match any known backend.
     """
     name_lower = model_name.lower()
+    if "internvl3" in name_lower:
+        return "internvl3.5"
     if "internvl2" in name_lower:
         return "internvl2"
     if "llava" in name_lower:
         return "llava_hf"
     raise ValueError(
         f"Cannot infer lmms-eval backend for '{model_name}'. "
-        f"Known patterns: "
+        f"Known patterns: 'InternVL3' → 'internvl3.5', "
         f"'InternVL2' → 'internvl2', 'llava' → 'llava_hf'. "
         f"Use --lmms-eval-model to specify explicitly."
     )
@@ -416,9 +422,11 @@ def load_hf_model_and_processor_or_tokenizer(
         )
 
     # Handle InternVL2 models specially - they require dynamic class loading
+    # Exclude InternVL 3.5 which can be loaded via AutoModel (standard path)
     if (
         "internvl" in model_name_or_path.lower()
         and not text_model
+        and "internvl3" not in model_name_or_path.lower()
     ):
         subfolder = None
         code_repo = None
@@ -476,7 +484,7 @@ def load_hf_model_and_processor_or_tokenizer(
         "cache_dir": cache_dir,
     }
 
-    if "onevision" in model_name_or_path.lower():
+    if "internvl3" in model_name_or_path.lower() or "onevision" in model_name_or_path.lower():
         processor_kwargs["trust_remote_code"] = True
 
     model_kwargs = {
@@ -534,10 +542,9 @@ def replace_multimodal_lm(
     Replace the Multimodal language model with the Vicuna model.
 
     Args:
-        multimodal_model (ModelType): The original Multimodal model.
+        model (ModelType): The original Multimodal model.
         replacement_lm_name_or_path (str): The name or path of the language model to replace with (e.g., Vicuna).
         cache_dir (str): Directory for caching the model.
-        dtype: Torch dtype used to load the replacement language model.
 
     Returns:
         ModelType: The updated Multimodal model.

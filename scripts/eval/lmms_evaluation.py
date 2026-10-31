@@ -1,10 +1,3 @@
-"""Run lmms-eval benchmarks for the supported VLM backends (backend inferred from the model name).
-
-Inputs: --model-name-or-path, --model-cache-dir, --output-dir, --task-name, --batch-size, --no-image
-and related flags; LMMS_EVAL / HF cache and OPENAI_* judge environment variables.
-Outputs: metrics and per-task response files under --output-dir.
-"""
-
 import argparse
 import gc
 import json
@@ -32,6 +25,11 @@ try:
     from scripts.models_utils.internvl2 import InternVL2Custom
 except ImportError:
     InternVL2Custom = None
+
+try:
+    from scripts.models_utils.internvl3_5 import InternVL3_5Custom
+except ImportError:
+    InternVL3_5Custom = None
 
 try:
     from scripts.models_utils.llava_onevision1_5 import LlavaOneVision1_5Custom
@@ -179,6 +177,7 @@ def install_single_image_filter() -> None:
 
 # Model name → backend mapping (order matters: more specific patterns first)
 MODEL_BACKEND_REGISTRY = [
+    ("internvl3", "internvl3.5"),
     ("internvl", "internvl2"),
     ("onevision", "llava_onevision1_5"),
     ("cambrian", "cambrian"),
@@ -207,7 +206,7 @@ def get_num_layers(model_instance, backend: str) -> int:
     """Get the number of transformer layers from a model instance."""
     if backend == "llava_hf":
         return model_instance.model.language_model.config.num_hidden_layers
-    elif backend == "internvl2":
+    elif backend in ("internvl2", "internvl3.5"):
         return model_instance._model.language_model.config.num_hidden_layers
     elif backend == "cambrian":
         return model_instance.model.config.num_hidden_layers
@@ -340,6 +339,19 @@ def run_evaluation(args: argparse.Namespace) -> float:
         else:
             print(f"[cyan]Instantiating InternVL2Custom for {model_name}...[/cyan]")
             model_instance = InternVL2Custom(
+                pretrained=model_name,
+                device=cuda_device,
+                device_map=device_map_value,
+                batch_size=str(batch_size),
+                cache_dir=args.model_cache_dir,
+            )
+
+    elif backend == "internvl3.5":
+        if InternVL3_5Custom is None:
+            print("[yellow]InternVL3_5Custom not importable, falling back to registry[/yellow]")
+        else:
+            print(f"[cyan]Instantiating InternVL3_5Custom for {model_name}...[/cyan]")
+            model_instance = InternVL3_5Custom(
                 pretrained=model_name,
                 device=cuda_device,
                 device_map=device_map_value,

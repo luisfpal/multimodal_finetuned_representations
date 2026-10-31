@@ -346,14 +346,6 @@ def _cambrian_icl_collate_fn(
     decoder layer. ICL would require N images at variable positions, which SVA
     cannot handle. Fallback: always zero-shot.
     """
-    if n_shots > 0:
-        import warnings
-
-        warnings.warn(
-            f"Cambrian does not support in-context examples: requested n_shots={n_shots}, "
-            "running zero-shot instead.",
-            stacklevel=2,
-        )
     item = batch[0]
     label = item["label"]
     prepared = prepare_cambrian_batch_inputs(
