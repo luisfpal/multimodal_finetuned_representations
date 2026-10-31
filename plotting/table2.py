@@ -5,6 +5,7 @@ import json
 import numpy as np
 from pathlib import Path
 
+# Hardcoded path: edit this path for your setup.
 EVALS_ROOT = Path('/u/dssc/lbasile/scratch/plm/evals')
 
 MODELS = [
