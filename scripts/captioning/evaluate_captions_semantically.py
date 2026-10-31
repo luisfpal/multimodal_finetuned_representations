@@ -1,3 +1,9 @@
+"""Score image-caption semantic similarity with a CLIP-style model (clip, siglip, siglip2, siglip2-giant or jina).
+
+Inputs: --model (key of MODELS_CONFIG); datasets listed in DATASETS (HF_DATASETS_CACHE).
+Outputs: one results file per (dataset, model), see get_output_path().
+"""
+
 import argparse
 import base64
 import json

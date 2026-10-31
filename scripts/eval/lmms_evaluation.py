@@ -1,3 +1,10 @@
+"""Run lmms-eval benchmarks for the supported VLM backends (backend inferred from the model name).
+
+Inputs: --model-name-or-path, --model-cache-dir, --output-dir, --task-name, --batch-size, --no-image
+and related flags; LMMS_EVAL / HF cache and OPENAI_* judge environment variables.
+Outputs: metrics and per-task response files under --output-dir.
+"""
+
 import argparse
 import gc
 import json

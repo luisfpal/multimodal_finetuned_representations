@@ -1541,6 +1541,7 @@ def main() -> None:
     overall_start = time.time()
 
     # Run benchmarks
+    # BiVLC is disabled: --benchmark bivlc currently runs nothing.
     # if args.benchmark in ("bivlc", "all"):
     #     try:
     #         run_bivlc_evaluation(model, processor_or_tokenizer, args, model_identifier)
