@@ -12,6 +12,7 @@ from scipy import stats
 from _tueplots_style import get_rc, out_path
 
 
+# Hardcoded path: edit this path for your setup.
 EVALS_ROOT = Path("/u/dssc/lbasile/scratch/plm/evals")
 
 BENCHMARKS_EXT = {

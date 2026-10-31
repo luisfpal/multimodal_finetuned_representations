@@ -42,6 +42,7 @@ REMOVE_ASSISTANT_TOKENS="false"
 # RESIDUAL_STREAM_TYPE="post_input_layernorm"
 
 # ── Environment (override via env vars or set by launch_job.sh) ──────────────
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-false}"
 DRY_RUN="${DRY_RUN:-false}"

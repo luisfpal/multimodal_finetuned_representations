@@ -18,10 +18,12 @@ from utils.model_utils import replace_multimodal_projector, replace_multimodal_l
 NUM_PARAMETERS = "13"
 BASE_MODEL_NAME = f"llava-hf/llava-1.5-{NUM_PARAMETERS}b-hf"
 LANGUAGE_MODEL_NAME = f"lmsys/vicuna-{NUM_PARAMETERS}b-v1.5"
+# Hardcoded path: edit this path for your setup.
 CACHE_DIR = os.path.expanduser("~/scratch/huggingface/hub/")
 PRETRAINED_PROJECTOR_NAME_ORIGINAL = (
     f"liuhaotian/llava-v1.5-mlp2x-336px-pretrain-vicuna-{NUM_PARAMETERS}b-v1.5"
 )
+# Hardcoded path: edit this path for your setup.
 PRETRAINED_PROJECTOR_LBASILE_PATH = os.path.expanduser(f"~/scratch/pretrained_projectors/mm_projector_lbasile-llava-v1.5-{NUM_PARAMETERS}B.bin")
 
 def replace_lm_and_projector(

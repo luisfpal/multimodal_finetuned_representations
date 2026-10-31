@@ -37,6 +37,7 @@ MAX_NEW_TOKENS = 1000
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "captions"
 DEFAULT_NUM_WORKERS = 16
+# Hardcoded path: edit this path for your setup.
 DEFAULT_CACHE_DIR = os.path.expanduser("~/scratch/cache/huggingface/datasets")
 
 CAPTIONING_PROMPT = (

@@ -81,11 +81,13 @@ ARO_SUBTASKS=(
 )
 
 # ARO data root (where ARO annotations and images are downloaded)
+# Hardcoded path: edit this path for your setup.
 ARO_DATA_ROOT="$HOME/scratch/datasets/vision-language-models-are-bows"
 
 # =============================================================================
 # CACHE DIRECTORIES
 # =============================================================================
+# Hardcoded path: edit this path for your setup.
 HF_HOME="$HOME/scratch/huggingface"
 MODEL_CACHE_DIR="$HF_HOME/hub"
 DATASETS_CACHE_DIR="$HF_HOME/datasets"

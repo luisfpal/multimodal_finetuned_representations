@@ -29,6 +29,7 @@ MODE="port"
 # --- B) CACHE DIRECTORY ---
 # All downloaded models will be stored here.
 # It's recommended to use a directory on your scratch space.
+# Hardcoded path: edit this path for your setup.
 CACHE_DIR="$HOME/scratch/huggingface/hub"
 
 

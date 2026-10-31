@@ -22,6 +22,7 @@ GUIDE_TEXT="${GUIDE_TEXT:-Answer the question using a single word or phrase.\n}"
 DOWNSAMPLE_SIZE="${DOWNSAMPLE_SIZE:-100}"
 
 # Representations storage configuration (loaded from environment if available)
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 SAVE_REPRESENTATIONS="${SAVE_REPRESENTATIONS:-true}"
 

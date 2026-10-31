@@ -56,6 +56,7 @@ class ModelPair:
     slug: str
 
 
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT = Path("/u/dssc/lpalaciosflores/multimodal_finetuned_representations")
 DATASET_TAG = "pile10k_train_txt"
 SAMPLE_SET_TAG = "all_samples"

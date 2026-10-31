@@ -188,7 +188,8 @@ Local (non-SLURM) scripts run directly, e.g. `bash shell/eval/run_local_evaluati
 | Fig. 24-29 | Linear CKA and neighborhood overlap | `shell/representations_interpretability/multimodality_similarity.sh` (via `launch_job.sh`) | `plotting/luis/heatmap_similarities_tueplots.py` |
 | Fig. 19 | COCO image-caption retrieval | `shell/retrieval/launch_retrieval.sh` | `plotting/diego/plot_retrieval_metrics_tueplots.py` |
 | Fig. 20 | SentEval linguistic probing | `shell/probing/launch_probing.sh` | `plotting/diego/plot_probing_tasks_tueplots.py` |
-| Appendix table "Multimodal task performance" | Benchmark scores of all models | `shell/eval/launch_lmms.sh` | `plotting/table2.py` (prints the LaTeX table) |
+| Tables 5, 6 | Benchmark scores of all models, with and without the image | `shell/eval/launch_lmms.sh` (text-only runs: `NO_IMAGE="true"`, written to `<output>_noimage`) | `plotting/table2.py` (prints both LaTeX tables) |
+| Table 8 | Localized cross-attention fine-tuning on Llama-3.2-90B (layers kept vs. complement) | `scripts/eval/layer_ablation_multimodal_evaluation.py --evaluate_complementary_intervals --start_layer 10 --end_layer 65` (writes `<task>_keep.json` / `<task>_remove.json`) | none (values read from the result files) |
 | Fig. 5, 30, 31 | Benchmark evaluation of localized fine-tuning (Fig. 5: gain vs. image reliance) | `shell/eval/launch_lmms.sh` (benchmark set by `TASK_NAME` in `shell/eval/lmms_evaluation.sh`), `shell/eval/run_local_evaluation.sh`; MMMU: `shell/eval/run_mmmu_evaluation.sh` | `plotting/all_benchmarks_plots_tueplots.py` |
 
 Notes on the table:
@@ -217,6 +218,10 @@ Pre-trained reference checkpoints were built once with
 `scripts/models_utils/create_pretrained_models.py` (LLaVA-1.5) and
 `scripts/build_cambrian_pretrained.py` / `scripts/download_cambrian_projector.py` (Cambrian);
 `scripts/compare_model_weights.py` diffs two checkpoints as a sanity check.
+
+**Hardcoded paths.** Some plotting scripts and launchers contain absolute data or result paths from our cluster
+(e.g. `DATA_ROOT`, `PROJECT_ROOT`, `RESULTS_DIR`). Each one is marked with the comment
+`# Hardcoded path: edit this path for your setup.`; search for it and point the variables to your copies before running.
 
 <details>
 <summary><b>Where outputs are written (paths and environment variables)</b></summary>

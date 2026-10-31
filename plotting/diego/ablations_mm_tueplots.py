@@ -21,6 +21,7 @@ from matplotlib.lines import Line2D
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _tueplots_style import OUTPUT_DIR, get_rc  # noqa: E402
 
+# Hardcoded path: edit this path for your setup.
 DATA_ROOT = Path("/u/dssc/lbasile/scratch/plm/diego/layer_skip_eval_mm")
 OUT_DIR = OUTPUT_DIR / "ablations_mm"
 

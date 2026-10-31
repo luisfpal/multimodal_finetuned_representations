@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - optional dependency fallback
     gaussian_kde = None
 
 
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT = Path("/u/dssc/lpalaciosflores/multimodal_finetuned_representations")
 SIMILARITIES_ROOT = PROJECT_ROOT / "results" / "multimodality_comparison"
 OUT_ROOT = PROJECT_ROOT / "plots" / "llama_vision_similarity" / "last" / "test"

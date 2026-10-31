@@ -145,6 +145,7 @@ fi
 
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
 RESULTS_DIR="$PROJECT_DIR/results"
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 PY_SCRIPT="$PROJECT_DIR/scripts/representations_interpretability/representations_classification.py"
 PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"

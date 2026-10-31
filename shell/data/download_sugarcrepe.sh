@@ -9,6 +9,7 @@
 # Usage: bash shell/data/download_sugarcrepe.sh
 # =============================================================================
 
+# Hardcoded path: edit this path for your setup.
 DEST="${SUGARCREPE_DATA_ROOT:-$HOME/scratch/datasets/sugar-crepe}"
 DATA_DIR="$DEST/data"
 IMG_DIR="$DEST/val2017"

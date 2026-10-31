@@ -56,6 +56,7 @@ fi
 # Directory configuration
 PROJECT_DIR="$HOME/multimodal_finetuned_representations"
 RESULTS_DIR="$PROJECT_DIR/results/multimodality_comparison"
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch/representations}"
 
 FILENAME="llama_vision_similarity.py"

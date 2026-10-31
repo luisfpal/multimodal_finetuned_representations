@@ -7,6 +7,7 @@
 # Paper (arXiv:2606.03871): logit lens, Figs. 17-18.
 # =============================================================================
 
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 
 # Models to evaluate (one SLURM job per model)
