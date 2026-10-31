@@ -49,6 +49,7 @@ from lmms_eval.tasks import TaskManager
 from utils import (
     LLaVA1_5_SYSTEM_INSTRUCTION,
     INTERNVL2_SYSTEM_INSTRUCTION,
+    INTERNVL3_5_SYSTEM_INSTRUCTION,
     ensure_llm_judge_env,
     infer_lmms_eval_backend,
 )
@@ -62,6 +63,11 @@ try:
     from scripts.models_utils.internvl2 import InternVL2Custom
 except ImportError:
     InternVL2Custom = None
+
+try:
+    from scripts.models_utils.internvl3_5 import InternVL3_5Custom
+except ImportError:
+    InternVL3_5Custom = None
 
 
 # =============================================================================
@@ -321,6 +327,29 @@ def instantiate_model(
             cache_dir=args.model_cache_dir,
         )
 
+    elif backend == "internvl3.5":
+        if InternVL3_5Custom is None:
+            print(
+                "[yellow]⚠ InternVL3_5Custom not importable, falling back to registry[/yellow]"
+            )
+            return backend
+        print(f"[cyan]Instantiating InternVL3_5Custom for {model_name}...[/cyan]")
+        return InternVL3_5Custom(
+            pretrained=model_name,
+            device=(
+                f"cuda:{int(os.environ.get('LOCAL_RANK', 0))}"
+                if torch.cuda.is_available()
+                else "cpu"
+            ),
+            device_map=(
+                model_args.split("device_map=")[1]
+                if "device_map=" in model_args
+                else "auto"
+            ),
+            batch_size=str(args.batch_size) if args.batch_size else "1",
+            cache_dir=args.model_cache_dir,
+        )
+
     return backend  # Fallback: string for registry
 
 
@@ -328,6 +357,8 @@ def get_system_instruction(lmms_eval_model: str) -> str:
     """Select the appropriate system instruction for the model."""
     if lmms_eval_model == "internvl2":
         return INTERNVL2_SYSTEM_INSTRUCTION
+    elif lmms_eval_model == "internvl3.5":
+        return INTERNVL3_5_SYSTEM_INSTRUCTION
     return LLaVA1_5_SYSTEM_INSTRUCTION
 
 
@@ -537,7 +568,7 @@ Original tasks also work:
         "--lmms-eval-model",
         type=str,
         default=None,
-        help="Model backend (auto-inferred if not set): llava_hf, internvl2",
+        help="Model backend (auto-inferred if not set): llava_hf, internvl2, internvl3.5",
     )
     parser.add_argument(
         "--model-name-or-path",
