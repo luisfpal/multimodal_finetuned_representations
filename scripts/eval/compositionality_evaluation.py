@@ -1,5 +1,5 @@
 """
-Compositionality evaluation for generative VLMs on ARO and SugarCrepe benchmarks (BiVLC is accepted by --benchmark but its run is currently disabled in main()).
+Compositionality evaluation for generative VLMs on ARO, BiVLC, and SugarCrepe benchmarks.
 
 Evaluates VLMs using constrained MCQ logits: compares logit scores for answer letter
 tokens (A, B, ...) at the last input position — no generation, no parsing.
@@ -7,11 +7,10 @@ tokens (A, B, ...) at the last input position — no generation, no parsing.
 Benchmarks:
   - ARO (Attribution, Relation, Order): 50k+ test cases for compositional failures
     Subtasks: VG-Relation, VG-Attribution, COCO-Order, Flickr30k-Order
-  - BiVLC: Bidirectional compositionality (I2T direction; T2I requires multi-image).
-    Note: the BiVLC call in main() is currently commented out, so --benchmark bivlc runs nothing.
+  - BiVLC: Bidirectional compositionality (I2T direction; T2I requires multi-image)
   - SugarCrepe: 7-category compositional benchmark (Add/Replace/Swap perturbations)
 
-Supports: LLaVA 1.5/v1.6, LLaVA-OneVision, InternVL2, Cambrian
+Supports: LLaVA 1.5/v1.6, LLaVA-OneVision, InternVL2, InternVL3.5, Cambrian
 
 Setup:
   ARO source: third_party/vision-language-models-are-bows/ (checked into repo)
@@ -25,7 +24,7 @@ Usage:
     python scripts/eval/compositionality_evaluation.py \\
         --model-name-or-path lbasile/llava_7b \\
         --output-dir evals/llava_7b/compositionality \\
-        --benchmark aro \\
+        --benchmark bivlc \\
         --limit 100
 """
 
@@ -88,6 +87,7 @@ from utils.patch_onevision import patch as patch_onevision
 from utils.patch_cambrian import patch as patch_cambrian
 
 MODEL_BACKEND_REGISTRY = [
+    ("internvl3", "internvl3.5"),
     ("internvl", "internvl2"),
     ("onevision", "llava_onevision1_5"),
     ("cambrian", "cambrian"),
@@ -120,7 +120,7 @@ def apply_no_image_patch(model, backend: str) -> None:
         patch_onevision(model, layers_to_skip=layers)
     elif backend == "llava_hf":
         patch_llava(model, layers_to_skip=layers)
-    elif backend == "internvl2":
+    elif backend in ("internvl2", "internvl3.5"):
         patch_internvl(model, layers_to_skip=layers)
     elif backend == "cambrian":
         patch_cambrian(model, layers_to_skip=layers)
@@ -264,6 +264,8 @@ def detect_model_type(model_name_or_path: str) -> str:
     name_lower = model_name_or_path.lower()
     if "cambrian" in name_lower:
         return "cambrian"
+    if "internvl3" in name_lower:
+        return "internvl3"
     if "internvl" in name_lower:
         return "internvl2"
     # LLaVA family (including OneVision, Qwen2-VL variants)

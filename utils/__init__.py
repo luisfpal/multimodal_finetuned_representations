@@ -1,5 +1,3 @@
-"""Package init that re-exports utilities for benchmarking, captioning, datasets, LLM judge setup, metrics, and model loading."""
-
 from .benchmarking_utils import (
     benchmark_model_vqa_processed_dataloader,
     parse_predicted_answer,
@@ -12,6 +10,7 @@ from .constants import (
     COCOQA_VI_DIGITS_MAP,
     GUIDE_TEXT,
     INTERNVL2_SYSTEM_INSTRUCTION,
+    INTERNVL3_5_SYSTEM_INSTRUCTION,
     LLAVA_CHAT_TEMPLATE,
     MMLU_ANSWER_CHOICES,
     SQA_ANSWER_CHOICES,
@@ -56,6 +55,7 @@ __all__ = [
     "INTERNVL2_SYSTEM_INSTRUCTION",
     "LLaVA_OV1_5_SYSTEM_INSTRUCTION",
     "CAMBRIAN_SYSTEM_INSTRUCTION",
+    "INTERNVL3_5_SYSTEM_INSTRUCTION",
     "ASSISTANT_ROLE",
     "SQA_ANSWER_CHOICES",
     "MMLU_ANSWER_CHOICES",

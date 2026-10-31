@@ -1,8 +1,3 @@
-"""InternVL2 wrapper for lmms-eval (InternVL2Custom) with image/video preprocessing helpers.
-
-Implements generate_until, loglikelihood and multi-round generation for lmms-eval requests.
-"""
-
 import gc
 import sys
 import os
@@ -493,5 +488,5 @@ class InternVL2Custom(lmms):
 
     def generate_until_multi_round(self, requests) -> List[str]:
         raise NotImplementedError(
-            "generate_until_multi_round is not implemented for InternVL2"
+            "TODO: Implement multi-round generation for InternVL2"
         )

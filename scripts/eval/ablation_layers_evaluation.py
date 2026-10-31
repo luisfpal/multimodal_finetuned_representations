@@ -1,13 +1,3 @@
-"""NOTE: earlier LLaVA-only layer-ablation script; the paper's ablation figures use
-layer_ablation_multimodal_evaluation.py and layer_ablation_text_evaluation.py.
-
-Run an lmms-eval benchmark with a number of decoder layers skipped (layer-ablation evaluation).
-
-Inputs: --task, --layers-to-skip, --output-dir (default results/ablations) and other CLI args;
-OPENAI_API_KEY / OPENAI_API_URL / MODEL_VERSION for LLM-judged tasks.
-Outputs: <output-dir>/<layers_to_skip>-ablated_layers.json and model responses.
-"""
-
 import argparse
 import json
 import os
@@ -163,7 +153,7 @@ def main():
                 print(f"Applied patch: skipping first {args.layers_to_skip} layers")
             except ImportError:
                 print(
-                    "Error: Could not import 'utils.patch_skipping'. Ensure you are running from the project root or src is in PYTHONPATH."
+                    "Error: Could not import 'src.patch_skipping'. Ensure you are running from the project root or src is in PYTHONPATH."
                 )
                 sys.exit(1)
 
