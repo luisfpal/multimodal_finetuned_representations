@@ -1,3 +1,8 @@
+"""InternVL2 wrapper for lmms-eval (InternVL2Custom) with image/video preprocessing helpers.
+
+Implements generate_until for lmms-eval requests; loglikelihood and multi-round generation are not implemented.
+"""
+
 import gc
 import sys
 import os

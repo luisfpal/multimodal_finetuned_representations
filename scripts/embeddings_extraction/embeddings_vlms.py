@@ -1,3 +1,9 @@
+"""Extract per-layer hidden-state activations from vision-language models with forward hooks.
+
+Inputs: CLI args such as --model_name_or_path, --batch_size, --out_dir, --filename and dataset options.
+Outputs: torch.save files with per-layer activations under --out_dir.
+"""
+
 import argparse
 import os
 from typing import List
