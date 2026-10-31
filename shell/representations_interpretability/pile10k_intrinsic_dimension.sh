@@ -33,6 +33,7 @@ REMOVE_ASSISTANT_TOKENS="true"
 RESIDUAL_STREAM_TYPE="output_layer"
 
 # ── Environment ───────────────────────────────────────────────────────────────
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-true}"
 DRY_RUN="${DRY_RUN:-false}"

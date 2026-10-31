@@ -18,6 +18,7 @@ echo "Model: $MODEL_TO_EVAL"
 # PATHS
 # =============================================================================
 
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/logitlens_evaluation.py"
 RESULTS_DIR="$PROJECT_ROOT/results"

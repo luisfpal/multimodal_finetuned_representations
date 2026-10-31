@@ -38,6 +38,7 @@ RESIDUAL_STREAM_TYPE="output_layer"
 RANGE_MAX=550
 
 # ── Environment ───────────────────────────────────────────────────────────────
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-false}"
 DRY_RUN="${DRY_RUN:-false}"

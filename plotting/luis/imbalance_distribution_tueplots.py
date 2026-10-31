@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _tueplots_style import OUTPUT_DIR, get_rc  # noqa: E402
 
+# Hardcoded path: edit this path for your setup.
 LUIS_ROOT = Path("/u/dssc/lbasile/scratch/plm/luis")
 DATA_DIR = LUIS_ROOT / "data" / "multimodality"
 OUT_DIR = OUTPUT_DIR / "imbalance_distribution"

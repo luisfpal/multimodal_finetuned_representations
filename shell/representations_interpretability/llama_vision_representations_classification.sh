@@ -10,6 +10,7 @@
 
 set -euo pipefail
 
+# Hardcoded path: edit this path for your setup.
 MODEL_PATH="/orfeo/cephfs/scratch/area/ddoimo/models/hub/Meta-Llama-3-90B-instruct"
 
 # Each entry: "dataset_name|split|prompt_mode"
@@ -32,6 +33,7 @@ N_CHOICES=10
 CLASS_FRACTION=0.3
 
 # ── Environment ───────────────────────────────────────────────────────────────
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch}"
 FORCE_RECOMPUTE="${FORCE_RECOMPUTE:-false}"
 DRY_RUN="${DRY_RUN:-false}"

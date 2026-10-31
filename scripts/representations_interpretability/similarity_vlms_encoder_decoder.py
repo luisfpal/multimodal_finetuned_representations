@@ -45,6 +45,7 @@ from utils.cambrian_utils import is_cambrian_model
 from utils.dataset import _resolve_split_path
 from utils.metrics_utils import compute_linear_cka_similarity, compute_linear_regression_r2_score
 
+# Hardcoded path: edit this path for your setup.
 IMAGES_PATH = "/u/dssc/lpalaciosflores/multimodal_finetuned_representations/tinkering/plots"
 
 def plot_images(images: list, ncols: int = 10, save_path: str = IMAGES_PATH,

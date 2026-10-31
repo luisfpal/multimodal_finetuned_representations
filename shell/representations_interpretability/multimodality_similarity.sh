@@ -82,6 +82,7 @@ REGRESSION_TYPE="ols" # Valid: ols | ridge | lasso
 # Guide text per dataset (auto-selected in the loop below)
 GUIDE_TEXT_OPENENDED="Answer the question using a single word or phrase."
 GUIDE_TEXT_MULTICHOICE="Answer with the option's letter from the given choices directly."
+# Hardcoded path: edit this path for your setup.
 CAPTIONING_IMAGE_DIR="${CAPTIONING_IMAGE_DIR:-/orfeo/cephfs/scratch/area/ddoimo/data/mscoco/train2014}"
 
 # Dataset capability map (single source of truth for conditional behavior)
@@ -135,6 +136,7 @@ FORCE_METRICS_ONLY="false"
 REPRESENTATIONS_ONLY="false"
 ENABLE_SEMANTIC_FILTER="false"
 ENABLE_CLIP_METRICS="false"   # set to "true" to also compute CLIP similarity metrics
+# Hardcoded path: edit this path for your setup.
 REPRESENTATIONS_DIR="${REPRESENTATIONS_DIR:-$HOME/scratch/pooling_tests}"
 SAVE_REPRESENTATIONS="true"
 FORCE_RECOMPUTE="false"

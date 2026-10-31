@@ -96,6 +96,7 @@ TASKS=(
 # =============================================================================
 # CACHE DIRECTORIES
 # =============================================================================
+# Hardcoded path: edit this path for your setup.
 HF_HOME="$HOME/scratch/huggingface"
 MODEL_CACHE_DIR="$HF_HOME/hub"
 DATASETS_CACHE_DIR="$HF_HOME/datasets"

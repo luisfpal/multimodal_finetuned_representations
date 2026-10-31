@@ -447,7 +447,7 @@ def evaluate_with_ablation(
     limit: Optional[int] = 2000,
     sliding_window: bool = False,
     log_samples: bool = False,
-    add_lore_suffix: bool = False,
+    lorenzo_skipper: bool = False,
     max_new_tokens: int = 32,
     ablation_mode: str = "image",
     trust_remote_code: bool = False,
@@ -499,7 +499,7 @@ def evaluate_with_ablation(
         # lm = LlavaHf(
         #     pretrained=model_path,
         #     device=device,
-        #     add_lore_suffix=add_lore_suffix,
+        #     lorenzo_skipper=lorenzo_skipper,
         #     batch_size=batch_size,
         #     start_layer=start_layer,
         #     window_size=window_size,
@@ -820,7 +820,7 @@ def evaluate_with_ablation(
                         filename = f"{task}_{tag}.json"
                     elif cur_start is None:
                         filename = f"{task}_L0_W0.json"
-                    elif add_lore_suffix:
+                    elif lorenzo_skipper:
                         filename = f"{task}_L{cur_start}_W{cur_window}_lore.json"
                     else:
                         filename = f"{task}_L{cur_start}_W{cur_window}.json"
@@ -932,13 +932,7 @@ def parse_args():
         "to image tokens starting from this layer.",
     )
     parser.add_argument("--sliding_window", action="store_true")
-    parser.add_argument(
-        "--add_lore_suffix",
-        action="store_true",
-        help="Append '_lore' to the per-task result filenames ({task}_L{start}_W{window}_lore.json).",
-    )
-    # Deprecated alias kept so existing commands keep working.
-    parser.add_argument("--lorenzo_skipper", dest="add_lore_suffix", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--lorenzo_skipper", action="store_true")
     parser.add_argument(
         "--log_samples",
         action="store_true",
@@ -1081,7 +1075,7 @@ if __name__ == "__main__":
         limit=args.limit,
         sliding_window=args.sliding_window,
         log_samples=args.log_samples,
-        add_lore_suffix=args.add_lore_suffix,
+        lorenzo_skipper=args.lorenzo_skipper,
         max_new_tokens=args.max_new_tokens,
         ablation_mode=args.ablation_mode,
         batch_size=args.batch_size,

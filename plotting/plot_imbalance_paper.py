@@ -29,6 +29,7 @@ from safetensors import safe_open
 # ==============================================================================
 # Edit this section only. Everything else adapts automatically.
 
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT = Path("/u/dssc/lpalaciosflores/multimodal_finetuned_representations")
 RESULTS_DIR  = PROJECT_ROOT / "results" / "multimodality_comparison"
 PLOTS_DIR    = PROJECT_ROOT / "plots" / "imbalance_grids" / "last" / "paper"

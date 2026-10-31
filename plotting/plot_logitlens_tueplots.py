@@ -7,6 +7,7 @@ from safetensors.numpy import load_file
 
 from all_benchmarks_plots_tueplots import get_rc
 
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT = os.path.expanduser("~/scratch/plm")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "plots", "logitlens")

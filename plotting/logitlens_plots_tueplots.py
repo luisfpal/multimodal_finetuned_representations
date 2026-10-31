@@ -9,6 +9,7 @@ from safetensors.numpy import load_file
 from _tueplots_style import get_rc, OUTPUT_DIR, out_path
 
 
+# Hardcoded path: edit this path for your setup.
 RESULTS_DIR = Path("/u/dssc/lbasile/scratch/plm/results/logitlens_evaluation")
 
 DATASETS = [

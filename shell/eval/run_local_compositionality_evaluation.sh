@@ -22,6 +22,7 @@ set -e
 # USER CONFIGURATION
 # =============================================================================
 
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 PYTHON_SCRIPT="$PROJECT_ROOT/scripts/eval/compositionality_evaluation.py"
 
@@ -31,7 +32,9 @@ DEFAULT_MODEL_NAME="lbasile/llava_7b"
 # =============================================================================
 # DATA PATHS
 # =============================================================================
+# Hardcoded path: edit this path for your setup.
 ARO_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/vision-language-models-are-bows"
+# Hardcoded path: edit this path for your setup.
 SUGARCREPE_DATA_ROOT="/orfeo/cephfs/scratch/dssc/lpalaciosflores/datasets/sugar-crepe"
 # =============================================================================
 # ARGUMENT PARSING

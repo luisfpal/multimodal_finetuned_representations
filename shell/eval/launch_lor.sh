@@ -9,6 +9,7 @@
 # =============================================================================
 
 # PROJECT_ROOT="$HOME/multimodal_finetuned_representations"
+# Hardcoded path: edit this path for your setup.
 PROJECT_ROOT="/u/dssc/lbasile/scratch/plm"
 
 # EXTRA_ARGS=""
