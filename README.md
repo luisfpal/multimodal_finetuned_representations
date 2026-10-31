@@ -197,9 +197,8 @@ Notes on the table:
   `SCRIPT_NAME=<file>` in `shell/representations_interpretability/launch_job.sh`, then run
   `bash shell/representations_interpretability/launch_job.sh`. The committed `SCRIPT_NAME` is live
   (currently `llama_vision_representations_classification.sh`, 6 GPUs), so check it before submitting.
-- Metrics as computed in the code: `plotting/table2.py` (Tables 5-6) reports POPE as `pope_f1_score` and MME as
-  (`mme_perception_score` + `mme_cognition_score`) / 2800; `plotting/all_benchmarks_plots_tueplots.py` (Figs. 5, 30, 31)
-  uses `pope_accuracy` and the same MME total; the layer-ablation plots and Fig. 34 use `mme_perception_score` only.
+- Files under `plotting/diego/legacy/` and files named `*_legacy.py` are earlier versions kept for reference;
+  the table above lists the launchers and plot scripts for each figure.
 - Fig. 1 is a schematic and has no script. The Llama-3.2-90B cross-modal ablation in Fig. 32 has no plot script in this release.
 - `plotting/all_benchmarks_plots_tueplots.py` uses `adjustText` for label placement if installed
   (optional; add it with `uv add adjustText`); without it, labels are placed without adjustment.
@@ -298,7 +297,7 @@ utils/          Model loading, datasets, metrics, layer-skipping patches (vlm_la
                   layers for the text-only runs of scripts/eval/lmms_evaluation.py and
                   compositionality_evaluation.py (image-reliance baselines)
                 - utils/patch_skipping.py: earlier LLaVA-only patch used by
-                  scripts/eval/ablation_layers_evaluation.py (not used for the paper figures)
+                  scripts/eval/ablation_layers_evaluation.py
 tasks/          Custom lmms-eval task configs (captioned variants)
 plotting/       Paper figure scripts
 third_party/    Vendored Cambrian and ARO ("vision-language-models-are-bows") code
